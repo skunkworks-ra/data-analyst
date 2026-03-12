@@ -1,0 +1,250 @@
+"""
+tools/fields.py — ms_field_list
+
+Layer 1, Tool 2: What are the observed fields, their sky positions,
+and their calibration roles?
+
+CASA access: msmd.fieldnames(), msmd.phasecenter(), msmd.intentsforfield()
+Falls back to calibrator catalogue matching when intents are absent.
+"""
+
+from __future__ import annotations
+
+import math
+
+from ms_inspect.util.calibrators import lookup as cal_lookup
+from ms_inspect.util.casa_context import open_msmd, validate_ms_path
+from ms_inspect.util.conversions import rad_to_deg, rad_to_dms, rad_to_hms
+from ms_inspect.util.formatting import field, response_envelope
+
+TOOL_NAME = "ms_field_list"
+
+# Threshold: if fewer than this fraction of fields have non-empty intents,
+# switch to heuristic inference mode.
+_INTENT_COVERAGE_THRESHOLD = 0.50
+
+# Coordinates suspiciously close to (0, 0) — almost certainly a broken export.
+# True (0, 0) on sky is on the meridian at the equator, essentially never a target.
+_COORD_SUSPECT_THRESHOLD_DEG = 1.0 / 60.0  # 1 arcminute
+
+
+def run(ms_path: str) -> dict:
+    """
+    Return the list of all observed fields with positions, intents, and
+    calibrator role identification.
+    """
+    p = validate_ms_path(ms_path)
+    casa_calls: list[str] = []
+    warnings:   list[str] = []
+
+    with open_msmd(str(p)) as msmd:
+        casa_calls.append("msmd.open()")
+
+        # Field names
+        field_names: list[str] = list(msmd.fieldnames())
+        casa_calls.append("msmd.fieldnames()")
+        n_fields = len(field_names)
+
+        if n_fields == 0:
+            warnings.append("No fields found in MS.")
+            return response_envelope(
+                tool_name=TOOL_NAME,
+                ms_path=ms_path,
+                data={"fields": [], "n_fields": 0},
+                warnings=warnings,
+                casa_calls=casa_calls,
+            )
+
+        # Phase centres — returns a dict with 'm0' (RA) and 'm1' (Dec) in radians
+        phase_centers: list[dict] = []
+        for fid in range(n_fields):
+            try:
+                pc = msmd.phasecenter(fid)
+                phase_centers.append(pc)
+            except Exception:
+                phase_centers.append({})
+        casa_calls.append("msmd.phasecenter(field_id) for each field")
+
+        # Intents per field
+        raw_intents: list[set[str]] = []
+        for fid in range(n_fields):
+            try:
+                intents = set(msmd.intentsforfield(fid))
+            except Exception:
+                intents = set()
+            raw_intents.append(intents)
+        casa_calls.append("msmd.intentsforfield(field_id) for each field")
+
+        # Source IDs (for mosaic grouping)
+        try:
+            source_ids: list[int] = list(msmd.sourceidforfield(list(range(n_fields))))
+        except Exception:
+            source_ids = list(range(n_fields))
+
+    # ------------------------------------------------------------------
+    # Determine if we're in intent-inference mode
+    # ------------------------------------------------------------------
+    n_with_intents = sum(1 for s in raw_intents if s)
+    intent_fraction = n_with_intents / n_fields if n_fields > 0 else 0.0
+    heuristic_mode = intent_fraction < _INTENT_COVERAGE_THRESHOLD
+
+    if heuristic_mode:
+        warnings.append(
+            f"Only {n_with_intents}/{n_fields} fields have scan intent metadata "
+            f"({intent_fraction*100:.0f}% coverage, threshold {_INTENT_COVERAGE_THRESHOLD*100:.0f}%). "
+            "Switching to heuristic intent inference from field names via calibrator catalogue. "
+            "Inferred intents are tagged INFERRED — verify before use."
+        )
+
+    # ------------------------------------------------------------------
+    # Build field records
+    # ------------------------------------------------------------------
+    fields_out: list[dict] = []
+
+    for fid in range(n_fields):
+        name = field_names[fid]
+        pc   = phase_centers[fid]
+        intents = raw_intents[fid]
+
+        # --- Coordinates ---
+        ra_rad, dec_rad, coord_flag, coord_note = _extract_coords(pc, name, fid)
+
+        ra_deg  = rad_to_deg(ra_rad)  if ra_rad  is not None else None
+        dec_deg = rad_to_deg(dec_rad) if dec_rad is not None else None
+        ra_hms  = rad_to_hms(ra_rad)  if ra_rad  is not None else None
+        dec_dms = rad_to_dms(dec_rad) if dec_rad is not None else None
+
+        # --- Calibrator catalogue match ---
+        cal_entry = cal_lookup(name)
+        if cal_entry:
+            cal_match = field(
+                cal_entry.canonical_name,
+                flag="COMPLETE",
+                note=f"Matched '{name}' to catalogue entry '{cal_entry.canonical_name}'",
+            )
+            cal_role = field(cal_entry.role, flag="COMPLETE")
+            cal_standard = field(cal_entry.flux_standard, flag="COMPLETE")
+            cal_resolved = field(cal_entry.resolved, flag="COMPLETE")
+            if cal_entry.notes:
+                warnings.append(f"[{name}] {cal_entry.notes}")
+        else:
+            cal_match    = field(None, flag="UNAVAILABLE", note="Not in bundled calibrator catalogue")
+            cal_role     = field(None, flag="UNAVAILABLE")
+            cal_standard = field(None, flag="UNAVAILABLE")
+            cal_resolved = field(None, flag="UNAVAILABLE")
+
+        # --- Intents ---
+        if intents:
+            intent_field = field(sorted(intents), flag="COMPLETE")
+        elif heuristic_mode and cal_entry:
+            inferred = _infer_intents_from_role(cal_entry.role)
+            intent_field = field(
+                inferred,
+                flag="INFERRED",
+                note=f"Inferred from calibrator catalogue role: {cal_entry.role}",
+            )
+        elif heuristic_mode:
+            intent_field = field([], flag="UNAVAILABLE",
+                                  note="No intents in MS and no catalogue match for inference")
+        else:
+            intent_field = field([], flag="UNAVAILABLE",
+                                  note="No intents recorded for this field")
+
+        record = {
+            "field_id":         fid,
+            "name":             name,
+            "source_id":        source_ids[fid] if fid < len(source_ids) else fid,
+            "ra_j2000_deg":     field(round(ra_deg, 6) if ra_deg is not None else None,
+                                       flag=coord_flag, note=coord_note),
+            "dec_j2000_deg":    field(round(dec_deg, 6) if dec_deg is not None else None,
+                                       flag=coord_flag, note=coord_note),
+            "ra_hms":           ra_hms,
+            "dec_dms":          dec_dms,
+            "intents":          intent_field,
+            "calibrator_match": cal_match,
+            "calibrator_role":  cal_role,
+            "flux_standard":    cal_standard,
+            "resolved_source":  cal_resolved,
+        }
+        fields_out.append(record)
+
+    # ------------------------------------------------------------------
+    # Mosaic detection: multiple fields same source_id → group them
+    # ------------------------------------------------------------------
+    mosaic_groups: dict[int, list[int]] = {}
+    for fid, sid in enumerate(source_ids[:n_fields]):
+        mosaic_groups.setdefault(sid, []).append(fid)
+    mosaic_notes = [
+        f"Source ID {sid}: {len(fids)} pointings (mosaic) — fields {fids}"
+        for sid, fids in mosaic_groups.items()
+        if len(fids) > 1
+    ]
+    if mosaic_notes:
+        warnings.extend(mosaic_notes)
+
+    data = {
+        "n_fields":          n_fields,
+        "heuristic_intents": heuristic_mode,
+        "fields":            fields_out,
+    }
+
+    return response_envelope(
+        tool_name=TOOL_NAME,
+        ms_path=ms_path,
+        data=data,
+        warnings=warnings,
+        casa_calls=casa_calls,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _extract_coords(
+    phasecenter: dict,
+    field_name: str,
+    field_id: int,
+) -> tuple[float | None, float | None, str, str | None]:
+    """
+    Extract RA/Dec in radians from a CASA phasecenter dict.
+
+    Returns (ra_rad, dec_rad, completeness_flag, note).
+    """
+    if not phasecenter:
+        return None, None, "UNAVAILABLE", f"phasecenter() returned empty for field {field_id}"
+
+    try:
+        # CASA phasecenter returns a direction measure dict:
+        # {'type': 'direction', 'refer': 'J2000',
+        #  'm0': {'unit': 'rad', 'value': <RA>},
+        #  'm1': {'unit': 'rad', 'value': <Dec>}}
+        ra_rad  = float(phasecenter["m0"]["value"])
+        dec_rad = float(phasecenter["m1"]["value"])
+    except (KeyError, TypeError, ValueError) as e:
+        return None, None, "UNAVAILABLE", f"Could not parse phasecenter dict: {e}"
+
+    # Normalise RA to [0, 2π)
+    ra_rad = ra_rad % (2 * math.pi)
+
+    # Suspect coordinate check: (0, 0) to within 1 arcminute
+    ra_deg  = math.degrees(ra_rad)
+    dec_deg = math.degrees(dec_rad)
+    if abs(ra_deg) < _COORD_SUSPECT_THRESHOLD_DEG and abs(dec_deg) < _COORD_SUSPECT_THRESHOLD_DEG:
+        return (
+            ra_rad, dec_rad, "SUSPECT",
+            f"Coordinates ({ra_deg:.4f}°, {dec_deg:.4f}°) are within 1 arcmin of (0,0) J2000. "
+            "This is almost certainly a broken UVFITS export. "
+            "Elevation, parallactic angle, and phase-cal separation will be UNAVAILABLE for this field.",
+        )
+
+    return ra_rad, dec_rad, "COMPLETE", None
+
+
+def _infer_intents_from_role(role: list[str]) -> list[str]:
+    """Map catalogue roles to CASA-style intent strings."""
+    intent_map = {
+        "flux":      "CALIBRATE_FLUX#ON_SOURCE",
+        "bandpass":  "CALIBRATE_BANDPASS#ON_SOURCE",
+    }
+    return [intent_map[r] for r in role if r in intent_map]

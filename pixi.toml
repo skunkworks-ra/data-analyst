@@ -1,0 +1,58 @@
+[project]
+name        = "ms-inspect"
+version     = "0.1.0"
+description = "Radio interferometric Measurement Set inspector — MCP server (Phase 1)"
+channels    = ["conda-forge"]
+platforms   = ["linux-64", "osx-arm64", "osx-64"]
+
+# ---------------------------------------------------------------------------
+# Conda-forge dependencies — scientific stack + tooling
+# ---------------------------------------------------------------------------
+# casatools / casatasks are NOT on conda-forge. They are PyPI-only (NRAO
+# binary wheels). Declared separately under [pypi-dependencies] below.
+# pixi resolves those via pip into this conda environment.
+# ---------------------------------------------------------------------------
+[dependencies]
+python     = ">=3.12,<3.14"   # casatools 6.7.x ships cp312 and cp313 wheels
+numpy      = ">=1.26"
+astropy    = ">=6.0"
+pytest     = ">=8.0"
+ruff       = ">=0.4"
+
+# ---------------------------------------------------------------------------
+# PyPI-only dependencies (pip-resolved into the conda env)
+# ---------------------------------------------------------------------------
+[pypi-dependencies]
+ms-inspect       = { path = ".", editable = true }   # this package
+mcp              = { version = ">=1.0", extras = ["cli"] }
+casatools        = ">=6.7"
+casatasks        = ">=6.7"
+pytest-asyncio   = ">=0.23"
+
+# ---------------------------------------------------------------------------
+# Tasks — common developer workflows
+# ---------------------------------------------------------------------------
+[tasks]
+
+# Start the MCP server — stdio transport (Claude Desktop / local)
+serve       = { cmd = "ms-inspect", env = { RADIO_MCP_TRANSPORT = "stdio" } }
+
+# Start the MCP server — HTTP transport (HPC / remote)
+serve-http  = { cmd = "ms-inspect", env = { RADIO_MCP_TRANSPORT = "http",
+                                             RADIO_MCP_PORT = "8000" } }
+
+# Tests
+test        = { cmd = "pytest tests/ -v" }
+test-unit   = { cmd = "pytest tests/unit/ -v" }
+
+# Integration tests — requires a real MS.
+# Usage: RADIO_MCP_TEST_MS=/path/to/your.ms pixi run test-int
+test-int    = { cmd = "pytest tests/integration/ -v" }
+
+# Lint / format
+lint        = { cmd = "ruff check src/ tests/" }
+fmt         = { cmd = "ruff format src/ tests/" }
+fmt-check   = { cmd = "ruff format --check src/ tests/" }
+
+# CI gate — lint + format check in one pass
+check       = { cmd = "ruff check src/ tests/ && ruff format --check src/ tests/" }

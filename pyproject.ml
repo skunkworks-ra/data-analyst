@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ---------------------------------------------------------------------------
+# Project metadata
+# ---------------------------------------------------------------------------
+[project]
+name = "ms-inspect"
+version = "0.1.0"
+description = "Radio interferometric Measurement Set inspector — MCP server (Phase 1)"
+readme = "README.md"
+requires-python = ">=3.12"
+
+# Runtime dependencies.
+# casatools / casatasks are PyPI-only (NRAO wheels) — declared in pixi.toml
+# under [pypi-dependencies]. Do not add them here to avoid double-resolution.
+dependencies = [
+    "mcp[cli]>=1.0",
+    "numpy>=1.26",
+    "astropy>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+ms-inspect = "ms_inspect.server:main"
+
+# ---------------------------------------------------------------------------
+# Hatch — source layout
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel]
+packages = ["src/ms_inspect"]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
