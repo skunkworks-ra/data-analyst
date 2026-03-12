@@ -13,13 +13,30 @@ pixi install
 pixi run pip install casatools casatasks
 ```
 
-### Claude Code MCP server
+---
 
-Register the ms-inspect MCP server with Claude Code to make the tools available across sessions:
+### Option A — Claude Code plugin (recommended)
+
+Installs the MCP server, skills, and slash commands in one step:
 
 ```bash
-# From the data-analyst directory:
-claude mcp add --scope user --transport stdio ms-inspect -- pixi run serve
+claude plugin install /path/to/ms-inspect --scope user
+```
+
+After install, the `ms-inspect` MCP server is registered globally, and the
+`/radio-interferometry`, `/inspect`, `/phase1`, `/phase2`, and `/simulate`
+commands are available in all projects.
+
+---
+
+### Option B — Claude Code (manual MCP only, no skills)
+
+Register only the MCP server (skills and commands not included):
+
+```bash
+pixi install && pixi run pip install casatools casatasks
+claude mcp add --scope user --transport stdio ms-inspect -- \
+  pixi run --manifest-path /path/to/ms-inspect/pixi.toml serve
 ```
 
 Scope options:
@@ -32,3 +49,42 @@ To remove:
 ```bash
 claude mcp remove --scope user ms-inspect
 ```
+
+---
+
+### Option C — Claude Desktop and other MCP clients (HTTP transport)
+
+Start the server in HTTP mode:
+
+```bash
+pixi install && pixi run pip install casatools casatasks
+RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8000 pixi run serve
+```
+
+Add to your Claude Desktop `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ms-inspect": {
+      "command": "pixi",
+      "args": ["run", "--manifest-path", "/path/to/ms-inspect/pixi.toml", "serve-http"]
+    }
+  }
+}
+```
+
+For any MCP-compatible client (LangGraph, AutoGen, etc.) — point at
+`http://localhost:8000/sse` or `http://localhost:8000/mcp/v1` (streamable HTTP).
+
+---
+
+### Option D — pip install (no pixi)
+
+```bash
+pip install ms-inspect[casa]
+ms-inspect  # starts the stdio MCP server
+```
+
+> **Note:** casatools wheels are platform-specific (Linux x86_64, macOS arm64).
+> If your platform is not supported, use the pixi path above.

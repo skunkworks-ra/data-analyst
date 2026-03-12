@@ -2,8 +2,13 @@
   "mcpServers": {
     "ms-inspect": {
       "command": "pixi",
-      "args": ["run", "serve"],
-      "cwd": "/users/ssekhar/src/skunkworks-ra/data-analyst"
+      "args": [
+        "run",
+        "--manifest-path",
+        "${CLAUDE_PLUGIN_ROOT}/pixi.toml",
+        "serve"
+      ],
+      "description": "Radio interferometric MS inspector (stdio transport)"
     }
   }
 }

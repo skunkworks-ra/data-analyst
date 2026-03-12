@@ -1,0 +1,14 @@
+{
+  "name": "ms-inspect",
+  "version": "0.1.0",
+  "description": "Radio interferometric Measurement Set inspector — MCP tools + skills for VLA/MeerKAT/uGMRT",
+  "author": {
+    "name": "ms-inspect contributors",
+    "url": "https://github.com/your-org/ms-inspect"
+  },
+  "license": "GPL-3.0",
+  "keywords": ["radio-astronomy", "interferometry", "CASA", "VLA", "MeerKAT", "uGMRT"],
+  "mcpServers": "./.mcp.json",
+  "skills": "./.claude/skills/",
+  "commands": ["./.claude/commands/"]
+}

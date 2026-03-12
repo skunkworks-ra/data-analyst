@@ -29,6 +29,10 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
 ]
+casa = [
+    "casatools>=6.7.0",
+    "casatasks>=6.7.0",
+]
 
 [project.scripts]
 ms-inspect = "ms_inspect.server:main"
