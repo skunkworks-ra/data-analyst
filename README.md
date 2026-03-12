@@ -13,12 +13,22 @@ pixi install
 pixi run pip install casatools casatasks
 ```
 
-### Claude Code plugin (global access)
+### Claude Code MCP server
 
-Install as a Claude Code plugin to make the ms-inspect MCP tools available from any working directory:
+Register the ms-inspect MCP server with Claude Code to make the tools available across sessions:
 
 ```bash
-claude plugin install /path/to/data-analyst --scope user
+# From the data-analyst directory:
+claude mcp add --scope user --transport stdio ms-inspect -- pixi run serve
 ```
 
-Then verify the tools are available in any Claude Code session.
+Scope options:
+- `--scope user` — persists in `~/.claude.json`, available in all projects
+- `--scope project` — persists in `.claude/mcp.json`, shared via git
+- `--scope local` — persists in `.claude/.mcp.local.json`, project-only, not committed
+
+To remove:
+
+```bash
+claude mcp remove --scope user ms-inspect
+```
