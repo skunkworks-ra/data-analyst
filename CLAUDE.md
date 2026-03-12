@@ -276,7 +276,9 @@ code.
 
 ---
 
-## Skill — radio interferometry analysis
+## Skills
+
+### Radio interferometry analysis
 
 The interferometrist reasoning document is a Claude Code skill checked into
 the repo. It is automatically loaded when working with `.ms` files or the
@@ -295,6 +297,22 @@ The skill is split into focused files to stay under the 200-line context limit:
 | `05-calibrator-science.md` | Flux standards, resolved sources, polarisation calibrators |
 | `06-failure-modes.md` | Known failure modes and recovery procedures |
 
+### MS simulator
+
+Generates synthetic CASA Measurement Sets from conversational descriptions
+using `casatools.simulator`. Auto-invoked when users ask to simulate, generate,
+or create visibility data.
+
+@.claude/skills/ms-simulator/SKILL.md
+
+| File | Content |
+|------|---------|
+| `01-conversation-protocol.md` | Parameter elicitation, defaults, confirmation flow |
+| `02-antenna-configs.md` | Shipped configs, VLA/MeerKAT/uGMRT band tables, custom arrays |
+| `03-spectral-source.md` | SPW setup, polarization, component lists, image models |
+| `04-corruption-noise.md` | Noise models, gain/bandpass/leakage/troposphere, presets |
+| `05-execution.md` | Script generation template, validation, common pitfalls |
+
 ## Slash commands
 
 Project-scoped commands live in `.claude/commands/` and are checked into the repo.
@@ -305,6 +323,7 @@ Available in Claude Code as `/project:<name>`:
 | `/project:inspect <ms_path>` | Full Phase 1 + Phase 2 analysis + go/no-go report |
 | `/project:phase1 <ms_path>` | Phase 1 orientation only (6 tools) |
 | `/project:phase2 <ms_path>` | Phase 2 instrument sanity only (6 tools) |
+| `/project:simulate <description>` | Simulate an MS from a natural-language description |
 
 ## What is out of scope for this file
 
