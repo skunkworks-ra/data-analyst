@@ -13,7 +13,10 @@ Parallel read strategy (DESIGN.md §6.6):
 - Main process aggregates across workers
 
 Autocorrelations (ANTENNA1 == ANTENNA2) are excluded by default.
-FLAG_CMD subtable is also checked for pre-existing online flag commands.
+
+FLAG_CMD subtable is read in full (REASON, APPLIED, TYPE, TIME, INTERVAL,
+COMMAND) to provide flag provenance: how many flags came from the telescope
+online system at import vs user-applied commands.
 """
 
 from __future__ import annotations
@@ -21,7 +24,6 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import re
-from typing import Any
 
 import numpy as np
 
@@ -185,25 +187,73 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
         total_counts += chunk_total
 
     # ------------------------------------------------------------------
-    # FLAG_CMD per-antenna online flag commands
+    # FLAG_CMD — full provenance read
+    # Columns: REASON, APPLIED, TYPE, TIME, INTERVAL, COMMAND
+    # REASON="ONLINE"  → telescope flagged at import (importasdm online=True)
+    # REASON=""        → unspecified (older MSs, UVFITS conversions)
+    # REASON=anything  → user or pipeline label
+    # APPLIED=False    → command written but not yet applied (partial import)
     # ------------------------------------------------------------------
-    ant_flag_cmd_counts: dict[int, int] = {i: 0 for i in range(n_ant)}
+    flag_cmd_summary: dict = {
+        "n_total":    field(0),
+        "n_applied":  field(0),
+        "n_unapplied": field(0),
+        "by_reason":  field({}),
+    }
+    # per-antenna: {ant_idx: {reason_str: count}}
+    ant_cmd_by_reason: dict[int, dict[str, int]] = {i: {} for i in range(n_ant)}
+
     try:
         with open_table(ms_str + "/FLAG_CMD") as tb:
-            casa_calls.append("tb.open(FLAG_CMD)")
+            casa_calls.append(
+                "tb.open(FLAG_CMD) → getcol(REASON, APPLIED, TYPE, TIME, INTERVAL, COMMAND)"
+            )
             n_cmd = tb.nrows()
             if n_cmd > 0:
-                commands = tb.getcol("COMMAND")
-                for cmd in commands:
-                    cmd_str = str(cmd)
-                    match = re.search(r"antenna\s*=\s*['\"]?(\w+)['\"]?", cmd_str, re.IGNORECASE)
+                reasons  = list(tb.getcol("REASON"))
+                applied  = list(tb.getcol("APPLIED"))
+                commands = list(tb.getcol("COMMAND"))
+                # TYPE and TIME/INTERVAL exist but are not needed for the summary
+
+                # Build reason breakdown
+                by_reason: dict[str, dict[str, int]] = {}
+                for reason, is_applied in zip(reasons, applied):
+                    r = str(reason).strip() or "UNSPECIFIED"
+                    if r not in by_reason:
+                        by_reason[r] = {"n_total": 0, "n_applied": 0}
+                    by_reason[r]["n_total"] += 1
+                    if is_applied:
+                        by_reason[r]["n_applied"] += 1
+
+                n_applied_total = sum(1 for a in applied if a)
+
+                flag_cmd_summary = {
+                    "n_total":    field(n_cmd),
+                    "n_applied":  field(n_applied_total),
+                    "n_unapplied": field(
+                        n_cmd - n_applied_total,
+                        note="Unapplied commands may indicate a partial or interrupted import",
+                    ),
+                    "by_reason":  field(by_reason),
+                }
+
+                # Per-antenna attribution: COMMAND string still carries antenna=<name>
+                # Only attribute commands that explicitly name an antenna
+                for reason, cmd_str in zip(reasons, commands):
+                    r = str(reason).strip() or "UNSPECIFIED"
+                    match = re.search(
+                        r"antenna\s*=\s*['\"]?([^'\",\s\)]+)['\"]?",
+                        str(cmd_str),
+                        re.IGNORECASE,
+                    )
                     if match:
                         ant_name_in_cmd = match.group(1)
                         for i, name in enumerate(ant_names):
                             if name == ant_name_in_cmd:
-                                ant_flag_cmd_counts[i] = ant_flag_cmd_counts.get(i, 0) + 1
+                                ant_cmd_by_reason[i][r] = ant_cmd_by_reason[i].get(r, 0) + 1
     except Exception as e:
         warnings.append(f"Could not read FLAG_CMD subtable: {e}")
+        flag_cmd_summary["by_reason"] = field(None, flag="UNAVAILABLE")
 
     # ------------------------------------------------------------------
     # Build per-antenna records
@@ -221,13 +271,17 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
         frac = nf / nt if nt > 0 else 0.0
         frac_flag = "COMPLETE" if nt > 0 else "UNAVAILABLE"
 
+        cmd_breakdown = ant_cmd_by_reason.get(i, {})
         per_antenna.append({
             "antenna_id": i,
             "antenna_name": name,
             "flag_fraction": field(round(frac, 6), flag=frac_flag),
             "n_flagged_elements": nf,
             "n_total_elements": nt,
-            "n_flag_commands_online": ant_flag_cmd_counts.get(i, 0),
+            "flag_cmd": {
+                "n_attributed": sum(cmd_breakdown.values()),
+                "by_reason": cmd_breakdown,
+            },
         })
 
     overall_frac = global_flagged / global_total if global_total > 0 else 0.0
@@ -237,7 +291,7 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
         "autocorrelations_excluded": exclude_autocorr,
         "n_workers_used": n_workers,
         "n_total_rows": n_total_rows,
-        "flag_source": "FLAG column (parallel read) + FLAG_CMD subtable",
+        "flag_cmd_summary": flag_cmd_summary,
         "per_antenna": per_antenna,
     }
 
