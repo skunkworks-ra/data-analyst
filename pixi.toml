@@ -28,6 +28,8 @@ mcp              = { version = ">=1.0", extras = ["cli"] }
 # casatools / casatasks: install manually via `pixi run pip install casatools casatasks`
 # (uv resolver doesn't handle macosx_15_0 platform tag on newer macOS)
 pytest-asyncio   = ">=0.23"
+requests         = ">=2.28"
+beautifulsoup4   = ">=4.12"
 
 # ---------------------------------------------------------------------------
 # Tasks — common developer workflows
