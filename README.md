@@ -17,10 +17,15 @@ pixi run pip install casatools casatasks
 
 ### Option A — Claude Code plugin (recommended)
 
-Installs the MCP server, skills, and slash commands in one step:
+Installs the MCP server, skills, and slash commands. Register the repo as a
+marketplace once, then install:
 
 ```bash
-claude plugin install /path/to/ms-inspect --scope user
+# Register the marketplace (once per machine)
+claude plugin marketplace add https://github.com/skunkworks-ra/data-analyst --scope user
+
+# Install the plugin
+claude plugin install ms-inspect --scope user
 ```
 
 After install, the `ms-inspect` MCP server is registered globally, and the

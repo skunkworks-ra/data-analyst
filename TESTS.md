@@ -42,16 +42,15 @@ Expected: server starts and waits — no traceback.
 
 ## 3. Plugin install from upstream URL (end-to-end)
 
-Install directly from GitHub — this is the path any user would take:
+This is the path any user would take. It requires two steps: register the repo
+as a marketplace once, then install the plugin from it.
 
 ```bash
-claude plugin install git@github.com:skunkworks-ra/data-analyst.git --scope local
-```
+# Step 1 — register the repo as a marketplace (once per machine)
+claude plugin marketplace add https://github.com/skunkworks-ra/data-analyst --scope user
 
-Or via HTTPS if SSH keys are not configured:
-
-```bash
-claude plugin install https://github.com/skunkworks-ra/data-analyst.git --scope local
+# Step 2 — install the plugin
+claude plugin install ms-inspect --scope user
 ```
 
 Verify the MCP server registered:
@@ -71,7 +70,8 @@ Trigger a tool call to confirm the server actually starts (requires a real MS pa
 To uninstall cleanly:
 
 ```bash
-claude plugin uninstall ms-inspect --scope local
+claude plugin uninstall ms-inspect --scope user
+claude plugin marketplace remove ms-inspect --scope user
 ```
 
 ---

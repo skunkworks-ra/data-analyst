@@ -1,0 +1,28 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ms-inspect",
+  "description": "Radio interferometric Measurement Set inspector — MCP tools and skills for VLA/MeerKAT/uGMRT",
+  "metadata": {
+    "description": "Radio interferometric Measurement Set inspector — MCP tools and skills for VLA/MeerKAT/uGMRT"
+  },
+  "owner": {
+    "name": "ms-inspect contributors",
+    "email": ""
+  },
+  "plugins": [
+    {
+      "name": "ms-inspect",
+      "description": "Radio interferometric Measurement Set inspector — MCP tools + skills for VLA/MeerKAT/uGMRT",
+      "version": "0.1.0",
+      "author": {
+        "name": "ms-inspect contributors"
+      },
+      "source": {
+        "source": "url",
+        "url": "https://github.com/skunkworks-ra/data-analyst.git"
+      },
+      "category": "development",
+      "homepage": "https://github.com/skunkworks-ra/data-analyst"
+    }
+  ]
+}
