@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
-from pathlib import Path
+import re
 from typing import Any
 
 import numpy as np
@@ -47,67 +47,57 @@ def _get_n_workers() -> int:
 # Worker function — must be module-level for multiprocessing pickle
 # ---------------------------------------------------------------------------
 
-def _flag_chunk_worker(args: tuple) -> dict[int, tuple[int, int]]:
+def _flag_chunk_worker(args: tuple) -> tuple[np.ndarray, np.ndarray]:
     """
-    Worker: opens the MS table, reads FLAG + ANTENNA1 + ANTENNA2 for a row range.
-    Returns {antenna_id: (n_flagged, n_total)} for all antennas in this chunk.
+    Worker: opens the MS table, reads FLAG + ANTENNA1 + ANTENNA2 for a row
+    range.  Returns (flagged_per_ant, total_per_ant) numpy arrays of shape
+    (n_ant,) with int64 counts.
+
     Autocorrelations (ant1 == ant2) are skipped.
+
+    Following the blacklight pattern: instantiate casatools.table() directly,
+    use getcol with startrow/nrow for chunked access.
     """
     ms_path, start_row, n_rows, n_ant = args
 
-    # Per-antenna accumulators
     flagged = np.zeros(n_ant, dtype=np.int64)
-    total   = np.zeros(n_ant, dtype=np.int64)
+    total = np.zeros(n_ant, dtype=np.int64)
 
-    try:
-        # casatools must be importable in the worker process
-        import casatools  # type: ignore[import]
-        tb = casatools.table()
-        tb.open(ms_path, nomodify=True)
+    from casatools import table  # type: ignore[import]
 
-        try:
-            # FLAG shape: [n_corr, n_chan, n_row_in_chunk]
-            flag_chunk = tb.getcolslice(
-                "FLAG",
-                blc=[0, 0],
-                trc=[-1, -1],
-                startrow=start_row,
-                nrow=n_rows,
-            )
-            ant1_chunk = tb.getcol("ANTENNA1", startrow=start_row, nrow=n_rows)
-            ant2_chunk = tb.getcol("ANTENNA2", startrow=start_row, nrow=n_rows)
-        finally:
-            tb.close()
+    tb = table()
+    tb.open(ms_path, nomodify=True)
 
-        # flag_chunk: [n_corr, n_chan, n_rows_in_chunk]
-        # Collapse across corr and chan: a row is flagged if ALL corr+chan are flagged
-        # (Conservative: use any-flagged per row per antenna contribution)
-        # We count flag fraction as: fraction of (corr * chan * row) elements flagged
-        n_corr, n_chan, n_chunk_rows = flag_chunk.shape
+    # FLAG shape: (n_corr, n_chan, n_rows_in_chunk)
+    flag_chunk = tb.getcol("FLAG", startrow=start_row, nrow=n_rows)
+    ant1 = tb.getcol("ANTENNA1", startrow=start_row, nrow=n_rows)
+    ant2 = tb.getcol("ANTENNA2", startrow=start_row, nrow=n_rows)
 
-        for row_idx in range(n_chunk_rows):
-            a1 = int(ant1_chunk[row_idx])
-            a2 = int(ant2_chunk[row_idx])
+    tb.close()
 
-            # Skip autocorrelations
-            if a1 == a2:
-                continue
+    # Mask out autocorrelations
+    cross = ant1 != ant2
+    if not cross.any():
+        return flagged, total
 
-            row_flags = flag_chunk[:, :, row_idx]  # [n_corr, n_chan]
-            n_total_elements = n_corr * n_chan
-            n_flagged_elements = int(row_flags.sum())
+    ant1 = ant1[cross]
+    ant2 = ant2[cross]
+    flag_chunk = flag_chunk[:, :, cross]  # (n_corr, n_chan, n_cross_rows)
 
-            # Attribute equally to both antennas in the baseline
-            for ant in (a1, a2):
-                if 0 <= ant < n_ant:
-                    flagged[ant] += n_flagged_elements
-                    total[ant]   += n_total_elements
+    n_corr, n_chan, n_cross = flag_chunk.shape
+    elements_per_row = n_corr * n_chan
 
-    except Exception as e:
-        # Worker failure: return zeros (main process will warn)
-        pass
+    # Sum flagged elements per row: collapse corr and chan axes
+    # flag_chunk is bool (n_corr, n_chan, n_cross) → sum over axes 0,1
+    flagged_per_row = flag_chunk.sum(axis=(0, 1))  # (n_cross,)
 
-    return {int(ant): (int(flagged[ant]), int(total[ant])) for ant in range(n_ant)}
+    # Accumulate per-antenna using np.add.at (handles duplicate indices)
+    np.add.at(flagged, ant1, flagged_per_row)
+    np.add.at(flagged, ant2, flagged_per_row)
+    np.add.at(total, ant1, elements_per_row)
+    np.add.at(total, ant2, elements_per_row)
+
+    return flagged, total
 
 
 # ---------------------------------------------------------------------------
@@ -162,26 +152,22 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
     chunks: list[tuple] = []
     for i in range(n_workers):
         start = i * chunk_size
-        size  = chunk_size if i < n_workers - 1 else (n_total_rows - start)
+        size = chunk_size if i < n_workers - 1 else (n_total_rows - start)
         if size > 0:
             chunks.append((ms_str, start, size, n_ant))
 
     casa_calls.append(
-        f"tb.getcolslice(FLAG) + tb.getcol(ANTENNA1, ANTENNA2) "
+        f"tb.getcol(FLAG, ANTENNA1, ANTENNA2) "
         f"in {len(chunks)} parallel chunks ({n_workers} workers)"
     )
 
     # ------------------------------------------------------------------
-    # Parallel reads
+    # Parallel reads — fork context (safe for casatools table access)
     # ------------------------------------------------------------------
-    # Use spawn context for compatibility with casatools (which uses shared
-    # memory internally and can deadlock with fork on some systems)
     try:
-        ctx = mp.get_context("spawn")
+        ctx = mp.get_context("fork")
         with ctx.Pool(processes=n_workers) as pool:
-            chunk_results: list[dict[int, tuple[int, int]]] = pool.map(
-                _flag_chunk_worker, chunks
-            )
+            chunk_results = pool.map(_flag_chunk_worker, chunks)
     except Exception as e:
         warnings.append(
             f"Parallel FLAG read failed ({e}). Falling back to single-process read."
@@ -192,13 +178,11 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
     # Aggregate
     # ------------------------------------------------------------------
     total_flagged = np.zeros(n_ant, dtype=np.int64)
-    total_counts  = np.zeros(n_ant, dtype=np.int64)
+    total_counts = np.zeros(n_ant, dtype=np.int64)
 
-    for result in chunk_results:
-        for ant_id, (nf, nt) in result.items():
-            if 0 <= ant_id < n_ant:
-                total_flagged[ant_id] += nf
-                total_counts[ant_id]  += nt
+    for chunk_flagged, chunk_total in chunk_results:
+        total_flagged += chunk_flagged
+        total_counts += chunk_total
 
     # ------------------------------------------------------------------
     # FLAG_CMD per-antenna online flag commands
@@ -209,11 +193,9 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
             casa_calls.append("tb.open(FLAG_CMD)")
             n_cmd = tb.nrows()
             if n_cmd > 0:
-                commands = tb.getcol("COMMAND") if n_cmd > 0 else []
+                commands = tb.getcol("COMMAND")
                 for cmd in commands:
                     cmd_str = str(cmd)
-                    # Parse "antenna='ea01'" style patterns
-                    import re
                     match = re.search(r"antenna\s*=\s*['\"]?(\w+)['\"]?", cmd_str, re.IGNORECASE)
                     if match:
                         ant_name_in_cmd = match.group(1)
@@ -228,35 +210,35 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
     # ------------------------------------------------------------------
     per_antenna: list[dict] = []
     global_flagged = 0
-    global_total   = 0
+    global_total = 0
 
     for i, name in enumerate(ant_names):
         nf = int(total_flagged[i])
         nt = int(total_counts[i])
         global_flagged += nf
-        global_total   += nt
+        global_total += nt
 
         frac = nf / nt if nt > 0 else 0.0
         frac_flag = "COMPLETE" if nt > 0 else "UNAVAILABLE"
 
         per_antenna.append({
-            "antenna_id":              i,
-            "antenna_name":            name,
-            "flag_fraction":           field(round(frac, 6), flag=frac_flag),
-            "n_flagged_elements":      nf,
-            "n_total_elements":        nt,
-            "n_flag_commands_online":  ant_flag_cmd_counts.get(i, 0),
+            "antenna_id": i,
+            "antenna_name": name,
+            "flag_fraction": field(round(frac, 6), flag=frac_flag),
+            "n_flagged_elements": nf,
+            "n_total_elements": nt,
+            "n_flag_commands_online": ant_flag_cmd_counts.get(i, 0),
         })
 
     overall_frac = global_flagged / global_total if global_total > 0 else 0.0
 
     data = {
-        "overall_flag_fraction":   field(round(overall_frac, 6)),
+        "overall_flag_fraction": field(round(overall_frac, 6)),
         "autocorrelations_excluded": exclude_autocorr,
-        "n_workers_used":          n_workers,
-        "n_total_rows":            n_total_rows,
-        "flag_source":             "FLAG column (parallel read) + FLAG_CMD subtable",
-        "per_antenna":             per_antenna,
+        "n_workers_used": n_workers,
+        "n_total_rows": n_total_rows,
+        "flag_source": "FLAG column (parallel read) + FLAG_CMD subtable",
+        "per_antenna": per_antenna,
     }
 
     return response_envelope(

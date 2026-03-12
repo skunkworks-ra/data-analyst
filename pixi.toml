@@ -1,9 +1,9 @@
-[project]
+[workspace]
 name        = "ms-inspect"
 version     = "0.1.0"
 description = "Radio interferometric Measurement Set inspector — MCP server (Phase 1)"
 channels    = ["conda-forge"]
-platforms   = ["linux-64", "osx-arm64", "osx-64"]
+platforms   = ["linux-64", "osx-arm64"]
 
 # ---------------------------------------------------------------------------
 # Conda-forge dependencies — scientific stack + tooling
@@ -13,7 +13,7 @@ platforms   = ["linux-64", "osx-arm64", "osx-64"]
 # pixi resolves those via pip into this conda environment.
 # ---------------------------------------------------------------------------
 [dependencies]
-python     = ">=3.12,<3.14"   # casatools 6.7.x ships cp312 and cp313 wheels
+python     = ">=3.12,<3.13"   # casatools 6.7.x: cp313 wheels only on linux; pin cp312
 numpy      = ">=1.26"
 astropy    = ">=6.0"
 pytest     = ">=8.0"
@@ -25,8 +25,8 @@ ruff       = ">=0.4"
 [pypi-dependencies]
 ms-inspect       = { path = ".", editable = true }   # this package
 mcp              = { version = ">=1.0", extras = ["cli"] }
-casatools        = ">=6.7"
-casatasks        = ">=6.7"
+# casatools / casatasks: install manually via `pixi run pip install casatools casatasks`
+# (uv resolver doesn't handle macosx_15_0 platform tag on newer macOS)
 pytest-asyncio   = ">=0.23"
 
 # ---------------------------------------------------------------------------
@@ -38,8 +38,7 @@ pytest-asyncio   = ">=0.23"
 serve       = { cmd = "ms-inspect", env = { RADIO_MCP_TRANSPORT = "stdio" } }
 
 # Start the MCP server — HTTP transport (HPC / remote)
-serve-http  = { cmd = "ms-inspect", env = { RADIO_MCP_TRANSPORT = "http",
-                                             RADIO_MCP_PORT = "8000" } }
+serve-http  = { cmd = "ms-inspect", env = { RADIO_MCP_TRANSPORT = "http", RADIO_MCP_PORT = "8000" } }
 
 # Tests
 test        = { cmd = "pytest tests/ -v" }

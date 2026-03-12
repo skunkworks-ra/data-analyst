@@ -1,0 +1,268 @@
+"""
+Integration tests for ms_inspect tools.
+
+Tests use a simulated MS created on-the-fly via casatools.simulator.
+No stored test data required.
+
+For tests against a real MS, set RADIO_MCP_TEST_MS:
+
+    RADIO_MCP_TEST_MS=/path/to/your.ms pytest tests/integration/ -v
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import tempfile
+
+import numpy as np
+import pytest
+
+# ---------------------------------------------------------------------------
+# Simulated MS fixture
+# ---------------------------------------------------------------------------
+
+_SIM_DIR = None
+_SIM_MS = None
+
+
+def _create_simulated_ms(msname: str) -> str:
+    """
+    Create a small simulated MS using casatools.simulator.
+
+    Based on the CASA simulation tutorial by Urvashi Rau:
+    https://github.com/urvashirau/Simulation-in-CASA
+
+    Creates a 5-antenna VLA-like array with 1 SPW (4 channels),
+    RR/LL polarisation, observing a single point source for a short
+    integration.
+    """
+    from casatools import simulator, measures, componentlist, ctsys
+    from casatasks import flagdata
+    from casatasks.private import simutil
+
+    sm = simulator()
+    me = measures()
+    cl = componentlist()
+    mysu = simutil.simutil()
+
+    if os.path.exists(msname):
+        shutil.rmtree(msname)
+
+    sm.open(ms=msname)
+
+    # Use a small VLA config
+    antennalist = os.path.join(ctsys.resolve("alma/simmos"), "vla.d.cfg")
+    (x, y, z, d, an, an2, telname, obspos) = mysu.readantenna(antennalist)
+
+    # Use only first 5 antennas for speed
+    n_ant = 5
+    sm.setconfig(
+        telescopename=telname,
+        x=x[:n_ant],
+        y=y[:n_ant],
+        z=z[:n_ant],
+        dishdiameter=d[:n_ant],
+        mount=["alt-az"],
+        antname=an[:n_ant],
+        coordsystem="local",
+        referencelocation=me.observatory(telname),
+    )
+
+    sm.setfeed(mode="perfect R L", pol=[""])
+    sm.setspwindow(
+        spwname="TestBand",
+        freq="1.0GHz",
+        deltafreq="0.1GHz",
+        freqresolution="0.1GHz",
+        nchannels=4,
+        stokes="RR LL",
+    )
+    sm.setfield(
+        sourcename="test_source",
+        sourcedirection=me.direction(rf="J2000", v0="19h59m28.5s", v1="+40d44m01.5s"),
+    )
+    sm.setlimits(shadowlimit=0.01, elevationlimit="1deg")
+    sm.setauto(autocorrwt=0.0)
+    sm.settimes(
+        integrationtime="60s",
+        usehourangle=True,
+        referencetime=me.epoch("UTC", "2019/10/4/00:00:00"),
+    )
+    sm.observe(sourcename="test_source", spwname="TestBand", starttime="-0.5h", stoptime="+0.5h")
+
+    # Predict a point source so DATA is non-zero
+    clname = msname + ".cl"
+    if os.path.exists(clname):
+        shutil.rmtree(clname)
+    cl.done()
+    cl.addcomponent(
+        dir="J2000 19h59m28.5s +40d44m01.5s",
+        flux=1.0,
+        fluxunit="Jy",
+        freq="1.0GHz",
+        shape="point",
+    )
+    cl.rename(filename=clname)
+    cl.done()
+    sm.predict(complist=clname, incremental=False)
+    sm.close()
+    shutil.rmtree(clname, ignore_errors=True)
+
+    # Ensure all flags start unflagged
+    flagdata(vis=msname, mode="unflag")
+
+    return msname
+
+
+@pytest.fixture(scope="session")
+def sim_ms(tmp_path_factory):
+    """Session-scoped fixture: create a simulated MS once, reuse across tests."""
+    tmpdir = tmp_path_factory.mktemp("sim_ms")
+    msname = str(tmpdir / "test_sim.ms")
+    return _create_simulated_ms(msname)
+
+
+# ---------------------------------------------------------------------------
+# Flag fraction tests against simulated MS
+# ---------------------------------------------------------------------------
+
+
+class TestAntennaFlagFractionSimulated:
+    """Test ms_antenna_flag_fraction against a simulated MS."""
+
+    def test_unflagged_ms_returns_zero(self, sim_ms):
+        """A freshly simulated, unflagged MS should have 0% flags."""
+        from ms_inspect.tools import flags
+
+        result = flags.run(sim_ms)
+
+        assert result["status"] == "ok"
+        assert result["tool"] == "ms_antenna_flag_fraction"
+        assert result["data"]["overall_flag_fraction"]["value"] == 0.0
+
+        for ant in result["data"]["per_antenna"]:
+            if ant["n_total_elements"] > 0:
+                assert ant["flag_fraction"]["value"] == 0.0
+                assert ant["n_flagged_elements"] == 0
+
+    def test_flagged_antenna(self, sim_ms):
+        """Flag one antenna completely and verify its fraction is 1.0."""
+        from casatasks import flagdata
+
+        from ms_inspect.tools import flags
+
+        # Flag antenna 0 completely
+        flagdata(vis=sim_ms, mode="manual", antenna="0")
+
+        result = flags.run(sim_ms)
+        data = result["data"]
+
+        assert result["status"] == "ok"
+
+        # Antenna 0 should be fully flagged
+        ant0 = data["per_antenna"][0]
+        assert ant0["flag_fraction"]["value"] == 1.0
+        assert ant0["n_flagged_elements"] == ant0["n_total_elements"]
+
+        # Overall flag fraction should be > 0
+        assert data["overall_flag_fraction"]["value"] > 0.0
+
+        # Unflag for subsequent tests
+        flagdata(vis=sim_ms, mode="unflag")
+
+    def test_partial_channel_flags(self, sim_ms):
+        """Flag specific channels and verify fraction is correct."""
+        from casatools import table
+
+        from ms_inspect.tools import flags
+
+        # Manually flag channels 0 and 1 (out of 4) for all rows
+        tb = table()
+        tb.open(sim_ms, nomodify=False)
+        flag_col = tb.getcol("FLAG")  # (n_corr, n_chan, n_row)
+        flag_col[:, :, :] = False  # start clean
+        flag_col[:, 0:2, :] = True  # flag first 2 of 4 channels
+        tb.putcol("FLAG", flag_col)
+        tb.close()
+
+        result = flags.run(sim_ms)
+        data = result["data"]
+
+        assert result["status"] == "ok"
+        # 2 out of 4 channels flagged = 50%
+        assert abs(data["overall_flag_fraction"]["value"] - 0.5) < 0.01
+
+        # Unflag for subsequent tests
+        tb = table()
+        tb.open(sim_ms, nomodify=False)
+        flag_col = tb.getcol("FLAG")
+        flag_col[:, :, :] = False
+        tb.putcol("FLAG", flag_col)
+        tb.close()
+
+    def test_per_antenna_consistency(self, sim_ms):
+        """Overall flag fraction should be consistent with per-antenna totals."""
+        from ms_inspect.tools import flags
+
+        result = flags.run(sim_ms)
+        data = result["data"]
+
+        total_flagged = sum(a["n_flagged_elements"] for a in data["per_antenna"])
+        total_elements = sum(a["n_total_elements"] for a in data["per_antenna"])
+
+        if total_elements > 0:
+            computed = total_flagged / total_elements
+            assert abs(computed - data["overall_flag_fraction"]["value"]) < 1e-4
+
+    def test_autocorrelations_excluded(self, sim_ms):
+        from ms_inspect.tools import flags
+
+        result = flags.run(sim_ms)
+        assert result["data"]["autocorrelations_excluded"] is True
+
+    def test_correct_antenna_count(self, sim_ms):
+        from ms_inspect.tools import flags
+
+        result = flags.run(sim_ms)
+        # We created 5 antennas
+        assert len(result["data"]["per_antenna"]) == 5
+
+    def test_n_total_rows_positive(self, sim_ms):
+        from ms_inspect.tools import flags
+
+        result = flags.run(sim_ms)
+        assert result["data"]["n_total_rows"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Tests against a real MS (optional, skipped if RADIO_MCP_TEST_MS not set)
+# ---------------------------------------------------------------------------
+
+_TEST_MS = os.environ.get("RADIO_MCP_TEST_MS")
+_SKIP = pytest.mark.skipif(_TEST_MS is None, reason="RADIO_MCP_TEST_MS not set")
+
+
+@_SKIP
+class TestAntennaFlagFractionReal:
+    """Integration tests for ms_antenna_flag_fraction against a real MS."""
+
+    def test_flag_fraction_returns_ok(self):
+        from ms_inspect.tools import flags
+
+        result = flags.run(_TEST_MS)
+        assert result["status"] == "ok"
+
+    def test_flag_fraction_values_in_range(self):
+        from ms_inspect.tools import flags
+
+        result = flags.run(_TEST_MS)
+        data = result["data"]
+
+        overall = data["overall_flag_fraction"]["value"]
+        assert 0.0 <= overall <= 1.0
+
+        for ant in data["per_antenna"]:
+            frac = ant["flag_fraction"]["value"]
+            assert 0.0 <= frac <= 1.0
+            assert ant["n_flagged_elements"] <= ant["n_total_elements"]
