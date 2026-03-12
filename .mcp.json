@@ -1,13 +1,8 @@
 {
   "mcpServers": {
     "ms-inspect": {
-      "command": "pixi",
-      "args": [
-        "run",
-        "--manifest-path",
-        "${CLAUDE_PLUGIN_ROOT}/pixi.toml",
-        "serve"
-      ],
+      "command": "bash",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/serve.sh"],
       "description": "Radio interferometric MS inspector (stdio transport)"
     }
   }

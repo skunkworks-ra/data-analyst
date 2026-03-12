@@ -23,20 +23,21 @@ Expected: no errors, both directories list files.
 
 ---
 
-## 2. MCP server start (requires pixi + casatools)
+## 2. MCP server start (requires pixi)
 
-Confirm the server entry point works before testing the plugin machinery:
+Test the wrapper script directly — this simulates exactly what Claude Code does on first start:
 
 ```bash
-pixi install
-pixi run pip install casatools casatasks
-
-echo '{}' | pixi run serve
-# Should block waiting for JSON-RPC input (Ctrl-C to exit)
-# A crash here means casatools isn't installed or the entry point is broken
+bash bin/serve.sh
+# First run: pixi install runs (~30s), casatools installs if missing (~2–5 min, ~500 MB)
+# Second run: both checks pass instantly, server starts in <1s
+# Ctrl-C to exit
 ```
 
-Expected: server starts and waits — no traceback.
+Expected: server starts and waits for JSON-RPC input — no traceback.
+
+> **Note:** First start may take 2–5 minutes while casatools downloads (~500 MB).
+> Subsequent starts are fast — the import check short-circuits the pip step.
 
 ---
 
