@@ -1,0 +1,5 @@
+{
+  "name": "ms-inspect",
+  "description": "Radio interferometric Measurement Set inspector — MCP tools for VLA/MeerKAT/uGMRT data analysis",
+  "version": "0.1.0"
+}

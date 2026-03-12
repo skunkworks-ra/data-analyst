@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ms-inspect": {
+      "command": "pixi",
+      "args": ["run", "serve"],
+      "cwd": "/users/ssekhar/src/skunkworks-ra/data-analyst"
+    }
+  }
+}
