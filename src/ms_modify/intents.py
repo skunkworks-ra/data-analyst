@@ -1,0 +1,284 @@
+"""
+intents.py — Populate scan intent metadata in a Measurement Set.
+
+Writes the STATE subtable and updates STATE_ID in the MAIN table, based on
+calibrator catalogue matching and VLA calibrator positional cross-match.
+
+Exposed as the ms_set_intents MCP tool (via server.py) and also callable
+directly as a utility function by skills and scripts.
+"""
+
+from __future__ import annotations
+
+from ms_inspect.util.calibrators import infer_intents_from_role
+from ms_inspect.util.calibrators import lookup as cal_lookup
+from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
+from ms_inspect.util.conversions import rad_to_deg
+from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.vla_calibrators import cone_search as vla_cone_search
+from ms_modify.exceptions import IntentsAlreadyPopulatedError
+
+TOOL_NAME = "set_intents"
+
+# If this fraction or more of fields already have intents, refuse to overwrite.
+_ALREADY_POPULATED_THRESHOLD = 0.50
+
+
+def _compute_intent_map(
+    fields: list[dict],
+) -> list[dict]:
+    """
+    Pure function: compute intent assignments for each field.
+
+    Args:
+        fields: List of dicts with keys: field_id, name, ra_deg, dec_deg,
+                existing_intents (set of strings).
+
+    Returns:
+        List of dicts: {field_id, name, intents, source}.
+        - source is one of: "primary_catalogue", "vla_cone_search", "default_target"
+    """
+    results = []
+
+    for f in fields:
+        fid = f["field_id"]
+        name = f["name"]
+        ra_deg = f["ra_deg"]
+        dec_deg = f["dec_deg"]
+
+        # 1. Primary catalogue match
+        cal_entry = cal_lookup(name)
+        if cal_entry:
+            intents = infer_intents_from_role(cal_entry.role)
+            results.append({
+                "field_id": fid,
+                "name": name,
+                "intents": intents,
+                "source": "primary_catalogue",
+            })
+            continue
+
+        # 2. VLA cone search positional match
+        if ra_deg is not None and dec_deg is not None:
+            try:
+                result = vla_cone_search(ra_deg, dec_deg, radius_arcsec=5.0)
+                if result is not None and result.name:
+                    results.append({
+                        "field_id": fid,
+                        "name": name,
+                        "intents": ["CALIBRATE_PHASE#ON_SOURCE"],
+                        "source": "vla_cone_search",
+                    })
+                    continue
+            except Exception:
+                pass  # graceful fallback — treat as target
+
+        # 3. Default: target
+        results.append({
+            "field_id": fid,
+            "name": name,
+            "intents": ["OBSERVE_TARGET#ON_SOURCE"],
+            "source": "default_target",
+        })
+
+    return results
+
+
+def set_intents(ms_path: str, *, dry_run: bool = False) -> dict:
+    """
+    Populate scan intent metadata in a Measurement Set.
+
+    Reads field names and positions, matches against calibrator catalogues,
+    writes the STATE subtable, and updates STATE_ID in the MAIN table.
+
+    Args:
+        ms_path:  Path to the Measurement Set.
+        dry_run:  If True, compute the mapping but do not write anything.
+
+    Returns:
+        Standard response envelope with the intent mapping and write counts.
+
+    Raises:
+        IntentsAlreadyPopulatedError: If ≥50% of fields already have intents.
+    """
+    import math
+
+    import numpy as np
+
+    p = validate_ms_path(ms_path)
+    casa_calls: list[str] = []
+    warnings: list[str] = []
+
+    # ------------------------------------------------------------------
+    # Step 1: Read fields, positions, existing intents
+    # ------------------------------------------------------------------
+    with open_msmd(str(p)) as msmd:
+        casa_calls.append("msmd.open()")
+
+        field_names = list(msmd.fieldnames())
+        casa_calls.append("msmd.fieldnames()")
+        n_fields = len(field_names)
+
+        fields_info: list[dict] = []
+        for fid in range(n_fields):
+            # Phase centre
+            ra_deg = None
+            dec_deg = None
+            try:
+                pc = msmd.phasecenter(fid)
+                ra_rad = float(pc["m0"]["value"]) % (2 * math.pi)
+                dec_rad = float(pc["m1"]["value"])
+                ra_deg = rad_to_deg(ra_rad)
+                dec_deg = rad_to_deg(dec_rad)
+            except Exception:
+                pass
+            casa_calls.append(f"msmd.phasecenter({fid})")
+
+            # Existing intents
+            try:
+                existing = set(msmd.intentsforfield(fid))
+            except Exception:
+                existing = set()
+            casa_calls.append(f"msmd.intentsforfield({fid})")
+
+            fields_info.append({
+                "field_id": fid,
+                "name": field_names[fid],
+                "ra_deg": ra_deg,
+                "dec_deg": dec_deg,
+                "existing_intents": existing,
+            })
+
+    # ------------------------------------------------------------------
+    # Step 2: Guard — refuse if intents are already populated
+    # ------------------------------------------------------------------
+    n_with_intents = sum(1 for f in fields_info if f["existing_intents"])
+    if n_fields > 0 and n_with_intents / n_fields >= _ALREADY_POPULATED_THRESHOLD:
+        raise IntentsAlreadyPopulatedError(
+            f"{n_with_intents}/{n_fields} fields already have scan intents "
+            f"({n_with_intents / n_fields * 100:.0f}% coverage, "
+            f"threshold {_ALREADY_POPULATED_THRESHOLD * 100:.0f}%). "
+            "Refusing to overwrite existing intent metadata. "
+            "Clear the STATE subtable manually if you want to re-run.",
+            ms_path=ms_path,
+        )
+
+    # ------------------------------------------------------------------
+    # Step 3: Compute intent map
+    # ------------------------------------------------------------------
+    intent_map = _compute_intent_map(fields_info)
+
+    # ------------------------------------------------------------------
+    # Step 4: If dry_run, return without writing
+    # ------------------------------------------------------------------
+    if dry_run:
+        data = {
+            "n_fields": n_fields,
+            "field_intent_map": [
+                {
+                    "field_id": m["field_id"],
+                    "name": m["name"],
+                    "intents": field(m["intents"], flag="INFERRED", note=f"source: {m['source']}"),
+                    "source": m["source"],
+                }
+                for m in intent_map
+            ],
+            "n_unique_states": len({";".join(sorted(m["intents"])) for m in intent_map}),
+            "state_rows_written": 0,
+            "main_rows_updated": 0,
+            "dry_run": True,
+        }
+        warnings.append("Dry run — no changes written to the MS.")
+        return response_envelope(
+            tool_name=TOOL_NAME,
+            ms_path=ms_path,
+            data=data,
+            warnings=warnings,
+            casa_calls=casa_calls,
+        )
+
+    # ------------------------------------------------------------------
+    # Step 5: Write STATE subtable
+    # ------------------------------------------------------------------
+    # Build unique OBS_MODE strings and assign state row indices
+    obs_modes: dict[str, int] = {}  # obs_mode_string -> state_row_index
+    for m in intent_map:
+        obs_mode = ";".join(sorted(m["intents"]))
+        if obs_mode not in obs_modes:
+            obs_modes[obs_mode] = len(obs_modes)
+
+    state_path = str(p / "STATE")
+    with open_table(state_path, read_only=False) as tb:
+        casa_calls.append(f"tb.open('{state_path}', nomodify=False)")
+
+        # Clear existing rows if any (intent-less MSes may have empty STATE)
+        existing_rows = tb.nrows()
+        if existing_rows > 0:
+            tb.removerows(list(range(existing_rows)))
+            casa_calls.append(f"tb.removerows(range({existing_rows}))")
+
+        for obs_mode_str, _row_idx in sorted(obs_modes.items(), key=lambda x: x[1]):
+            tb.addrows(1)
+            row = tb.nrows() - 1
+            has_cal = any(i.startswith("CALIBRATE_") for i in obs_mode_str.split(";"))
+            tb.putcell("OBS_MODE", row, obs_mode_str)
+            tb.putcell("CAL", row, 1.0 if has_cal else 0.0)
+            tb.putcell("SIG", row, True)
+            tb.putcell("SUB_SCAN", row, 0)
+            tb.putcell("FLAG_ROW", row, False)
+            tb.putcell("REF", row, 0)
+        casa_calls.append(f"tb.addrows + tb.putcell for {len(obs_modes)} state rows")
+
+    n_state_rows = len(obs_modes)
+
+    # ------------------------------------------------------------------
+    # Step 6: Update STATE_ID in MAIN table
+    # ------------------------------------------------------------------
+    # Build field_id -> state_row_index mapping
+    field_to_state: dict[int, int] = {}
+    for m in intent_map:
+        obs_mode = ";".join(sorted(m["intents"]))
+        field_to_state[m["field_id"]] = obs_modes[obs_mode]
+
+    with open_table(str(p), read_only=False) as tb:
+        casa_calls.append(f"tb.open('{p}', nomodify=False)")
+
+        field_ids = tb.getcol("FIELD_ID")
+        casa_calls.append("tb.getcol('FIELD_ID')")
+
+        state_ids = np.array(
+            [field_to_state.get(int(fid), 0) for fid in field_ids],
+            dtype=np.int32,
+        )
+        tb.putcol("STATE_ID", state_ids)
+        casa_calls.append("tb.putcol('STATE_ID', state_id_array)")
+
+    n_main_rows = len(field_ids)
+
+    # ------------------------------------------------------------------
+    # Step 7: Return result
+    # ------------------------------------------------------------------
+    data = {
+        "n_fields": n_fields,
+        "field_intent_map": [
+            {
+                "field_id": m["field_id"],
+                "name": m["name"],
+                "intents": field(m["intents"], flag="INFERRED", note=f"source: {m['source']}"),
+                "source": m["source"],
+            }
+            for m in intent_map
+        ],
+        "n_unique_states": n_state_rows,
+        "state_rows_written": n_state_rows,
+        "main_rows_updated": int(n_main_rows),
+        "dry_run": False,
+    }
+
+    return response_envelope(
+        tool_name=TOOL_NAME,
+        ms_path=ms_path,
+        data=data,
+        warnings=warnings,
+        casa_calls=casa_calls,
+    )

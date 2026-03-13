@@ -4,6 +4,11 @@
       "command": "bash",
       "args": ["${CLAUDE_PLUGIN_ROOT}/bin/serve.sh"],
       "description": "Radio interferometric MS inspector (stdio transport)"
+    },
+    "ms-modify": {
+      "command": "bash",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/serve-modify.sh"],
+      "description": "Radio interferometric MS modification utilities (stdio transport)"
     }
   }
 }

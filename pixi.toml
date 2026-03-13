@@ -43,6 +43,12 @@ serve       = { cmd = "ms-inspect", env = { RADIO_MCP_TRANSPORT = "stdio" } }
 # Start the MCP server — HTTP transport (HPC / remote)
 serve-http  = { cmd = "ms-inspect", env = { RADIO_MCP_TRANSPORT = "http", RADIO_MCP_PORT = "8000" } }
 
+# Start the ms-modify server — stdio transport
+serve-modify      = { cmd = "ms-modify", env = { RADIO_MCP_TRANSPORT = "stdio" } }
+
+# Start the ms-modify server — HTTP transport
+serve-modify-http = { cmd = "ms-modify", env = { RADIO_MCP_TRANSPORT = "http", RADIO_MCP_PORT = "8001" } }
+
 # Tests
 test        = { cmd = "pytest tests/ -v" }
 test-unit   = { cmd = "pytest tests/unit/ -v" }

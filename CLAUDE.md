@@ -51,6 +51,11 @@ ms-inspect/
 ├── pyproject.toml                 ← build metadata and tooling config
 ├── README.md
 ├── src/
+│   ├── ms_modify/
+│   │   ├── __init__.py            ← version string
+│   │   ├── server.py              ← FastMCP entry point (write utilities)
+│   │   ├── exceptions.py          ← ms_modify error types
+│   │   └── intents.py             ← set_intents utility function
 │   └── ms_inspect/
 │       ├── __init__.py            ← version string
 │       ├── server.py              ← FastMCP entry point, all 12 tools registered
@@ -73,9 +78,11 @@ ms-inspect/
 │   ├── unit/                      ← no CASA required, runs everywhere
 │   │   ├── test_conversions.py
 │   │   ├── test_calibrators.py
-│   │   └── test_formatting.py
+│   │   ├── test_formatting.py
+│   │   └── test_set_intents.py
 │   └── integration/               ← requires RADIO_MCP_TEST_MS + casatools
-│       └── test_tools.py
+│       ├── test_tools.py
+│       └── test_set_intents.py
 └── skill/
     └── SKILL.md                   ← interferometrist reasoning document (separate)
 ```
@@ -95,6 +102,10 @@ pixi run serve
 
 # Start the MCP server (HTTP transport — for HPC / remote)
 pixi run serve-http
+
+# Start the ms-modify server (stdio / HTTP)
+pixi run serve-modify
+pixi run serve-modify-http
 
 # Run unit tests (no CASA, no MS required)
 pixi run test-unit
@@ -145,6 +156,27 @@ Environment variable reference:
 | `ms_parallactic_angle_vs_time` | `tools/geometry.py` | astropy LST + atan2 |
 | `ms_shadowing_report` | `tools/shadowing.py` | `msmd.shadowedAntennas()` |
 | `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` parallel reads |
+
+---
+
+## Write utilities (ms_modify)
+
+The `ms_modify` package contains tools and utilities that **write** to the MS.
+It has its own FastMCP server entry point (`ms_modify.server`) separate from the
+read-only `ms_inspect` server. Functions are also callable directly by skills
+and scripts.
+
+| Tool | Module | What it does |
+|------|--------|-------------|
+| `ms_set_intents` | `ms_modify/intents.py` | Populate STATE subtable and STATE_ID from calibrator catalogue matching |
+
+`set_intents` logic:
+1. Read fields + positions via `open_msmd`
+2. Guard: raise `IntentsAlreadyPopulatedError` if ≥50% of fields have intents
+3. Match fields against primary catalogue (`calibrators.lookup`) and VLA cone search
+4. Write STATE rows (OBS_MODE, CAL, SIG, SUB_SCAN, FLAG_ROW, REF)
+5. Bulk-update STATE_ID in MAIN table
+6. Supports `dry_run=True` to preview mapping without writing
 
 ---
 
@@ -206,6 +238,7 @@ in `data`. Computed automatically by `util/formatting.response_envelope()`.
 | `CASA_NOT_AVAILABLE` | casatools not installed | install instructions |
 | `CASA_OPEN_FAILED` | casatools exception on open | original exception text |
 | `COMPUTATION_ERROR` | Internal derived-quantity error | — |
+| `INTENTS_ALREADY_POPULATED` | ≥50% of fields already have intents (ms_modify) | field count, coverage % |
 
 `INSUFFICIENT_METADATA` is the most important. It is raised — never silently
 degraded — when missing metadata would make all telescope-specific quantities

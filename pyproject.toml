@@ -36,12 +36,13 @@ casa = [
 
 [project.scripts]
 ms-inspect = "ms_inspect.server:main"
+ms-modify = "ms_modify.server:main"
 
 # ---------------------------------------------------------------------------
 # Hatch — source layout
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
-packages = ["src/ms_inspect"]
+packages = ["src/ms_inspect", "src/ms_modify"]
 
 # ---------------------------------------------------------------------------
 # Ruff

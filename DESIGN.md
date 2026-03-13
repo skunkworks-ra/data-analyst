@@ -841,6 +841,42 @@ On tool error:
 
 ---
 
+## 8b. Write Utilities (ms_modify)
+
+While `ms_inspect` is strictly read-only, the companion `ms_modify` package
+provides utility functions that write to the MS. These are **not** MCP tools —
+they are called programmatically by skills and scripts when metadata repair is
+needed before calibration can proceed.
+
+### `set_intents` (ms_modify/intents.py)
+
+**Problem solved:** Many MSes (UVFITS imports, older VLA archives, GMRT LTA
+exports) lack scan intent metadata. The `ms_inspect` tools detect this
+(heuristic mode in `ms_field_list`, §3.1) but can only infer intents
+read-only. `set_intents` actually populates the STATE subtable so that
+downstream calibration tools see real intents.
+
+**Intent assignment pipeline:**
+1. Primary calibrator catalogue match (`calibrators.lookup`) → flux/bandpass intents
+2. VLA calibrator positional cross-match (`vla_calibrators.cone_search`, 5 arcsec radius) → phase intent
+3. No match → `OBSERVE_TARGET#ON_SOURCE`
+
+**Guard:** If ≥50% of fields already have non-empty intents, raises
+`IntentsAlreadyPopulatedError`. This prevents accidental overwrites of
+legitimate intent metadata.
+
+**Write sequence:**
+1. Clear and repopulate STATE subtable (OBS_MODE, CAL, SIG, SUB_SCAN, FLAG_ROW, REF)
+2. Bulk-update STATE_ID column in MAIN table via `tb.putcol`
+3. STATE table is closed before MAIN table is opened (avoids lock contention)
+
+**Limitations:**
+- Assigns one intent set per field (assumes intent doesn't vary by scan for the same field)
+- Not atomic — partial failure leaves inconsistent MS, but the guard prevents re-run on partially-written state
+- VLA cone search requires network on first call; gracefully falls back to `OBSERVE_TARGET` if unavailable
+
+---
+
 ## 9. Out of Scope for Phase 1
 
 The following are explicitly deferred to later phases:

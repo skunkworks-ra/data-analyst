@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 
+from ms_inspect.util.calibrators import infer_intents_from_role
 from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, validate_ms_path
 from ms_inspect.util.conversions import rad_to_deg, rad_to_dms, rad_to_hms
@@ -141,7 +142,7 @@ def run(ms_path: str) -> dict:
         if intents:
             intent_field = field(sorted(intents), flag="COMPLETE")
         elif heuristic_mode and cal_entry:
-            inferred = _infer_intents_from_role(cal_entry.role)
+            inferred = infer_intents_from_role(cal_entry.role)
             intent_field = field(
                 inferred,
                 flag="INFERRED",
@@ -305,10 +306,3 @@ def _vla_positional_match(
     return field(match_data, flag=flag_val, note=note)
 
 
-def _infer_intents_from_role(role: list[str]) -> list[str]:
-    """Map catalogue roles to CASA-style intent strings."""
-    intent_map = {
-        "flux": "CALIBRATE_FLUX#ON_SOURCE",
-        "bandpass": "CALIBRATE_BANDPASS#ON_SOURCE",
-    }
-    return [intent_map[r] for r in role if r in intent_map]

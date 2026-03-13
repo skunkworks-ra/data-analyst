@@ -250,6 +250,24 @@ def lookup(field_name: str) -> CalibratorEntry | None:
     return None
 
 
+def infer_intents_from_role(role: list[str]) -> list[str]:
+    """
+    Map catalogue roles to CASA-style intent strings.
+
+    Args:
+        role: List of role strings (e.g. ['flux', 'bandpass']).
+
+    Returns:
+        List of CASA intent strings (e.g. ['CALIBRATE_FLUX#ON_SOURCE',
+        'CALIBRATE_BANDPASS#ON_SOURCE']).
+    """
+    intent_map = {
+        "flux": "CALIBRATE_FLUX#ON_SOURCE",
+        "bandpass": "CALIBRATE_BANDPASS#ON_SOURCE",
+    }
+    return [intent_map[r] for r in role if r in intent_map]
+
+
 def is_known_calibrator(field_name: str) -> bool:
     """True if the field name matches any entry in the catalogue."""
     return lookup(field_name) is not None
