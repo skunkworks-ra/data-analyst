@@ -33,8 +33,11 @@ from ms_inspect.tools import (
     flags,
     geometry,
     observation,
+    online_flags,
     pol_cal_feasibility,
+    priorcals_check,
     refant,
+    residual_stats,
     rfi,
     scans,
     shadowing,
@@ -157,6 +160,47 @@ class FlagSummaryInput(BaseModel):
     ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
     field: str = Field(default="", description="CASA field selection (empty = all).")
     spw: str = Field(default="", description="CASA SpW selection (empty = all).")
+
+
+class OnlineFlagStatsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    flag_file: str = Field(
+        ...,
+        description="Path to the .flagonline.txt file produced by importasdm.",
+        min_length=1,
+    )
+
+
+class VerifyPriorcalsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the MS (for provenance).", min_length=1)
+    workdir: str = Field(
+        ...,
+        description="Directory where ms_generate_priorcals wrote its tables.",
+        min_length=1,
+    )
+    table_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Specific table filenames to check (default: all four standard tables). "
+            "Example: ['gain_curves.gc', 'opacities.opac']"
+        ),
+    )
+
+
+class ResidualStatsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the MS (CORRECTED + MODEL must exist).", min_length=1)
+    field_id: int = Field(
+        ...,
+        description="Integer FIELD_ID of the bandpass calibrator (use ms_field_list to find it).",
+        ge=0,
+    )
+    max_rows: int = Field(
+        default=500_000,
+        description="Maximum rows to read; rows are sampled uniformly if larger (default 500 000).",
+        ge=1,
+    )
 
 
 class BaselineLengthInput(BaseModel):
@@ -744,6 +788,106 @@ async def ms_pol_cal_feasibility(params: PolCalFeasibilityInput) -> str:
         pol_cal_feasibility.run,
         params.ms_path,
         params.pa_spread_threshold_deg,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pre-calibration inspect tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="ms_online_flag_stats",
+    annotations={
+        "title": "Online Flag File Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_online_flag_stats(params: OnlineFlagStatsInput) -> str:
+    """
+    Parse a .flagonline.txt and return summary statistics.
+
+    No CASA dependency — pure text parsing. Reads the online flag file
+    produced by importasdm and returns the total command count, antennas
+    flagged, reason code breakdown, and first/last time range seen.
+
+    Args:
+        params.flag_file: Path to the .flagonline.txt file.
+
+    Returns:
+        JSON with n_commands, n_antennas_flagged, antennas_flagged,
+        reason_breakdown, and time_range (first and last seen).
+    """
+    return _run_tool(online_flags.run, params.flag_file)
+
+
+@mcp.tool(
+    name="ms_verify_priorcals",
+    annotations={
+        "title": "Verify Prior Calibration Tables",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_verify_priorcals(params: VerifyPriorcalsInput) -> str:
+    """
+    Verify prior calibration tables from ms_generate_priorcals exist and are non-empty.
+
+    Checks each expected table (gain_curves.gc, opacities.opac, requantizer.rq,
+    antpos.ap by default) for filesystem presence and CASA table row count.
+    No casatasks required.
+
+    Args:
+        params.ms_path:     Path to the MS (for provenance).
+        params.workdir:     Directory where ms_generate_priorcals wrote its tables.
+        params.table_names: Specific table filenames to check (default: all four).
+
+    Returns:
+        JSON with all_valid, n_checked, n_valid, n_missing, and per-table check results.
+    """
+    return _run_tool(
+        priorcals_check.run,
+        params.ms_path,
+        params.workdir,
+        params.table_names or None,
+    )
+
+
+@mcp.tool(
+    name="ms_residual_stats",
+    annotations={
+        "title": "Residual Amplitude Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_residual_stats(params: ResidualStatsInput) -> str:
+    """
+    Compute per-SPW amplitude statistics of CORRECTED − MODEL for a field.
+
+    Use before ms_apply_initial_rflag to choose thresholds, and after to verify
+    the residual distribution improved. Requires CORRECTED and MODEL columns
+    (run initial_bandpass.py and setjy.py first).
+
+    Args:
+        params.ms_path:   Path to the MS.
+        params.field_id:  Integer FIELD_ID of the bandpass calibrator.
+        params.max_rows:  Maximum rows to read per field (default 500 000).
+
+    Returns:
+        JSON with per-spw median_amp, std_amp, p95_amp, n_unflagged, n_flagged.
+    """
+    return _run_tool(
+        residual_stats.run,
+        params.ms_path,
+        params.field_id,
+        params.max_rows,
     )
 
 

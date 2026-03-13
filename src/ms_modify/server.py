@@ -16,7 +16,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect.exceptions import RadioMSError
-from ms_modify import __version__, initial_bandpass, intents, rflag
+from ms_modify import __version__, initial_bandpass, initial_rflag, intents, preflag, priorcals, rflag, setjy
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -297,6 +297,274 @@ async def ms_apply_rflag(params: ApplyRflagInput) -> str:
         params.datacolumn,
         params.timedevscale,
         params.freqdevscale,
+        params.execute,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Input models — Preflag
+# ---------------------------------------------------------------------------
+
+class ApplyPreflagInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the full MS.", min_length=1)
+    workdir: str = Field(..., description="Existing output directory.", min_length=1)
+    cal_fields: str = Field(
+        ...,
+        description="CASA field selection string for calibrators (e.g. '3C147,3C286').",
+        min_length=1,
+    )
+    online_flag_file: str = Field(
+        default="",
+        description="Path to .flagonline.txt from importasdm (empty = skip).",
+    )
+    shadow_tolerance_m: float = Field(
+        default=0.0,
+        description="Shadow tolerance in metres (default 0.0).",
+        ge=0.0,
+    )
+    do_tfcrop: bool = Field(
+        default=True,
+        description="Apply conservative tfcrop pass (default True).",
+    )
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write preflag_cmds.txt + preflag.py and return. "
+            "If True, run flagdata(mode='list') + split in-process."
+        ),
+    )
+
+
+class GeneratePriorcalsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the MS (calibrators.ms or full MS).", min_length=1)
+    workdir: str = Field(..., description="Existing directory for caltable output.", min_length=1)
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write priorcals.py and return. "
+            "If True, run gencal in-process for all four tables."
+        ),
+    )
+
+
+class SetjyInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to calibrators.ms (or full MS).", min_length=1)
+    workdir: str = Field(..., description="Existing directory for setjy.py script.", min_length=1)
+    standard: str = Field(
+        default="Perley-Butler 2017",
+        description="Flux standard to use (default 'Perley-Butler 2017').",
+    )
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write setjy.py and return. "
+            "If True, run setjy in-process for each flux field."
+        ),
+    )
+
+
+class ApplyInitialRflagInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(
+        ...,
+        description="Path to the MS (CORRECTED + MODEL must exist).",
+        min_length=1,
+    )
+    workdir: str = Field(..., description="Existing directory for generated scripts.", min_length=1)
+    timedevscale: float = Field(
+        default=5.0,
+        description="rflag time deviation threshold (default 5.0).",
+        gt=0.0,
+    )
+    freqdevscale: float = Field(
+        default=5.0,
+        description="rflag frequency deviation threshold (default 5.0).",
+        gt=0.0,
+    )
+    timecutoff: float = Field(
+        default=4.0,
+        description="tfcrop time deviation threshold (default 4.0).",
+        gt=0.0,
+    )
+    freqcutoff: float = Field(
+        default=4.0,
+        description="tfcrop frequency deviation threshold (default 4.0).",
+        gt=0.0,
+    )
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write initial_rflag_cmds.txt + initial_rflag.py and return. "
+            "If True, run flagdata(mode='list') in-process."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tools — Preflag
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="ms_apply_preflag",
+    annotations={
+        "title": "Apply Pre-Calibration Flags",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_apply_preflag(params: ApplyPreflagInput) -> str:
+    """
+    Apply deterministic pre-calibration flags and split calibrators to a separate MS.
+
+    Combines online flags, shadow, zero-clip, tfcrop, and polarization extension
+    in a single flagdata(mode='list') pass for efficiency and auditability.
+    After flagging, calibrator fields are split to workdir/calibrators.ms with
+    keepflags=False.
+
+    Args:
+        params.ms_path:          Path to the full MS.
+        params.workdir:          Existing output directory.
+        params.cal_fields:       CASA field selection for calibrators.
+        params.online_flag_file: Path to .flagonline.txt (empty = skip).
+        params.shadow_tolerance_m: Shadow tolerance in metres.
+        params.do_tfcrop:        Apply conservative tfcrop (default True).
+        params.execute:          Generate scripts only (False) or run in-process (True).
+
+    Returns:
+        JSON with cmds_path, script_path, n_flag_commands, and (if execute=True) cal_ms.
+    """
+    return _run_tool(
+        preflag.run,
+        params.ms_path,
+        params.workdir,
+        params.cal_fields,
+        params.online_flag_file,
+        params.shadow_tolerance_m,
+        params.do_tfcrop,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_generate_priorcals",
+    annotations={
+        "title": "Generate Prior Calibration Tables",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> str:
+    """
+    Generate the four deterministic prior calibration tables (gc, opac, rq, antpos).
+
+    Tables generated via gencal in order:
+      1. gain_curves.gc   — VLA elevation gain curves
+      2. opacities.opac   — per-SPW zenith opacity
+      3. requantizer.rq   — post-2011 VLA requantizer (skipped for pre-WIDAR data)
+      4. antpos.ap        — antenna position corrections (skipped if empty)
+
+    The returned 'priorcals' list is the canonical input to ms_initial_bandpass.
+
+    Args:
+        params.ms_path:  Path to the MS.
+        params.workdir:  Existing directory for caltable output.
+        params.execute:  Generate script only (False) or run gencal in-process (True).
+
+    Returns:
+        JSON with script_path, and (if execute=True) priorcals list and skipped list.
+    """
+    return _run_tool(
+        priorcals.run,
+        params.ms_path,
+        params.workdir,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_setjy",
+    annotations={
+        "title": "Set Flux Density Models",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_setjy(params: SetjyInput) -> str:
+    """
+    Set flux density models for standard VLA calibrators in the MS.
+
+    Cross-matches observed fields against the bundled calibrator catalogue,
+    then generates (or runs) setjy() for each flux standard found, using the
+    Perley-Butler 2017 standard. Warns if 3C84 (resolved) or 3C138/3C48
+    (variable/partially polarized) are present.
+
+    Does NOT set polarization angle models (see CALPOL.md tools).
+
+    Args:
+        params.ms_path:   Path to calibrators.ms.
+        params.workdir:   Existing directory for setjy.py script.
+        params.standard:  Flux standard (default 'Perley-Butler 2017').
+        params.execute:   Generate script only (False) or run setjy in-process (True).
+
+    Returns:
+        JSON with flux_fields, skipped_fields, warnings, and script_path.
+    """
+    return _run_tool(
+        setjy.run,
+        params.ms_path,
+        params.workdir,
+        params.standard,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_apply_initial_rflag",
+    annotations={
+        "title": "Apply Initial RFI Flagging on Residuals",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
+    """
+    Run rflag + tfcrop on the residual column (CORRECTED − MODEL) in one pass.
+
+    After ms_initial_bandpass populates CORRECTED, this tool flags RFI using
+    both rflag and tfcrop on the residual signal in a single atomic
+    flagdata(mode='list') call. flagbackup=True saves a versioned copy before flagging.
+
+    Args:
+        params.ms_path:      Path to the MS (CORRECTED + MODEL must exist).
+        params.workdir:      Existing directory for generated scripts.
+        params.timedevscale: rflag time deviation threshold (default 5.0).
+        params.freqdevscale: rflag frequency deviation threshold (default 5.0).
+        params.timecutoff:   tfcrop time deviation threshold (default 4.0).
+        params.freqcutoff:   tfcrop frequency deviation threshold (default 4.0).
+        params.execute:      Generate scripts only (False) or run in-process (True).
+
+    Returns:
+        JSON with cmds_path, script_path, thresholds, and (if execute=True) flags_applied.
+    """
+    return _run_tool(
+        initial_rflag.run,
+        params.ms_path,
+        params.workdir,
+        params.timedevscale,
+        params.freqdevscale,
+        params.timecutoff,
+        params.freqcutoff,
         params.execute,
     )
 

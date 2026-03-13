@@ -488,3 +488,108 @@ class TestApplyRflagReal:
         assert result["status"] == "ok"
         import os
         assert os.path.exists(os.path.join(str(tmp_path), "apply_rflag.py"))
+
+
+@_SKIP
+class TestApplyPreflagReal:
+    """Integration tests for ms_apply_preflag against a real MS."""
+
+    def test_script_generation_only(self, tmp_path):
+        from ms_modify.preflag import run
+        from ms_inspect.tools.fields import run as fields_run
+        fields_result = fields_run(_TEST_MS)
+        cal_field = fields_result["data"]["fields"][0]["name"]
+        result = run(_TEST_MS, workdir=str(tmp_path), cal_fields=cal_field, execute=False)
+        assert result["status"] == "ok"
+        import os
+        assert os.path.exists(os.path.join(str(tmp_path), "preflag_cmds.txt"))
+        assert os.path.exists(os.path.join(str(tmp_path), "preflag.py"))
+
+    def test_n_flag_commands_positive(self, tmp_path):
+        from ms_modify.preflag import run
+        from ms_inspect.tools.fields import run as fields_run
+        fields_result = fields_run(_TEST_MS)
+        cal_field = fields_result["data"]["fields"][0]["name"]
+        result = run(_TEST_MS, workdir=str(tmp_path), cal_fields=cal_field, execute=False)
+        assert result["data"]["n_flag_commands"]["value"] >= 3
+
+
+@_SKIP
+class TestGeneratePriorcalsReal:
+    """Integration tests for ms_generate_priorcals against a real MS."""
+
+    def test_script_generation_only(self, tmp_path):
+        from ms_modify.priorcals import run
+        result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
+        assert result["status"] == "ok"
+        import os
+        assert os.path.exists(os.path.join(str(tmp_path), "priorcals.py"))
+
+    def test_script_contains_four_gencal_types(self, tmp_path):
+        from ms_modify.priorcals import run
+        run(_TEST_MS, workdir=str(tmp_path), execute=False)
+        import os
+        script = open(os.path.join(str(tmp_path), "priorcals.py")).read()
+        for caltype in ("gc", "opac", "rq", "antpos"):
+            assert caltype in script
+
+
+@_SKIP
+class TestVerifyPriorcalsReal:
+    """Integration tests for ms_verify_priorcals."""
+
+    def test_missing_tables_reported(self, tmp_path):
+        from ms_inspect.tools.priorcals_check import run
+        result = run(_TEST_MS, str(tmp_path))
+        assert result["status"] == "ok"
+        assert result["data"]["n_missing"]["value"] == 4
+        assert not result["data"]["all_valid"]["value"]
+
+
+@_SKIP
+class TestSetjyReal:
+    """Integration tests for ms_setjy against a real MS."""
+
+    def test_script_generation_only(self, tmp_path):
+        from ms_modify.setjy import run
+        result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
+        assert result["status"] == "ok"
+        import os
+        assert os.path.exists(os.path.join(str(tmp_path), "setjy.py"))
+
+    def test_response_has_flux_fields(self, tmp_path):
+        from ms_modify.setjy import run
+        result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
+        assert "flux_fields" in result["data"]
+
+
+@_SKIP
+class TestApplyInitialRflagReal:
+    """Integration tests for ms_apply_initial_rflag against a real MS."""
+
+    def test_script_generation_only(self, tmp_path):
+        from ms_modify.initial_rflag import run
+        result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
+        assert result["status"] == "ok"
+        import os
+        assert os.path.exists(os.path.join(str(tmp_path), "initial_rflag_cmds.txt"))
+        assert os.path.exists(os.path.join(str(tmp_path), "initial_rflag.py"))
+
+    def test_cmds_file_has_two_lines(self, tmp_path):
+        from ms_modify.initial_rflag import run
+        import os
+        run(_TEST_MS, workdir=str(tmp_path), execute=False)
+        cmds = open(os.path.join(str(tmp_path), "initial_rflag_cmds.txt")).read()
+        lines = [l for l in cmds.splitlines() if l.strip()]
+        assert len(lines) == 2
+
+
+@_SKIP
+class TestResidualStatsReal:
+    """Integration tests for ms_residual_stats against a real MS."""
+
+    def test_basic_run(self):
+        from ms_inspect.tools.residual_stats import run
+        result = run(_TEST_MS, field_id=0)
+        assert result["status"] == "ok"
+        assert "per_spw" in result["data"]
