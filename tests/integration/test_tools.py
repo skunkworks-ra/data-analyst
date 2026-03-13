@@ -406,3 +406,85 @@ class TestInitialBandpassReal:
     def test_provenance_has_three_steps(self, bp_result):
         calls = bp_result["provenance"]["casa_calls"]
         assert len(calls) == 3
+
+
+@_SKIP
+class TestVerifyCaltablesReal:
+    """Integration tests for ms_verify_caltables against caltables from a real run."""
+
+    def test_verify_after_bandpass(self, tmp_path):
+        from ms_inspect.tools.refant import run as refant_run
+        from ms_modify.initial_bandpass import run as bp_run
+        from ms_inspect.tools.caltables import run as verify_run
+        from ms_inspect.tools.fields import run as fields_run
+
+        workdir = str(tmp_path)
+        refant_result = refant_run(_TEST_MS)
+        ref_ant = refant_result["data"]["refant"]["value"]
+
+        fields_result = fields_run(_TEST_MS)
+        bp_field = None
+        for f in fields_result["data"]["fields"]:
+            intents = f.get("intents", {}).get("value", [])
+            if any("BANDPASS" in i for i in intents):
+                bp_field = f["name"]
+                break
+        if bp_field is None:
+            pytest.skip("No CALIBRATE_BANDPASS field found in test MS")
+
+        bp_run(_TEST_MS, bp_field=bp_field, ref_ant=ref_ant, workdir=workdir, execute=True)
+
+        import os
+        init_gain = os.path.join(workdir, "init_gain.g")
+        bp_table = os.path.join(workdir, "BP0.b")
+        result = verify_run(_TEST_MS, init_gain, bp_table)
+        assert result["status"] == "ok"
+        assert result["data"]["caltables_valid"]["value"] is True
+
+
+@_SKIP
+class TestRfiChannelStatsReal:
+    """Integration test for ms_rfi_channel_stats against a real MS."""
+
+    def test_basic_run(self):
+        from ms_inspect.tools.rfi import run
+        result = run(_TEST_MS)
+        assert result["status"] == "ok"
+        assert "per_spw" in result["data"]
+
+    def test_returns_list(self):
+        from ms_inspect.tools.rfi import run
+        result = run(_TEST_MS)
+        assert isinstance(result["data"]["per_spw"], list)
+
+
+@_SKIP
+class TestFlagSummaryReal:
+    """Integration test for ms_flag_summary against a real MS."""
+
+    def test_basic_run(self):
+        from ms_inspect.tools.flag_summary import run
+        result = run(_TEST_MS)
+        assert result["status"] == "ok"
+        assert "total_flag_fraction" in result["data"]
+        assert "per_antenna" in result["data"]
+
+    def test_field_selection(self):
+        from ms_inspect.tools.flag_summary import run
+        from ms_inspect.tools.fields import run as fields_run
+        fields_result = fields_run(_TEST_MS)
+        first_field = fields_result["data"]["fields"][0]["name"]
+        result = run(_TEST_MS, field=first_field)
+        assert result["status"] == "ok"
+
+
+@_SKIP
+class TestApplyRflagReal:
+    """Integration tests for ms_apply_rflag against a real MS."""
+
+    def test_script_generation_only(self, tmp_path):
+        from ms_modify.rflag import run
+        result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
+        assert result["status"] == "ok"
+        import os
+        assert os.path.exists(os.path.join(str(tmp_path), "apply_rflag.py"))

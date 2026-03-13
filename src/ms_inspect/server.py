@@ -27,12 +27,15 @@ from ms_inspect import __version__
 from ms_inspect.exceptions import RadioMSError
 from ms_inspect.tools import (
     antennas,
+    caltables,
     fields,
+    flag_summary,
     flags,
     geometry,
     observation,
     pol_cal_feasibility,
     refant,
+    rfi,
     scans,
     shadowing,
     spectral,
@@ -125,6 +128,35 @@ class RefAntInput(BaseModel):
         default=True,
         description="Score antennas by unflagged data fraction.",
     )
+
+
+class VerifyCaltablesInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set (for provenance).", min_length=1)
+    init_gain_table: str = Field(..., description="Path to init_gain.g caltable.", min_length=1)
+    bp_table: str = Field(..., description="Path to BP0.b caltable.", min_length=1)
+
+
+class RfiChannelStatsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
+    flag_threshold: float = Field(
+        default=0.5,
+        description="Channel flag fraction threshold (0–1) above which a channel is 'bad' (default 0.5).",
+        ge=0.0, le=1.0,
+    )
+    min_bad_chan_run: int = Field(
+        default=1,
+        description="Minimum contiguous bad channels to report as a range (default 1).",
+        ge=1,
+    )
+
+
+class FlagSummaryInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
+    field: str = Field(default="", description="CASA field selection (empty = all).")
+    spw: str = Field(default="", description="CASA SpW selection (empty = all).")
 
 
 class BaselineLengthInput(BaseModel):
@@ -571,6 +603,105 @@ async def ms_refant(params: RefAntInput) -> str:
         params.use_geometry,
         params.use_flagging,
     )
+
+
+# ---------------------------------------------------------------------------
+# Calibration verification + RFI + flag summary
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="ms_verify_caltables",
+    annotations={
+        "title": "Verify Calibration Tables",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_verify_caltables(params: VerifyCaltablesInput) -> str:
+    """
+    Verify that caltables from ms_initial_bandpass exist and are structurally sound.
+
+    Checks:
+      1. Both paths exist as non-empty directories.
+      2. init_gain.g has CPARAM column and > 0 rows.
+      3. BP0.b has CPARAM or FPARAM column and > 0 rows.
+
+    Run this after executing the script produced by ms_initial_bandpass.
+
+    Args:
+        params.ms_path:         Source MS (for provenance — not opened).
+        params.init_gain_table: Path to init_gain.g.
+        params.bp_table:        Path to BP0.b.
+
+    Returns:
+        JSON with caltables_valid, and per-table exists/n_rows/valid fields.
+    """
+    return _run_tool(
+        caltables.run,
+        params.ms_path,
+        params.init_gain_table,
+        params.bp_table,
+    )
+
+
+@mcp.tool(
+    name="ms_rfi_channel_stats",
+    annotations={
+        "title": "RFI Channel Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> str:
+    """
+    Identify RFI-contaminated channels from the FLAG column.
+
+    Reads FLAG + DATA_DESC_ID in parallel chunks. Returns per-SpW bad-channel
+    ranges with frequency annotations from a bundled RFI catalogue
+    (GPS, GSM, Iridium, WiFi, etc.).
+
+    Args:
+        params.ms_path:         Path to the Measurement Set.
+        params.flag_threshold:  Flag fraction threshold (default 0.5).
+        params.min_bad_chan_run: Minimum contiguous bad channels for a range (default 1).
+
+    Returns:
+        JSON with per_spw array of bad channel ranges and RFI candidate annotations.
+    """
+    return _run_tool(rfi.run, params.ms_path, params.flag_threshold, params.min_bad_chan_run)
+
+
+@mcp.tool(
+    name="ms_flag_summary",
+    annotations={
+        "title": "Flag Summary",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_flag_summary(params: FlagSummaryInput) -> str:
+    """
+    Return a complete flag statistics summary for the MS.
+
+    Calls casatasks.flagdata(mode='summary'). Returns per-field, per-scan,
+    per-SpW, and per-antenna flag fractions. Use before and after ms_apply_rflag
+    to capture the flag delta.
+
+    Args:
+        params.ms_path: Path to the Measurement Set.
+        params.field:   CASA field selection (empty = all).
+        params.spw:     CASA SpW selection (empty = all).
+
+    Returns:
+        JSON with total_flag_fraction, per_field, per_spw, per_antenna, per_scan.
+    """
+    return _run_tool(flag_summary.run, params.ms_path, params.field, params.spw)
 
 
 # ---------------------------------------------------------------------------

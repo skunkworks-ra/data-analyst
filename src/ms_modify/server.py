@@ -16,7 +16,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect.exceptions import RadioMSError
-from ms_modify import __version__, initial_bandpass, intents
+from ms_modify import __version__, initial_bandpass, intents, rflag
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -45,12 +45,24 @@ class SetIntentsInput(BaseModel):
         ),
         min_length=1,
     )
-    dry_run: bool = Field(
+    execute: bool = Field(
         default=False,
         description=(
-            "If true, compute and return the intent mapping without writing "
-            "anything to the MS. Use this to preview before committing."
+            "If False (default), compute the intent mapping and return a preview. "
+            "If workdir is provided, also write workdir/set_intents.py. "
+            "If True, write the STATE subtable and update MAIN STATE_ID."
         ),
+    )
+    workdir: str = Field(
+        default="",
+        description=(
+            "Directory for the generated set_intents.py script. "
+            "Only used when execute=False. Empty = skip script generation."
+        ),
+    )
+    dry_run: bool | None = Field(
+        default=None,
+        description="Deprecated alias for not execute. Use execute instead.",
     )
 
 
@@ -94,6 +106,33 @@ class InitialBandpassInput(BaseModel):
         description=(
             "UV range restriction (e.g. '>1klambda'). "
             "Set for 3C84 to exclude extended emission."
+        ),
+    )
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write the calibration script to workdir and return "
+            "immediately. The user runs the script externally. "
+            "If True, execute the script in-process (may take several minutes)."
+        ),
+    )
+
+
+class ApplyRflagInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the MS (CORRECTED column must exist).", min_length=1)
+    workdir: str = Field(..., description="Existing directory for the generated script and flag backups.", min_length=1)
+    field: str = Field(default="", description="CASA field selection (empty = all).")
+    spw: str = Field(default="", description="CASA SpW selection (empty = all).")
+    datacolumn: str = Field(default="corrected", description="Column to flag on (default 'corrected').")
+    timedevscale: float = Field(default=5.0, description="rflag time deviation scale threshold (default 5.0).", gt=0.0)
+    freqdevscale: float = Field(default=5.0, description="rflag frequency deviation scale threshold (default 5.0).", gt=0.0)
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write apply_rflag.py to workdir and return immediately. "
+            "If True, run rflag in-process (may take several minutes). "
+            "A flag backup named 'before_rflag' is always saved before applying."
         ),
     )
 
@@ -154,7 +193,13 @@ async def ms_set_intents(params: SetIntentsInput) -> str:
         JSON envelope with field_intent_map, n_unique_states,
         state_rows_written, main_rows_updated, dry_run flag.
     """
-    return _run_tool(intents.set_intents, params.ms_path, dry_run=params.dry_run)
+    return _run_tool(
+        intents.set_intents,
+        params.ms_path,
+        dry_run=params.dry_run,
+        execute=params.execute,
+        workdir=params.workdir,
+    )
 
 
 @mcp.tool(
@@ -205,6 +250,54 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
         params.priorcals,
         params.min_bl_per_ant,
         params.uvrange,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_apply_rflag",
+    annotations={
+        "title": "Apply rflag RFI Flagging",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_apply_rflag(params: ApplyRflagInput) -> str:
+    """
+    Generate (and optionally execute) an rflag script on the CORRECTED column.
+
+    When execute=False (default), writes workdir/apply_rflag.py and returns.
+    When execute=True, saves a flag backup named 'before_rflag' then applies rflag.
+
+    Use ms_rfi_channel_stats first to identify contaminated channels, then
+    ms_flag_summary before and after to capture the flag delta.
+
+    Args:
+        params.ms_path:      Path to MS (CORRECTED column must exist).
+        params.workdir:      Existing directory for script + flag backups.
+        params.field:        CASA field selection (empty = all).
+        params.spw:          CASA SpW selection (empty = all).
+        params.datacolumn:   Column to flag on (default 'corrected').
+        params.timedevscale: Time deviation threshold (default 5.0).
+        params.freqdevscale: Frequency deviation threshold (default 5.0).
+        params.execute:      Generate only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, datacolumn, scale parameters, and (if execute=True)
+        flags_applied flag.
+    """
+    return _run_tool(
+        rflag.run,
+        params.ms_path,
+        params.workdir,
+        params.field,
+        params.spw,
+        params.datacolumn,
+        params.timedevscale,
+        params.freqdevscale,
+        params.execute,
     )
 
 

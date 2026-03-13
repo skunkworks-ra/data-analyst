@@ -20,17 +20,23 @@ CASA access:
 from __future__ import annotations
 
 from ms_inspect.util.casa_context import validate_ms_path
-from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.formatting import field as fmt_field
+from ms_inspect.util.formatting import response_envelope
 
 TOOL_NAME = "ms_flag_summary"
 
 
-def run(ms_path: str) -> dict:
+def run(ms_path: str, field: str = "", spw: str = "") -> dict:
     """
     Return a complete flag statistics summary for the MS.
 
     Calls casatasks.flagdata(mode='summary') which returns per-field,
     per-scan, per-SpW, per-antenna, and total flag fractions.
+
+    Args:
+        ms_path: Path to the Measurement Set.
+        field:   CASA field selection (empty = all).
+        spw:     CASA SpW selection (empty = all).
 
     This is read-only. No data is modified.
     """
@@ -44,12 +50,13 @@ def run(ms_path: str) -> dict:
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
         raise CASANotAvailableError(
-            "casatasks is not installed. Install with: pip install casatasks"
-        )
+            "casatasks is not installed. Install with: pip install casatasks",
+            ms_path=ms_path,
+        ) from None
     casa_calls.append("casatasks.flagdata(vis=..., mode='summary')")
 
     try:
-        summary = casatasks.flagdata(vis=ms_str, mode="summary")
+        summary = casatasks.flagdata(vis=ms_str, mode="summary", field=field, spw=spw)
     except Exception as e:
         from ms_inspect.util.formatting import error_envelope
         return error_envelope(
@@ -77,7 +84,7 @@ def run(ms_path: str) -> dict:
         frac = n_flagged / n_total if n_total > 0 else 0.0
         per_field.append({
             "field_name":    fname,
-            "flag_fraction": field(round(frac, 6)),
+            "flag_fraction": fmt_field(round(frac, 6)),
             "n_flagged":     n_flagged,
             "n_total":       n_total,
         })
@@ -92,7 +99,7 @@ def run(ms_path: str) -> dict:
         frac = n_flagged / n_total if n_total > 0 else 0.0
         per_spw.append({
             "spw_id":        int(spw_id_str),
-            "flag_fraction": field(round(frac, 6)),
+            "flag_fraction": fmt_field(round(frac, 6)),
             "n_flagged":     n_flagged,
             "n_total":       n_total,
         })
@@ -108,7 +115,7 @@ def run(ms_path: str) -> dict:
         frac = n_flagged / n_total if n_total > 0 else 0.0
         per_antenna.append({
             "antenna_name":  ant_name,
-            "flag_fraction": field(round(frac, 6)),
+            "flag_fraction": fmt_field(round(frac, 6)),
             "n_flagged":     n_flagged,
             "n_total":       n_total,
         })
@@ -138,14 +145,14 @@ def run(ms_path: str) -> dict:
             warnings.append(f"SpW {ent['spw_id']} is 100% flagged.")
 
     data = {
-        "total_flag_fraction": field(round(total_frac, 6)),
+        "total_flag_fraction": fmt_field(round(total_frac, 6)),
         "total_flagged":       total_flagged,
         "total_visibilities":  total_count,
         "per_field":           per_field,
         "per_spw":             per_spw,
         "per_antenna":         per_antenna,
         "per_scan":            per_scan,
-        "flagdata_version":    summary.get("flagversion", field(None, "UNAVAILABLE")),
+        "flagdata_version":    summary.get("flagversion", fmt_field(None, "UNAVAILABLE")),
     }
 
     return response_envelope(
