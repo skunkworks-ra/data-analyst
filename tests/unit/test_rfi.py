@@ -88,6 +88,7 @@ class TestRun:
     def test_workdir_missing_raises(self, tmp_path):
         ms = _make_ms(tmp_path)
         from ms_inspect.exceptions import RadioMSError
+
         with pytest.raises(RadioMSError):
             rflag.run(str(ms), str(tmp_path / "nonexistent"))
 

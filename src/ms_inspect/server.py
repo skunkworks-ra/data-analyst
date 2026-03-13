@@ -18,10 +18,9 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 
-from mcp.server.fastmcp import FastMCP, Context
-from pydantic import BaseModel, Field, ConfigDict
+from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect import __version__
 from ms_inspect.exceptions import RadioMSError
@@ -61,6 +60,7 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 # Input models
 # ---------------------------------------------------------------------------
+
 
 class MSPathInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -146,7 +146,8 @@ class RfiChannelStatsInput(BaseModel):
     flag_threshold: float = Field(
         default=0.5,
         description="Channel flag fraction threshold (0–1) above which a channel is 'bad' (default 0.5).",
-        ge=0.0, le=1.0,
+        ge=0.0,
+        le=1.0,
     )
     min_bad_chan_run: int = Field(
         default=1,
@@ -190,7 +191,9 @@ class VerifyPriorcalsInput(BaseModel):
 
 class ResidualStatsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    ms_path: str = Field(..., description="Path to the MS (CORRECTED + MODEL must exist).", min_length=1)
+    ms_path: str = Field(
+        ..., description="Path to the MS (CORRECTED + MODEL must exist).", min_length=1
+    )
     field_id: int = Field(
         ...,
         description="Integer FIELD_ID of the bandpass calibrator (use ms_field_list to find it).",
@@ -219,6 +222,7 @@ class BaselineLengthInput(BaseModel):
 # Tool error handling wrapper
 # ---------------------------------------------------------------------------
 
+
 def _run_tool(tool_fn, *args, **kwargs) -> str:
     """
     Execute a tool function and return JSON-encoded result.
@@ -235,6 +239,7 @@ def _run_tool(tool_fn, *args, **kwargs) -> str:
 # ---------------------------------------------------------------------------
 # Layer 1 — Orientation tools
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool(
     name="ms_observation_info",
@@ -413,6 +418,7 @@ async def ms_correlator_config(params: MSPathInput) -> str:
 # ---------------------------------------------------------------------------
 # Layer 2 — Instrument Sanity tools
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool(
     name="ms_antenna_list",
@@ -608,6 +614,7 @@ async def ms_antenna_flag_fraction(params: MSPathInput) -> str:
 # Reference antenna selection
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool(
     name="ms_refant",
     annotations={
@@ -652,6 +659,7 @@ async def ms_refant(params: RefAntInput) -> str:
 # ---------------------------------------------------------------------------
 # Calibration verification + RFI + flag summary
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool(
     name="ms_verify_caltables",
@@ -752,6 +760,7 @@ async def ms_flag_summary(params: FlagSummaryInput) -> str:
 # Polarisation calibration feasibility
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool(
     name="ms_pol_cal_feasibility",
     annotations={
@@ -794,6 +803,7 @@ async def ms_pol_cal_feasibility(params: PolCalFeasibilityInput) -> str:
 # ---------------------------------------------------------------------------
 # Pre-calibration inspect tools
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool(
     name="ms_online_flag_stats",
@@ -894,6 +904,7 @@ async def ms_residual_stats(params: ResidualStatsInput) -> str:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()

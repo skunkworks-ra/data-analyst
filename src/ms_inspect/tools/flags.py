@@ -49,6 +49,7 @@ def _get_n_workers() -> int:
 # Worker function — must be module-level for multiprocessing pickle
 # ---------------------------------------------------------------------------
 
+
 def _flag_chunk_worker(args: tuple) -> tuple[np.ndarray, np.ndarray]:
     """
     Worker: opens the MS table, reads FLAG + ANTENNA1 + ANTENNA2 for a row
@@ -105,6 +106,7 @@ def _flag_chunk_worker(args: tuple) -> tuple[np.ndarray, np.ndarray]:
 # ---------------------------------------------------------------------------
 # Main tool function
 # ---------------------------------------------------------------------------
+
 
 def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
     """
@@ -171,9 +173,7 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
         with ctx.Pool(processes=n_workers) as pool:
             chunk_results = pool.map(_flag_chunk_worker, chunks)
     except Exception as e:
-        warnings.append(
-            f"Parallel FLAG read failed ({e}). Falling back to single-process read."
-        )
+        warnings.append(f"Parallel FLAG read failed ({e}). Falling back to single-process read.")
         chunk_results = [_flag_chunk_worker(chunk) for chunk in chunks]
 
     # ------------------------------------------------------------------
@@ -195,10 +195,10 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
     # APPLIED=False    → command written but not yet applied (partial import)
     # ------------------------------------------------------------------
     flag_cmd_summary: dict = {
-        "n_total":    field(0),
-        "n_applied":  field(0),
+        "n_total": field(0),
+        "n_applied": field(0),
         "n_unapplied": field(0),
-        "by_reason":  field({}),
+        "by_reason": field({}),
     }
     # per-antenna: {ant_idx: {reason_str: count}}
     ant_cmd_by_reason: dict[int, dict[str, int]] = {i: {} for i in range(n_ant)}
@@ -210,14 +210,14 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
             )
             n_cmd = tb.nrows()
             if n_cmd > 0:
-                reasons  = list(tb.getcol("REASON"))
-                applied  = list(tb.getcol("APPLIED"))
+                reasons = list(tb.getcol("REASON"))
+                applied = list(tb.getcol("APPLIED"))
                 commands = list(tb.getcol("COMMAND"))
                 # TYPE and TIME/INTERVAL exist but are not needed for the summary
 
                 # Build reason breakdown
                 by_reason: dict[str, dict[str, int]] = {}
-                for reason, is_applied in zip(reasons, applied):
+                for reason, is_applied in zip(reasons, applied, strict=False):
                     r = str(reason).strip() or "UNSPECIFIED"
                     if r not in by_reason:
                         by_reason[r] = {"n_total": 0, "n_applied": 0}
@@ -228,18 +228,18 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
                 n_applied_total = sum(1 for a in applied if a)
 
                 flag_cmd_summary = {
-                    "n_total":    field(n_cmd),
-                    "n_applied":  field(n_applied_total),
+                    "n_total": field(n_cmd),
+                    "n_applied": field(n_applied_total),
                     "n_unapplied": field(
                         n_cmd - n_applied_total,
                         note="Unapplied commands may indicate a partial or interrupted import",
                     ),
-                    "by_reason":  field(by_reason),
+                    "by_reason": field(by_reason),
                 }
 
                 # Per-antenna attribution: COMMAND string still carries antenna=<name>
                 # Only attribute commands that explicitly name an antenna
-                for reason, cmd_str in zip(reasons, commands):
+                for reason, cmd_str in zip(reasons, commands, strict=False):
                     r = str(reason).strip() or "UNSPECIFIED"
                     match = re.search(
                         r"antenna\s*=\s*['\"]?([^'\",\s\)]+)['\"]?",
@@ -272,17 +272,19 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
         frac_flag = "COMPLETE" if nt > 0 else "UNAVAILABLE"
 
         cmd_breakdown = ant_cmd_by_reason.get(i, {})
-        per_antenna.append({
-            "antenna_id": i,
-            "antenna_name": name,
-            "flag_fraction": field(round(frac, 6), flag=frac_flag),
-            "n_flagged_elements": nf,
-            "n_total_elements": nt,
-            "flag_cmd": {
-                "n_attributed": sum(cmd_breakdown.values()),
-                "by_reason": cmd_breakdown,
-            },
-        })
+        per_antenna.append(
+            {
+                "antenna_id": i,
+                "antenna_name": name,
+                "flag_fraction": field(round(frac, 6), flag=frac_flag),
+                "n_flagged_elements": nf,
+                "n_total_elements": nt,
+                "flag_cmd": {
+                    "n_attributed": sum(cmd_breakdown.values()),
+                    "by_reason": cmd_breakdown,
+                },
+            }
+        )
 
     overall_frac = global_flagged / global_total if global_total > 0 else 0.0
 

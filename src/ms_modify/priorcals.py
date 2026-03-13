@@ -34,6 +34,7 @@ def _table_nrows(path: str) -> int:
     """Return nrows for a CASA table, or 0 on any error."""
     try:
         from casatools import table  # type: ignore[import]
+
         tb = table()
         tb.open(path, nomodify=True)
         n = tb.nrows()
@@ -179,6 +180,7 @@ def run(
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"workdir does not exist: {workdir}. Create it before calling this tool.",
             ms_path=ms_path,
@@ -225,6 +227,7 @@ def run(
         from casatasks import gencal  # type: ignore[import]
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
+
         raise CASANotAvailableError(
             "casatasks is not installed or cannot be imported.",
             ms_path=ms_path,
@@ -238,6 +241,7 @@ def run(
     obs_mjd: float | None = None
     try:
         from ms_inspect.util.casa_context import open_table
+
         with open_table(ms_str + "/OBSERVATION") as tb:
             time_range = tb.getcol("TIME_RANGE")
             obs_mjd = float(time_range[0][0]) / 86400.0
@@ -278,9 +282,7 @@ def run(
             skip_reasons["requantizer.rq"] = "gencal returned 0-row table"
     else:
         skipped.append("requantizer.rq")
-        skip_reasons["requantizer.rq"] = (
-            f"MJD {obs_mjd:.1f} < {_RQ_MJD_THRESHOLD} (pre-WIDAR era)"
-        )
+        skip_reasons["requantizer.rq"] = f"MJD {obs_mjd:.1f} < {_RQ_MJD_THRESHOLD} (pre-WIDAR era)"
 
     # antpos
     if _run_gencal(antpos_table, "antpos", "antpos.ap"):

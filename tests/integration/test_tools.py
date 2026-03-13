@@ -13,9 +13,7 @@ from __future__ import annotations
 
 import os
 import shutil
-import tempfile
 
-import numpy as np
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -37,9 +35,9 @@ def _create_simulated_ms(msname: str) -> str:
     RR/LL polarisation, observing a single point source for a short
     integration.
     """
-    from casatools import simulator, measures, componentlist, ctsys
     from casatasks import flagdata
     from casatasks.private import simutil
+    from casatools import componentlist, ctsys, measures, simulator
 
     sm = simulator()
     me = measures()
@@ -297,7 +295,7 @@ class TestPolCalFeasibilityReal:
         """Relaxed threshold should not make NOT_FEASIBLE worse than strict threshold."""
         from ms_inspect.tools import pol_cal_feasibility
 
-        strict  = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=90.0)
+        strict = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=90.0)
         relaxed = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=10.0)
 
         _order = {"FULL": 0, "DEGRADED": 1, "LEAKAGE_ONLY": 2, "NOT_FEASIBLE": 3}
@@ -343,9 +341,7 @@ class TestRefAntReal:
         for r in result["data"]["ranked"]:
             assert 0.0 <= r["geo_score"] <= float(n)
             assert 0.0 <= r["flag_score"] <= float(n)
-            assert r["combined_score"] == pytest.approx(
-                r["geo_score"] + r["flag_score"], abs=1e-3
-            )
+            assert r["combined_score"] == pytest.approx(r["geo_score"] + r["flag_score"], abs=1e-3)
 
     def test_ranked_descending_order(self):
         from ms_inspect.tools import refant
@@ -374,6 +370,7 @@ class TestInitialBandpassReal:
 
         # Get bandpass field: first field with CALIBRATE_BANDPASS intent
         from ms_inspect.tools.fields import run as fields_run
+
         fields_result = fields_run(_TEST_MS)
         bp_field = None
         for f in fields_result["data"]["fields"]:
@@ -392,11 +389,13 @@ class TestInitialBandpassReal:
 
     def test_init_gain_table_exists(self, bp_result):
         import os
+
         table_path = bp_result["data"]["init_gain_table"]["value"]
         assert os.path.exists(table_path)
 
     def test_bp_table_exists(self, bp_result):
         import os
+
         table_path = bp_result["data"]["bp_table"]["value"]
         assert os.path.exists(table_path)
 
@@ -413,10 +412,10 @@ class TestVerifyCaltablesReal:
     """Integration tests for ms_verify_caltables against caltables from a real run."""
 
     def test_verify_after_bandpass(self, tmp_path):
-        from ms_inspect.tools.refant import run as refant_run
-        from ms_modify.initial_bandpass import run as bp_run
         from ms_inspect.tools.caltables import run as verify_run
         from ms_inspect.tools.fields import run as fields_run
+        from ms_inspect.tools.refant import run as refant_run
+        from ms_modify.initial_bandpass import run as bp_run
 
         workdir = str(tmp_path)
         refant_result = refant_run(_TEST_MS)
@@ -435,6 +434,7 @@ class TestVerifyCaltablesReal:
         bp_run(_TEST_MS, bp_field=bp_field, ref_ant=ref_ant, workdir=workdir, execute=True)
 
         import os
+
         init_gain = os.path.join(workdir, "init_gain.g")
         bp_table = os.path.join(workdir, "BP0.b")
         result = verify_run(_TEST_MS, init_gain, bp_table)
@@ -448,12 +448,14 @@ class TestRfiChannelStatsReal:
 
     def test_basic_run(self):
         from ms_inspect.tools.rfi import run
+
         result = run(_TEST_MS)
         assert result["status"] == "ok"
         assert "per_spw" in result["data"]
 
     def test_returns_list(self):
         from ms_inspect.tools.rfi import run
+
         result = run(_TEST_MS)
         assert isinstance(result["data"]["per_spw"], list)
 
@@ -464,14 +466,16 @@ class TestFlagSummaryReal:
 
     def test_basic_run(self):
         from ms_inspect.tools.flag_summary import run
+
         result = run(_TEST_MS)
         assert result["status"] == "ok"
         assert "total_flag_fraction" in result["data"]
         assert "per_antenna" in result["data"]
 
     def test_field_selection(self):
-        from ms_inspect.tools.flag_summary import run
         from ms_inspect.tools.fields import run as fields_run
+        from ms_inspect.tools.flag_summary import run
+
         fields_result = fields_run(_TEST_MS)
         first_field = fields_result["data"]["fields"][0]["name"]
         result = run(_TEST_MS, field=first_field)
@@ -484,9 +488,11 @@ class TestApplyRflagReal:
 
     def test_script_generation_only(self, tmp_path):
         from ms_modify.rflag import run
+
         result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
         assert result["status"] == "ok"
         import os
+
         assert os.path.exists(os.path.join(str(tmp_path), "apply_rflag.py"))
 
 
@@ -495,19 +501,22 @@ class TestApplyPreflagReal:
     """Integration tests for ms_apply_preflag against a real MS."""
 
     def test_script_generation_only(self, tmp_path):
-        from ms_modify.preflag import run
         from ms_inspect.tools.fields import run as fields_run
+        from ms_modify.preflag import run
+
         fields_result = fields_run(_TEST_MS)
         cal_field = fields_result["data"]["fields"][0]["name"]
         result = run(_TEST_MS, workdir=str(tmp_path), cal_fields=cal_field, execute=False)
         assert result["status"] == "ok"
         import os
+
         assert os.path.exists(os.path.join(str(tmp_path), "preflag_cmds.txt"))
         assert os.path.exists(os.path.join(str(tmp_path), "preflag.py"))
 
     def test_n_flag_commands_positive(self, tmp_path):
-        from ms_modify.preflag import run
         from ms_inspect.tools.fields import run as fields_run
+        from ms_modify.preflag import run
+
         fields_result = fields_run(_TEST_MS)
         cal_field = fields_result["data"]["fields"][0]["name"]
         result = run(_TEST_MS, workdir=str(tmp_path), cal_fields=cal_field, execute=False)
@@ -520,16 +529,21 @@ class TestGeneratePriorcalsReal:
 
     def test_script_generation_only(self, tmp_path):
         from ms_modify.priorcals import run
+
         result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
         assert result["status"] == "ok"
         import os
+
         assert os.path.exists(os.path.join(str(tmp_path), "priorcals.py"))
 
     def test_script_contains_four_gencal_types(self, tmp_path):
         from ms_modify.priorcals import run
+
         run(_TEST_MS, workdir=str(tmp_path), execute=False)
         import os
-        script = open(os.path.join(str(tmp_path), "priorcals.py")).read()
+
+        with open(os.path.join(str(tmp_path), "priorcals.py")) as fh:
+            script = fh.read()
         for caltype in ("gc", "opac", "rq", "antpos"):
             assert caltype in script
 
@@ -540,6 +554,7 @@ class TestVerifyPriorcalsReal:
 
     def test_missing_tables_reported(self, tmp_path):
         from ms_inspect.tools.priorcals_check import run
+
         result = run(_TEST_MS, str(tmp_path))
         assert result["status"] == "ok"
         assert result["data"]["n_missing"]["value"] == 4
@@ -552,13 +567,16 @@ class TestSetjyReal:
 
     def test_script_generation_only(self, tmp_path):
         from ms_modify.setjy import run
+
         result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
         assert result["status"] == "ok"
         import os
+
         assert os.path.exists(os.path.join(str(tmp_path), "setjy.py"))
 
     def test_response_has_flux_fields(self, tmp_path):
         from ms_modify.setjy import run
+
         result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
         assert "flux_fields" in result["data"]
 
@@ -569,18 +587,23 @@ class TestApplyInitialRflagReal:
 
     def test_script_generation_only(self, tmp_path):
         from ms_modify.initial_rflag import run
+
         result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
         assert result["status"] == "ok"
         import os
+
         assert os.path.exists(os.path.join(str(tmp_path), "initial_rflag_cmds.txt"))
         assert os.path.exists(os.path.join(str(tmp_path), "initial_rflag.py"))
 
     def test_cmds_file_has_two_lines(self, tmp_path):
-        from ms_modify.initial_rflag import run
         import os
+
+        from ms_modify.initial_rflag import run
+
         run(_TEST_MS, workdir=str(tmp_path), execute=False)
-        cmds = open(os.path.join(str(tmp_path), "initial_rflag_cmds.txt")).read()
-        lines = [l for l in cmds.splitlines() if l.strip()]
+        with open(os.path.join(str(tmp_path), "initial_rflag_cmds.txt")) as fh:
+            cmds = fh.read()
+        lines = [ln for ln in cmds.splitlines() if ln.strip()]
         assert len(lines) == 2
 
 
@@ -590,6 +613,7 @@ class TestResidualStatsReal:
 
     def test_basic_run(self):
         from ms_inspect.tools.residual_stats import run
+
         result = run(_TEST_MS, field_id=0)
         assert result["status"] == "ok"
         assert "per_spw" in result["data"]

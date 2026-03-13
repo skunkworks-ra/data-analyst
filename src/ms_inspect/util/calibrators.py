@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class UVRangeEntry:
@@ -30,15 +30,15 @@ class UVRangeEntry:
 @dataclass
 class CalibratorEntry:
     canonical_name: str
-    aka: list[str]                          # alternative names / coordinate strings
-    role: list[str]                         # 'flux', 'bandpass'
-    telescopes: list[str]                   # 'VLA', 'MeerKAT', 'uGMRT'
+    aka: list[str]  # alternative names / coordinate strings
+    role: list[str]  # 'flux', 'bandpass'
+    telescopes: list[str]  # 'VLA', 'MeerKAT', 'uGMRT'
     resolved: bool
     flux_standard: str
-    notes: Optional[str] = None
+    notes: str | None = None
     safe_uv_range_klambda: dict[str, UVRangeEntry] = field(default_factory=dict)
     casa_model_available: bool = False
-    casa_model_name: Optional[str] = None
+    casa_model_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -86,9 +86,7 @@ CATALOGUE: list[CalibratorEntry] = [
         telescopes=["VLA"],
         resolved=False,
         flux_standard="Perley-Butler-2017",
-        notes=(
-            "Linearly polarised. Useful for R-L phase calibration at L-band."
-        ),
+        notes=("Linearly polarised. Useful for R-L phase calibration at L-band."),
     ),
     CalibratorEntry(
         canonical_name="PKS1934-638",
@@ -127,8 +125,10 @@ CATALOGUE: list[CalibratorEntry] = [
             "Use setjy with component model only. Never use as a point source."
         ),
         safe_uv_range_klambda={
-            "P-band (230-470 MHz)": UVRangeEntry(max_klambda=2.0,  reference="Perley & Butler 2017"),
-            "L-band (1-2 GHz)":     UVRangeEntry(max_klambda=0.5,  reference="estimated — use component model at all baselines"),
+            "P-band (230-470 MHz)": UVRangeEntry(max_klambda=2.0, reference="Perley & Butler 2017"),
+            "L-band (1-2 GHz)": UVRangeEntry(
+                max_klambda=0.5, reference="estimated — use component model at all baselines"
+            ),
         },
         casa_model_available=True,
         casa_model_name="CasA_Epoch2010.0",
@@ -146,9 +146,11 @@ CATALOGUE: list[CalibratorEntry] = [
             "Core is variable — exercise care at high frequencies."
         ),
         safe_uv_range_klambda={
-            "P-band (230-470 MHz)": UVRangeEntry(max_klambda=5.0,  reference="McKean et al. 2016"),
-            "L-band (1-2 GHz)":     UVRangeEntry(max_klambda=50.0, reference="McKean et al. 2016"),
-            "C-band (4-8 GHz)":     UVRangeEntry(max_klambda=5.0,  reference="estimated — core dominates"),
+            "P-band (230-470 MHz)": UVRangeEntry(max_klambda=5.0, reference="McKean et al. 2016"),
+            "L-band (1-2 GHz)": UVRangeEntry(max_klambda=50.0, reference="McKean et al. 2016"),
+            "C-band (4-8 GHz)": UVRangeEntry(
+                max_klambda=5.0, reference="estimated — core dominates"
+            ),
         },
         casa_model_available=True,
         casa_model_name="3C405_CygA",
@@ -167,7 +169,7 @@ CATALOGUE: list[CalibratorEntry] = [
         ),
         safe_uv_range_klambda={
             "P-band (230-470 MHz)": UVRangeEntry(max_klambda=1.0, reference="estimated"),
-            "L-band (1-2 GHz)":     UVRangeEntry(max_klambda=5.0, reference="estimated"),
+            "L-band (1-2 GHz)": UVRangeEntry(max_klambda=5.0, reference="estimated"),
         },
         casa_model_available=True,
         casa_model_name="3C144_TauA",
@@ -185,8 +187,8 @@ CATALOGUE: list[CalibratorEntry] = [
             "Jet visible on long baselines. Use component model for B/A config."
         ),
         safe_uv_range_klambda={
-            "P-band (230-470 MHz)": UVRangeEntry(max_klambda=3.0,  reference="estimated"),
-            "L-band (1-2 GHz)":     UVRangeEntry(max_klambda=20.0, reference="estimated"),
+            "P-band (230-470 MHz)": UVRangeEntry(max_klambda=3.0, reference="estimated"),
+            "L-band (1-2 GHz)": UVRangeEntry(max_klambda=20.0, reference="estimated"),
         },
         casa_model_available=True,
         casa_model_name="3C274_VirA",
@@ -197,6 +199,7 @@ CATALOGUE: list[CalibratorEntry] = [
 # ---------------------------------------------------------------------------
 # Normalisation helper
 # ---------------------------------------------------------------------------
+
 
 def _normalise(name: str) -> str:
     """
@@ -235,6 +238,7 @@ _build_index()
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def lookup(field_name: str) -> CalibratorEntry | None:
     """
@@ -297,6 +301,7 @@ def resolved_warning_message(
     if band_name:
         # Extract the primary band token: everything before the first space or '('
         import re as _re
+
         primary_token = _re.split(r"[\s(]", band_name.lower())[0].rstrip("-")
         for key in entry.safe_uv_range_klambda:
             key_primary = _re.split(r"[\s(]", key.lower())[0].rstrip("-")

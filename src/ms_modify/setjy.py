@@ -25,8 +25,8 @@ from ms_inspect.util.formatting import response_envelope
 TOOL_NAME = "ms_setjy"
 
 # Calibrators requiring special treatment
-_RESOLVED_WARN = {"3C84", "3C286", "3C147", "3C48"}   # may be resolved
-_VARIABLE_WARN = {"3C84", "3C138", "3C48"}             # variable or partially pol
+_RESOLVED_WARN = {"3C84", "3C286", "3C147", "3C48"}  # may be resolved
+_VARIABLE_WARN = {"3C84", "3C138", "3C48"}  # variable or partially pol
 _DEFAULT_STANDARD = "Perley-Butler 2017"
 
 
@@ -57,7 +57,7 @@ def _build_script(
     """Return a self-contained setjy Python script."""
     warn_block = ""
     if warnings_inline:
-        warn_lines = "\n".join(f'# WARNING: {w}' for w in warnings_inline)
+        warn_lines = "\n".join(f"# WARNING: {w}" for w in warnings_inline)
         warn_block = warn_lines + "\n\n"
 
     setjy_blocks = "\n\n".join(_build_setjy_block(f, standard) for f in flux_fields)
@@ -112,6 +112,7 @@ def run(
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"workdir does not exist: {workdir}. Create it before calling this tool.",
             ms_path=ms_path,
@@ -123,6 +124,7 @@ def run(
         casa_calls.append("tb.open(FIELD) → getcol(NAME)")
     except Exception as exc:
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"Could not read FIELD subtable: {exc}",
             ms_path=ms_path,
@@ -193,6 +195,7 @@ def run(
         from casatasks import setjy  # type: ignore[import]
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
+
         raise CASANotAvailableError(
             "casatasks is not installed or cannot be imported.",
             ms_path=ms_path,
@@ -200,9 +203,7 @@ def run(
 
     fields_done: list[str] = []
     for fname in flux_fields:
-        casa_calls.append(
-            f"casatasks.setjy(field='{fname}', standard='{standard}')"
-        )
+        casa_calls.append(f"casatasks.setjy(field='{fname}', standard='{standard}')")
         try:
             setjy(
                 vis=ms_str,

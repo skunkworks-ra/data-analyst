@@ -53,7 +53,11 @@ def _build_script(
     uvrange: str,
 ) -> str:
     """Return a self-contained Python script that runs the bandpass calibration."""
-    uvrange_line = f'    gaincal_kwargs["uvrange"] = "{uvrange}"\n    bandpass_kwargs["uvrange"] = "{uvrange}"\n' if uvrange else ""
+    uvrange_line = (
+        f'    gaincal_kwargs["uvrange"] = "{uvrange}"\n    bandpass_kwargs["uvrange"] = "{uvrange}"\n'
+        if uvrange
+        else ""
+    )
     priorcals_repr = repr(priorcals)
     return f"""\
 #!/usr/bin/env python
@@ -167,6 +171,7 @@ def run(
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"workdir does not exist: {workdir}. Create it before calling this tool.",
             ms_path=ms_path,
@@ -175,6 +180,7 @@ def run(
     for pc in priorcals:
         if not Path(pc).exists():
             from ms_inspect.exceptions import ComputationError
+
             raise ComputationError(
                 f"Prior calibration table not found: {pc}",
                 ms_path=ms_path,
@@ -239,6 +245,7 @@ def run(
         from casatasks import applycal, bandpass, gaincal  # type: ignore[import]
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
+
         raise CASANotAvailableError(
             "casatasks is not installed or cannot be imported.",
             ms_path=ms_path,
@@ -357,8 +364,7 @@ def run(
         )
     except Exception as e:
         warnings.append(
-            f"applycal raised an exception: {e}. "
-            "CORRECTED column may not be fully populated."
+            f"applycal raised an exception: {e}. CORRECTED column may not be fully populated."
         )
         corrected_written = False
     else:

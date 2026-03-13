@@ -10,17 +10,16 @@ import pytest
 
 from ms_inspect.util.pol_calibrators import (
     PolCalEntry,
-    PolFreqEntry,
     is_angle_calibrator,
     is_leakage_calibrator,
     lookup_pol,
     pol_properties_at_freq,
 )
 
-
 # ---------------------------------------------------------------------------
 # lookup_pol
 # ---------------------------------------------------------------------------
+
 
 class TestLookupPol:
     def test_lookup_by_b1950_name(self):
@@ -68,6 +67,7 @@ class TestLookupPol:
 # is_angle_calibrator / is_leakage_calibrator
 # ---------------------------------------------------------------------------
 
+
 class TestCalibratoryRoleChecks:
     def test_3c286_is_angle_calibrator(self):
         assert is_angle_calibrator("3C286") is True
@@ -94,6 +94,7 @@ class TestCalibratoryRoleChecks:
 # 3C286 stable PA
 # ---------------------------------------------------------------------------
 
+
 class Test3C286Properties:
     def test_stable_pa(self):
         entry = lookup_pol("3C286")
@@ -111,6 +112,7 @@ class Test3C286Properties:
 # ---------------------------------------------------------------------------
 # pol_properties_at_freq — interpolation
 # ---------------------------------------------------------------------------
+
 
 class TestPolPropertiesAtFreq:
     def _get_3c286(self) -> PolCalEntry:
@@ -165,6 +167,7 @@ class TestPolPropertiesAtFreq:
 # 3C48 — low pol + undefined PA below 4 GHz
 # ---------------------------------------------------------------------------
 
+
 class Test3C48LowPolBelowCBand:
     def _get_3c48(self) -> PolCalEntry:
         entry = lookup_pol("3C48")
@@ -200,6 +203,7 @@ class Test3C48LowPolBelowCBand:
 # 3C138 — variability flag
 # ---------------------------------------------------------------------------
 
+
 class Test3C138Variability:
     def test_has_variability_note(self):
         entry = lookup_pol("3C138")
@@ -215,6 +219,7 @@ class Test3C138Variability:
 # ---------------------------------------------------------------------------
 # 3C147 — leakage-only, upper limits below 10 GHz
 # ---------------------------------------------------------------------------
+
 
 class Test3C147LeakageOnly:
     def test_lband_upper_limit(self):

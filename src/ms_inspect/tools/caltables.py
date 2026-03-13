@@ -83,8 +83,10 @@ def run(
 
     bp_check = _check_table(bp_table, required_cols=["CPARAM", "FPARAM"])
     # BP tables may use either CPARAM (complex) or FPARAM (float) — either is fine
-    bp_valid = bp_check["exists"] and bp_check["n_rows"] > 0 and (
-        "CPARAM" in bp_check["columns_present"] or "FPARAM" in bp_check["columns_present"]
+    bp_valid = (
+        bp_check["exists"]
+        and bp_check["n_rows"] > 0
+        and ("CPARAM" in bp_check["columns_present"] or "FPARAM" in bp_check["columns_present"])
     )
     bp_check["valid"] = bp_valid
     casa_calls.append(f"tb.open('{bp_table}') → nrows, colnames")
@@ -92,7 +94,9 @@ def run(
     caltables_valid = init_check["valid"] and bp_check["valid"]
 
     if not init_check["exists"]:
-        warnings.append(f"init_gain.g not found at '{init_gain_table}'. Has the bandpass script been run?")
+        warnings.append(
+            f"init_gain.g not found at '{init_gain_table}'. Has the bandpass script been run?"
+        )
     if not bp_check["exists"]:
         warnings.append(f"BP0.b not found at '{bp_table}'. Has the bandpass script been run?")
     if init_check.get("error"):
@@ -108,13 +112,17 @@ def run(
             "path": init_gain_table,
             "exists": fmt_field(init_check["exists"]),
             "n_rows": fmt_field(init_check["n_rows"]),
-            "valid": fmt_field(init_check["valid"], flag="COMPLETE" if init_check["valid"] else "UNAVAILABLE"),
+            "valid": fmt_field(
+                init_check["valid"], flag="COMPLETE" if init_check["valid"] else "UNAVAILABLE"
+            ),
         },
         "bp_table": {
             "path": bp_table,
             "exists": fmt_field(bp_check["exists"]),
             "n_rows": fmt_field(bp_check["n_rows"]),
-            "valid": fmt_field(bp_check["valid"], flag="COMPLETE" if bp_check["valid"] else "UNAVAILABLE"),
+            "valid": fmt_field(
+                bp_check["valid"], flag="COMPLETE" if bp_check["valid"] else "UNAVAILABLE"
+            ),
         },
     }
 

@@ -26,11 +26,10 @@ CASA access:
 from __future__ import annotations
 
 import datetime
-from pathlib import Path
 
 from ms_inspect.exceptions import FlagBackupFailedError
-from ms_inspect.util.casa_context import validate_ms_path, _require_casatasks
-from ms_inspect.util.formatting import field, response_envelope, error_envelope
+from ms_inspect.util.casa_context import _require_casatasks, validate_ms_path
+from ms_inspect.util.formatting import field, response_envelope
 
 TOOL_NAME = "ms_apply_flags"
 
@@ -64,7 +63,7 @@ def run(
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     casa_calls: list[str] = []
-    warnings:   list[str] = []
+    warnings: list[str] = []
 
     if not flag_commands:
         warnings.append("Empty flag_commands list — nothing to apply.")
@@ -92,10 +91,10 @@ def run(
     casa_calls.append("casatasks.flagdata(vis=..., mode='summary') [pre-apply]")
     try:
         pre_summary = casatasks.flagdata(vis=ms_str, mode="summary")
-        pre_total   = pre_summary.get("total", {})
+        pre_total = pre_summary.get("total", {})
         pre_flagged = int(pre_total.get("flagged", 0))
-        pre_count   = int(pre_total.get("total",   0))
-        pre_frac    = pre_flagged / pre_count if pre_count > 0 else 0.0
+        pre_count = int(pre_total.get("total", 0))
+        pre_frac = pre_flagged / pre_count if pre_count > 0 else 0.0
         pre_frac_field = field(round(pre_frac, 6))
     except Exception as e:
         warnings.append(f"Pre-apply flag summary failed: {e}")
@@ -118,33 +117,35 @@ def run(
             )
             # flagdata returns a dict; the 'summary' key contains stats
             calc_summary = calc_result if isinstance(calc_result, dict) else {}
-            calc_total   = calc_summary.get("total", {})
-            would_flag   = int(calc_total.get("flagged", 0))
-            would_total  = int(calc_total.get("total",   0))
-            would_frac   = would_flag / would_total if would_total > 0 else 0.0
+            calc_total = calc_summary.get("total", {})
+            would_flag = int(calc_total.get("flagged", 0))
+            would_total = int(calc_total.get("total", 0))
+            would_frac = would_flag / would_total if would_total > 0 else 0.0
         except Exception as e:
             warnings.append(f"Dry-run calculation failed: {e}. Cannot estimate flag delta.")
             would_frac = 0.0
 
         data = {
-            "dry_run":             True,
-            "n_commands":          len(flag_commands),
-            "commands":            flag_commands,
-            "pre_flag_fraction":   pre_frac_field,
-            "would_flag_fraction": field(round(would_frac, 6),
-                                         note="Estimated post-flag fraction if applied"),
-            "delta_flag_fraction": field(
-                round(would_frac - pre_frac, 6),
-                note="Additional fraction that would be flagged"
+            "dry_run": True,
+            "n_commands": len(flag_commands),
+            "commands": flag_commands,
+            "pre_flag_fraction": pre_frac_field,
+            "would_flag_fraction": field(
+                round(would_frac, 6), note="Estimated post-flag fraction if applied"
             ),
-            "post_flag_fraction":  field(None, "UNAVAILABLE",
-                                         note="Not computed in dry_run mode"),
-            "backup_name":         None,
-            "restore_command":     None,
+            "delta_flag_fraction": field(
+                round(would_frac - pre_frac, 6), note="Additional fraction that would be flagged"
+            ),
+            "post_flag_fraction": field(None, "UNAVAILABLE", note="Not computed in dry_run mode"),
+            "backup_name": None,
+            "restore_command": None,
         }
         return response_envelope(
-            tool_name=TOOL_NAME, ms_path=ms_path,
-            data=data, warnings=warnings, casa_calls=casa_calls,
+            tool_name=TOOL_NAME,
+            ms_path=ms_path,
+            data=data,
+            warnings=warnings,
+            casa_calls=casa_calls,
         )
 
     # ------------------------------------------------------------------
@@ -157,9 +158,7 @@ def run(
         backup_name = f"ms_inspect_pre_apply_{ts}"
 
     # Step 1: Save flag backup — ABORT if this fails
-    casa_calls.append(
-        f"casatasks.flagmanager(vis=..., mode='save', versionname='{backup_name}')"
-    )
+    casa_calls.append(f"casatasks.flagmanager(vis=..., mode='save', versionname='{backup_name}')")
     try:
         casatasks.flagmanager(vis=ms_str, mode="save", versionname=backup_name)
     except Exception as e:
@@ -168,7 +167,7 @@ def run(
             f"Flag application ABORTED — no changes made to the MS.\n"
             f"Check that the MS is not locked by another process.",
             ms_path=ms_path,
-        )
+        ) from e
 
     # Step 2: Apply flags
     casa_calls.append(
@@ -188,35 +187,38 @@ def run(
     casa_calls.append("casatasks.flagdata(vis=..., mode='summary') [post-apply]")
     try:
         post_summary = casatasks.flagdata(vis=ms_str, mode="summary")
-        post_total   = post_summary.get("total", {})
+        post_total = post_summary.get("total", {})
         post_flagged = int(post_total.get("flagged", 0))
-        post_count   = int(post_total.get("total",   0))
-        post_frac    = post_flagged / post_count if post_count > 0 else 0.0
-        post_frac_field  = field(round(post_frac, 6))
-        delta_frac_field = field(round(post_frac - pre_frac, 6),
-                                 note="Additional fraction flagged by this operation")
+        post_count = int(post_total.get("total", 0))
+        post_frac = post_flagged / post_count if post_count > 0 else 0.0
+        post_frac_field = field(round(post_frac, 6))
+        delta_frac_field = field(
+            round(post_frac - pre_frac, 6), note="Additional fraction flagged by this operation"
+        )
     except Exception as e:
         warnings.append(f"Post-apply flag summary failed: {e}")
-        post_frac_field  = field(None, "UNAVAILABLE")
+        post_frac_field = field(None, "UNAVAILABLE")
         delta_frac_field = field(None, "UNAVAILABLE")
 
     restore_cmd = (
-        f"casatasks.flagmanager(vis='{ms_str}', "
-        f"mode='restore', versionname='{backup_name}')"
+        f"casatasks.flagmanager(vis='{ms_str}', mode='restore', versionname='{backup_name}')"
     )
 
     data = {
-        "dry_run":             False,
-        "n_commands":          len(flag_commands),
-        "commands":            flag_commands,
-        "pre_flag_fraction":   pre_frac_field,
-        "post_flag_fraction":  post_frac_field,
+        "dry_run": False,
+        "n_commands": len(flag_commands),
+        "commands": flag_commands,
+        "pre_flag_fraction": pre_frac_field,
+        "post_flag_fraction": post_frac_field,
         "delta_flag_fraction": delta_frac_field,
-        "backup_name":         backup_name,
-        "restore_command":     restore_cmd,
+        "backup_name": backup_name,
+        "restore_command": restore_cmd,
     }
 
     return response_envelope(
-        tool_name=TOOL_NAME, ms_path=ms_path,
-        data=data, warnings=warnings, casa_calls=casa_calls,
+        tool_name=TOOL_NAME,
+        ms_path=ms_path,
+        data=data,
+        warnings=warnings,
+        casa_calls=casa_calls,
     )

@@ -11,10 +11,10 @@ import pytest
 
 from ms_inspect.tools.refant import _flag_score, _geo_score
 
-
 # ---------------------------------------------------------------------------
 # _geo_score tests
 # ---------------------------------------------------------------------------
+
 
 class TestGeoScore:
     def test_centre_antenna_scores_highest(self):
@@ -23,11 +23,13 @@ class TestGeoScore:
         Antenna 1 should score highest.
         """
         # Positions shape (3, n_ant): X component only varies
-        positions = np.array([
-            [-100.0, 0.0, 100.0],  # X
-            [0.0,    0.0,   0.0],  # Y
-            [0.0,    0.0,   0.0],  # Z
-        ])
+        positions = np.array(
+            [
+                [-100.0, 0.0, 100.0],  # X
+                [0.0, 0.0, 0.0],  # Y
+                [0.0, 0.0, 0.0],  # Z
+            ]
+        )
         flags = [False, False, False]
         scores = _geo_score(positions, flags)
 
@@ -42,11 +44,13 @@ class TestGeoScore:
         Component-wise median = (0, 0) — the geometric centre.
         All are equidistant (sqrt(2)) → scores should be equal.
         """
-        positions = np.array([
-            [-1.0, -1.0, 1.0, 1.0],   # X
-            [-1.0,  1.0,-1.0, 1.0],   # Y
-            [ 0.0,  0.0, 0.0, 0.0],   # Z
-        ])
+        positions = np.array(
+            [
+                [-1.0, -1.0, 1.0, 1.0],  # X
+                [-1.0, 1.0, -1.0, 1.0],  # Y
+                [0.0, 0.0, 0.0, 0.0],  # Z
+            ]
+        )
         flags = [False, False, False, False]
         scores = _geo_score(positions, flags)
 
@@ -56,11 +60,13 @@ class TestGeoScore:
 
     def test_flagged_antenna_scores_zero(self):
         """Antennas with FLAG_ROW=True should score 0."""
-        positions = np.array([
-            [-500.0, 0.0, 500.0],
-            [0.0,    0.0,   0.0],
-            [0.0,    0.0,   0.0],
-        ])
+        positions = np.array(
+            [
+                [-500.0, 0.0, 500.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+            ]
+        )
         flags = [True, False, False]
         scores = _geo_score(positions, flags)
 
@@ -75,11 +81,13 @@ class TestGeoScore:
         at the exact centre, distance=0). Centre antenna should return n_antennas.
         """
         # Antenna 0 at the same location as the median (the centre)
-        positions = np.array([
-            [0.0, 0.0, 1000.0],
-            [0.0, 0.0,    0.0],
-            [0.0, 0.0,    0.0],
-        ])
+        positions = np.array(
+            [
+                [0.0, 0.0, 1000.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+            ]
+        )
         flags = [False, False, False]
         scores = _geo_score(positions, flags)
         n_ant = positions.shape[1]
@@ -92,26 +100,24 @@ class TestGeoScore:
 # _flag_score tests
 # ---------------------------------------------------------------------------
 
+
 class TestFlagScore:
     def _make_summary(self, ant_data: dict[str, tuple[float, float]]) -> dict:
         """
         Build a flagdata summary dict from {name: (flagged, total)}.
         """
-        return {
-            "antenna": {
-                name: {"flagged": f, "total": t}
-                for name, (f, t) in ant_data.items()
-            }
-        }
+        return {"antenna": {name: {"flagged": f, "total": t} for name, (f, t) in ant_data.items()}}
 
     def test_unflagged_data_scores_highest(self):
         """Antenna with most unflagged data should score highest."""
         ant_names = ["ea01", "ea02", "ea03"]
-        summary = self._make_summary({
-            "ea01": (0, 1000),    # 0% flagged → good = 1000
-            "ea02": (500, 1000),  # 50% flagged → good = 500
-            "ea03": (900, 1000),  # 90% flagged → good = 100
-        })
+        summary = self._make_summary(
+            {
+                "ea01": (0, 1000),  # 0% flagged → good = 1000
+                "ea02": (500, 1000),  # 50% flagged → good = 500
+                "ea03": (900, 1000),  # 90% flagged → good = 100
+            }
+        )
         scores = _flag_score(ant_names, summary)
 
         assert scores[0] > scores[1] > scores[2]
@@ -119,10 +125,12 @@ class TestFlagScore:
     def test_fully_flagged_scores_zero(self):
         """Antenna with all data flagged should score 0."""
         ant_names = ["ea01", "ea02"]
-        summary = self._make_summary({
-            "ea01": (1000, 1000),  # 100% flagged
-            "ea02": (0, 1000),     # 0% flagged
-        })
+        summary = self._make_summary(
+            {
+                "ea01": (1000, 1000),  # 100% flagged
+                "ea02": (0, 1000),  # 0% flagged
+            }
+        )
         scores = _flag_score(ant_names, summary)
 
         assert scores[0] == pytest.approx(0.0)
@@ -131,10 +139,12 @@ class TestFlagScore:
     def test_missing_antenna_in_summary_scores_zero(self):
         """An antenna absent from the flagdata summary should score 0."""
         ant_names = ["ea01", "ea02", "ea03"]
-        summary = self._make_summary({
-            "ea01": (0, 1000),
-            # ea02 and ea03 missing
-        })
+        summary = self._make_summary(
+            {
+                "ea01": (0, 1000),
+                # ea02 and ea03 missing
+            }
+        )
         scores = _flag_score(ant_names, summary)
 
         assert scores[1] == pytest.approx(0.0)
@@ -152,6 +162,7 @@ class TestFlagScore:
 # Combined ranking tests
 # ---------------------------------------------------------------------------
 
+
 class TestCombinedRanking:
     """Verify that combined score = geo + flag ranks correctly."""
 
@@ -164,11 +175,13 @@ class TestCombinedRanking:
         # Antenna 0: worst geo (far), heavily flagged
         # Antenna 1: best geo (centre), minimal flags  ← should win
         # Antenna 2: mid geo, mid flags
-        positions = np.array([
-            [1000.0, 500.0, 0.0],
-            [0.0,    0.0,   0.0],
-            [0.0,    0.0,   0.0],
-        ])
+        positions = np.array(
+            [
+                [1000.0, 500.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+            ]
+        )
         geo = _geo_score(positions, [False, False, False])
 
         ant_names = ["ea01", "ea02", "ea03"]
@@ -193,18 +206,20 @@ class TestCombinedRanking:
         # Antenna 0: at centre (geo=n=3), but 95% flagged → flag=0.1*3=0.3
         # Antenna 1: far from centre (geo≈0), but 0% flagged → flag=3
         # Combined: ant1 wins
-        positions = np.array([
-            [0.0, 1000.0],
-            [0.0,    0.0],
-            [0.0,    0.0],
-        ])
+        positions = np.array(
+            [
+                [0.0, 1000.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+            ]
+        )
         geo = _geo_score(positions, [False, False])
 
         ant_names = ["ea01", "ea02"]
         summary = {
             "antenna": {
-                "ea01": {"flagged": 950, "total": 1000},   # 95% flagged
-                "ea02": {"flagged": 0, "total": 1000},      # 0% flagged
+                "ea01": {"flagged": 950, "total": 1000},  # 95% flagged
+                "ea02": {"flagged": 0, "total": 1000},  # 0% flagged
             }
         }
         flag = _flag_score(ant_names, summary)

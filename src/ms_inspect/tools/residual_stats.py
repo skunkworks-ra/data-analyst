@@ -70,9 +70,7 @@ def run(
         # TaQL query to get row numbers for this field
         sub = tb.query(f"FIELD_ID == {field_id}")
         n_field_rows = int(sub.nrows())
-        casa_calls.append(
-            f"tb.query(FIELD_ID=={field_id}) → {n_field_rows} rows"
-        )
+        casa_calls.append(f"tb.query(FIELD_ID=={field_id}) → {n_field_rows} rows")
 
         if n_field_rows == 0:
             sub.close()
@@ -90,6 +88,7 @@ def run(
         if "CORRECTED_DATA" not in col_names:
             sub.close()
             from ms_inspect.exceptions import ComputationError
+
             raise ComputationError(
                 "CORRECTED_DATA column not present. Run initial_bandpass.py first.",
                 ms_path=ms_path,
@@ -121,15 +120,19 @@ def run(
             )
 
         # getcol with startrow and nrow works on subtable too
-        corrected = sub.getcol("CORRECTED_DATA", startrow=0, nrow=n_field_rows if step == 1 else n_field_rows)
-        model = sub.getcol("MODEL_DATA", startrow=0, nrow=n_field_rows if step == 1 else n_field_rows)
+        corrected = sub.getcol(
+            "CORRECTED_DATA", startrow=0, nrow=n_field_rows if step == 1 else n_field_rows
+        )
+        model = sub.getcol(
+            "MODEL_DATA", startrow=0, nrow=n_field_rows if step == 1 else n_field_rows
+        )
         flag = sub.getcol("FLAG", startrow=0, nrow=n_field_rows if step == 1 else n_field_rows)
-        dd_id = sub.getcol("DATA_DESC_ID", startrow=0, nrow=n_field_rows if step == 1 else n_field_rows)
+        dd_id = sub.getcol(
+            "DATA_DESC_ID", startrow=0, nrow=n_field_rows if step == 1 else n_field_rows
+        )
         sub.close()
 
-    casa_calls.append(
-        "tb.getcol(CORRECTED_DATA, MODEL_DATA, FLAG, DATA_DESC_ID)"
-    )
+    casa_calls.append("tb.getcol(CORRECTED_DATA, MODEL_DATA, FLAG, DATA_DESC_ID)")
 
     # Apply row sampling if needed
     if step > 1:
@@ -155,7 +158,7 @@ def run(
     for dd in unique_dd:
         mask_rows = dd_id == dd  # (n_rows,)
         # Expand to (n_corr, n_chan, n_rows) for flag masking
-        flag_spw = flag[:, :, mask_rows]   # (n_corr, n_chan, n_rows_spw)
+        flag_spw = flag[:, :, mask_rows]  # (n_corr, n_chan, n_rows_spw)
         amp_spw = amp[:, :, mask_rows]
 
         # Unflagged elements: flag=False means data is good
@@ -165,28 +168,32 @@ def run(
         n_flagged = int(flag_spw.sum())
 
         if n_unflagged == 0:
-            per_spw.append({
-                "data_desc_id": int(dd),
-                "n_unflagged": fmt_field(0),
-                "n_flagged": fmt_field(n_flagged),
-                "median_amp": fmt_field(None, flag="UNAVAILABLE", note="all data flagged"),
-                "std_amp": fmt_field(None, flag="UNAVAILABLE"),
-                "p95_amp": fmt_field(None, flag="UNAVAILABLE"),
-            })
+            per_spw.append(
+                {
+                    "data_desc_id": int(dd),
+                    "n_unflagged": fmt_field(0),
+                    "n_flagged": fmt_field(n_flagged),
+                    "median_amp": fmt_field(None, flag="UNAVAILABLE", note="all data flagged"),
+                    "std_amp": fmt_field(None, flag="UNAVAILABLE"),
+                    "p95_amp": fmt_field(None, flag="UNAVAILABLE"),
+                }
+            )
             continue
 
         median_amp = float(np.median(amp_good))
         std_amp = float(np.std(amp_good))
         p95_amp = float(np.percentile(amp_good, 95))
 
-        per_spw.append({
-            "data_desc_id": int(dd),
-            "n_unflagged": fmt_field(n_unflagged),
-            "n_flagged": fmt_field(n_flagged),
-            "median_amp": fmt_field(round(median_amp, 6)),
-            "std_amp": fmt_field(round(std_amp, 6)),
-            "p95_amp": fmt_field(round(p95_amp, 6)),
-        })
+        per_spw.append(
+            {
+                "data_desc_id": int(dd),
+                "n_unflagged": fmt_field(n_unflagged),
+                "n_flagged": fmt_field(n_flagged),
+                "median_amp": fmt_field(round(median_amp, 6)),
+                "std_amp": fmt_field(round(std_amp, 6)),
+                "p95_amp": fmt_field(round(p95_amp, 6)),
+            }
+        )
 
     data = {
         "field_id": field_id,

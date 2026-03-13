@@ -30,19 +30,15 @@ reproduce or script the operation independently.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from ms_inspect.exceptions import OutputPathExistsError, SplitFailedError
-from ms_inspect.util.casa_context import (
-    open_msmd, validate_ms_path, _require_casatasks
-)
-from ms_inspect.util.formatting import field, response_envelope, error_envelope
+from ms_inspect.util.casa_context import _require_casatasks, open_msmd, validate_ms_path
+from ms_inspect.util.formatting import error_envelope, field, response_envelope
 
 TOOL_NAME = "ms_split_field"
 
-_VALID_DATACOLUMNS = {"data", "corrected", "model", "all",
-                       "data,model", "corrected,model"}
+_VALID_DATACOLUMNS = {"data", "corrected", "model", "all", "data,model", "corrected,model"}
 
 
 def run(
@@ -74,9 +70,9 @@ def run(
     """
     p = validate_ms_path(ms_path)
     ms_str = str(p)
-    out_p  = Path(output_path).expanduser().resolve()
+    out_p = Path(output_path).expanduser().resolve()
     casa_calls: list[str] = []
-    warnings:   list[str] = []
+    warnings: list[str] = []
 
     # ------------------------------------------------------------------
     # Input validation — always runs regardless of dry_run
@@ -88,14 +84,14 @@ def run(
             ms_path=ms_path,
             error_type="COMPUTATION_ERROR",
             message=(
-                f"Invalid datacolumn '{datacolumn}'. "
-                f"Valid options: {sorted(_VALID_DATACOLUMNS)}"
+                f"Invalid datacolumn '{datacolumn}'. Valid options: {sorted(_VALID_DATACOLUMNS)}"
             ),
         )
 
     if width < 1:
         return error_envelope(
-            tool_name=TOOL_NAME, ms_path=ms_path,
+            tool_name=TOOL_NAME,
+            ms_path=ms_path,
             error_type="COMPUTATION_ERROR",
             message=f"Invalid width={width}. Must be >= 1.",
         )
@@ -117,7 +113,7 @@ def run(
     try:
         with open_msmd(ms_str) as msmd:
             all_field_names = list(msmd.fieldnames())
-            n_fields_total  = len(all_field_names)
+            n_fields_total = len(all_field_names)
 
         if field_selection in ("", "*"):
             matched_fields = all_field_names
@@ -137,26 +133,22 @@ def run(
                         )
                 else:
                     # Name matching
-                    hits = [
-                        name for name in all_field_names
-                        if token.lower() in name.lower()
-                    ]
+                    hits = [name for name in all_field_names if token.lower() in name.lower()]
                     if hits:
                         matched_fields.extend(hits)
                         field_selection_valid = True
                     else:
                         warnings.append(
-                            f"No field matched token '{token}' in field names: "
-                            f"{all_field_names}"
+                            f"No field matched token '{token}' in field names: {all_field_names}"
                         )
     except Exception as e:
         warnings.append(f"Could not validate field selection: {e}")
         field_selection_valid = True  # Let CASA validate; don't block on our error
 
     # Build the CASA split() command string (always — for transparency)
-    spw_arg      = f", spw='{spw}'" if spw else ""
-    timebin_arg  = f", timebin='{timebin}'" if timebin != "0s" else ""
-    width_arg    = f", width={width}" if width != 1 else ""
+    spw_arg = f", spw='{spw}'" if spw else ""
+    timebin_arg = f", timebin='{timebin}'" if timebin != "0s" else ""
+    width_arg = f", width={width}" if width != 1 else ""
     casa_split_cmd = (
         f"casatasks.split("
         f"vis='{ms_str}', "
@@ -172,22 +164,27 @@ def run(
     # ------------------------------------------------------------------
     if dry_run:
         data = {
-            "dry_run":             True,
-            "source_ms":           ms_str,
-            "output_ms":           str(out_p),
-            "field_selection":     field_selection,
-            "matched_fields":      field(matched_fields, flag="COMPLETE" if field_selection_valid else "SUSPECT"),
-            "spw_selection":       spw or "(all)",
-            "datacolumn":          datacolumn,
-            "timebin":             timebin,
-            "channel_avg_width":   width,
-            "n_source_fields":     n_fields_total if "n_fields_total" in dir() else None,
-            "casa_command":        casa_split_cmd,
-            "output_ms_exists":    False,
+            "dry_run": True,
+            "source_ms": ms_str,
+            "output_ms": str(out_p),
+            "field_selection": field_selection,
+            "matched_fields": field(
+                matched_fields, flag="COMPLETE" if field_selection_valid else "SUSPECT"
+            ),
+            "spw_selection": spw or "(all)",
+            "datacolumn": datacolumn,
+            "timebin": timebin,
+            "channel_avg_width": width,
+            "n_source_fields": n_fields_total if "n_fields_total" in dir() else None,
+            "casa_command": casa_split_cmd,
+            "output_ms_exists": False,
         }
         return response_envelope(
-            tool_name=TOOL_NAME, ms_path=ms_path,
-            data=data, warnings=warnings, casa_calls=casa_calls,
+            tool_name=TOOL_NAME,
+            ms_path=ms_path,
+            data=data,
+            warnings=warnings,
+            casa_calls=casa_calls,
         )
 
     # ------------------------------------------------------------------
@@ -217,19 +214,15 @@ def run(
         if out_p.exists():
             try:
                 import shutil
+
                 shutil.rmtree(str(out_p))
-                warnings.append(
-                    f"Partial output MS at '{out_p}' was removed after split failure."
-                )
+                warnings.append(f"Partial output MS at '{out_p}' was removed after split failure.")
             except Exception:
-                warnings.append(
-                    f"Partial output MS may remain at '{out_p}' after split failure."
-                )
+                warnings.append(f"Partial output MS may remain at '{out_p}' after split failure.")
         raise SplitFailedError(
-            f"casatasks.split() failed: {e}\n"
-            f"Command attempted: {casa_split_cmd}",
+            f"casatasks.split() failed: {e}\nCommand attempted: {casa_split_cmd}",
             ms_path=ms_path,
-        )
+        ) from e
 
     # ------------------------------------------------------------------
     # Post-split: report output size and validate it opened
@@ -237,40 +230,43 @@ def run(
     output_size_bytes: int | None = None
     output_n_rows: int | None = None
 
-    try:
-        # Get directory size
-        output_size_bytes = sum(
-            f.stat().st_size
-            for f in out_p.rglob("*")
-            if f.is_file()
-        )
-    except Exception:
-        pass
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        output_size_bytes = sum(f.stat().st_size for f in out_p.rglob("*") if f.is_file())
 
     try:
         from ms_inspect.util.casa_context import open_table
+
         with open_table(str(out_p)) as tb:
             output_n_rows = tb.nrows()
     except Exception:
         warnings.append("Could not open output MS to verify row count.")
 
     data = {
-        "dry_run":              False,
-        "source_ms":            ms_str,
-        "output_ms":            str(out_p),
-        "field_selection":      field_selection,
-        "matched_fields":       field(matched_fields),
-        "spw_selection":        spw or "(all)",
-        "datacolumn":           datacolumn,
-        "timebin":              timebin,
-        "channel_avg_width":    width,
-        "output_ms_n_rows":     field(output_n_rows,    flag="COMPLETE" if output_n_rows is not None else "UNAVAILABLE"),
-        "output_ms_size_bytes": field(output_size_bytes, flag="COMPLETE" if output_size_bytes is not None else "UNAVAILABLE"),
-        "output_ms_exists":     True,
-        "casa_command":         casa_split_cmd,
+        "dry_run": False,
+        "source_ms": ms_str,
+        "output_ms": str(out_p),
+        "field_selection": field_selection,
+        "matched_fields": field(matched_fields),
+        "spw_selection": spw or "(all)",
+        "datacolumn": datacolumn,
+        "timebin": timebin,
+        "channel_avg_width": width,
+        "output_ms_n_rows": field(
+            output_n_rows, flag="COMPLETE" if output_n_rows is not None else "UNAVAILABLE"
+        ),
+        "output_ms_size_bytes": field(
+            output_size_bytes, flag="COMPLETE" if output_size_bytes is not None else "UNAVAILABLE"
+        ),
+        "output_ms_exists": True,
+        "casa_command": casa_split_cmd,
     }
 
     return response_envelope(
-        tool_name=TOOL_NAME, ms_path=ms_path,
-        data=data, warnings=warnings, casa_calls=casa_calls,
+        tool_name=TOOL_NAME,
+        ms_path=ms_path,
+        data=data,
+        warnings=warnings,
+        casa_calls=casa_calls,
     )

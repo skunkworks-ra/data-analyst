@@ -7,14 +7,14 @@ No CASA dependency.
 from __future__ import annotations
 
 import math
-
-import pytest
+from datetime import UTC
 
 from ms_inspect.util.conversions import (
     angular_resolution_arcsec,
     baseline_length_klambda,
     baseline_length_m,
     corr_codes_to_labels,
+    deg_to_rad,
     ecef_to_geodetic,
     freq_to_band_name,
     hz_to_human,
@@ -24,12 +24,10 @@ from ms_inspect.util.conversions import (
     mjd_seconds_to_utc,
     polarization_basis,
     rad_to_deg,
-    deg_to_rad,
     rad_to_dms,
     rad_to_hms,
     seconds_to_human,
 )
-
 
 # ---------------------------------------------------------------------------
 # Correlation type codes
@@ -112,9 +110,9 @@ class TestMJDConversions:
         mjd_sec = 58000.0 * 86400.0
         unix_ts = mjd_seconds_to_unix(mjd_sec)
         # Should be consistent with the UTC string
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        dt = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
+        dt = datetime.fromtimestamp(unix_ts, tz=UTC)
         assert dt.year == 2017
         assert dt.month == 9
         assert dt.day == 4

@@ -43,12 +43,13 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     casa_calls: list[str] = []
-    warnings:   list[str] = []
+    warnings: list[str] = []
 
     try:
         import casatasks  # type: ignore[import]
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
+
         raise CASANotAvailableError(
             "casatasks is not installed. Install with: pip install casatasks",
             ms_path=ms_path,
@@ -59,6 +60,7 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
         summary = casatasks.flagdata(vis=ms_str, mode="summary", field=field, spw=spw)
     except Exception as e:
         from ms_inspect.util.formatting import error_envelope
+
         return error_envelope(
             tool_name=TOOL_NAME,
             ms_path=ms_path,
@@ -71,8 +73,8 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
     # ------------------------------------------------------------------
     total_block = summary.get("total", {})
     total_flagged = int(total_block.get("flagged", 0))
-    total_count   = int(total_block.get("total",   0))
-    total_frac    = total_flagged / total_count if total_count > 0 else 0.0
+    total_count = int(total_block.get("total", 0))
+    total_frac = total_flagged / total_count if total_count > 0 else 0.0
 
     # ------------------------------------------------------------------
     # Per-field breakdown
@@ -80,14 +82,16 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
     per_field = []
     for fname, fdata in summary.get("field", {}).items():
         n_flagged = int(fdata.get("flagged", 0))
-        n_total   = int(fdata.get("total",   0))
+        n_total = int(fdata.get("total", 0))
         frac = n_flagged / n_total if n_total > 0 else 0.0
-        per_field.append({
-            "field_name":    fname,
-            "flag_fraction": fmt_field(round(frac, 6)),
-            "n_flagged":     n_flagged,
-            "n_total":       n_total,
-        })
+        per_field.append(
+            {
+                "field_name": fname,
+                "flag_fraction": fmt_field(round(frac, 6)),
+                "n_flagged": n_flagged,
+                "n_total": n_total,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Per-SpW breakdown
@@ -95,14 +99,16 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
     per_spw = []
     for spw_id_str, spw_data in summary.get("spw", {}).items():
         n_flagged = int(spw_data.get("flagged", 0))
-        n_total   = int(spw_data.get("total",   0))
+        n_total = int(spw_data.get("total", 0))
         frac = n_flagged / n_total if n_total > 0 else 0.0
-        per_spw.append({
-            "spw_id":        int(spw_id_str),
-            "flag_fraction": fmt_field(round(frac, 6)),
-            "n_flagged":     n_flagged,
-            "n_total":       n_total,
-        })
+        per_spw.append(
+            {
+                "spw_id": int(spw_id_str),
+                "flag_fraction": fmt_field(round(frac, 6)),
+                "n_flagged": n_flagged,
+                "n_total": n_total,
+            }
+        )
     per_spw.sort(key=lambda x: x["spw_id"])
 
     # ------------------------------------------------------------------
@@ -111,14 +117,16 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
     per_antenna = []
     for ant_name, ant_data in summary.get("antenna", {}).items():
         n_flagged = int(ant_data.get("flagged", 0))
-        n_total   = int(ant_data.get("total",   0))
+        n_total = int(ant_data.get("total", 0))
         frac = n_flagged / n_total if n_total > 0 else 0.0
-        per_antenna.append({
-            "antenna_name":  ant_name,
-            "flag_fraction": fmt_field(round(frac, 6)),
-            "n_flagged":     n_flagged,
-            "n_total":       n_total,
-        })
+        per_antenna.append(
+            {
+                "antenna_name": ant_name,
+                "flag_fraction": fmt_field(round(frac, 6)),
+                "n_flagged": n_flagged,
+                "n_total": n_total,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Per-scan breakdown (abbreviated — scan count can be large)
@@ -126,14 +134,16 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
     per_scan = []
     for scan_str, scan_data in summary.get("scan", {}).items():
         n_flagged = int(scan_data.get("flagged", 0))
-        n_total   = int(scan_data.get("total",   0))
+        n_total = int(scan_data.get("total", 0))
         frac = n_flagged / n_total if n_total > 0 else 0.0
-        per_scan.append({
-            "scan":          int(scan_str),
-            "flag_fraction": round(frac, 4),
-            "n_flagged":     n_flagged,
-            "n_total":       n_total,
-        })
+        per_scan.append(
+            {
+                "scan": int(scan_str),
+                "flag_fraction": round(frac, 4),
+                "n_flagged": n_flagged,
+                "n_total": n_total,
+            }
+        )
     per_scan.sort(key=lambda x: x["scan"])
 
     # Warn on any fully-flagged entities
@@ -146,13 +156,13 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
 
     data = {
         "total_flag_fraction": fmt_field(round(total_frac, 6)),
-        "total_flagged":       total_flagged,
-        "total_visibilities":  total_count,
-        "per_field":           per_field,
-        "per_spw":             per_spw,
-        "per_antenna":         per_antenna,
-        "per_scan":            per_scan,
-        "flagdata_version":    summary.get("flagversion", fmt_field(None, "UNAVAILABLE")),
+        "total_flagged": total_flagged,
+        "total_visibilities": total_count,
+        "per_field": per_field,
+        "per_spw": per_spw,
+        "per_antenna": per_antenna,
+        "per_scan": per_scan,
+        "flagdata_version": summary.get("flagversion", fmt_field(None, "UNAVAILABLE")),
     }
 
     return response_envelope(

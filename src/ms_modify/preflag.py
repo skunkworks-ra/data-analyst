@@ -137,6 +137,7 @@ def run(
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"workdir does not exist: {workdir}. Create it before calling this tool.",
             ms_path=ms_path,
@@ -151,7 +152,9 @@ def run(
     Path(cmds_path).write_text(cmds_content)
     casa_calls.append(f"write_cmds → {cmds_path}")
 
-    n_cmd_lines = len([ln for ln in cmds_content.splitlines() if ln.strip() and not ln.startswith("#")])
+    n_cmd_lines = len(
+        [ln for ln in cmds_content.splitlines() if ln.strip() and not ln.startswith("#")]
+    )
 
     # Always write the script
     script_content = _build_script(ms_str, cmds_path, cal_ms, cal_fields)
@@ -187,14 +190,13 @@ def run(
         from casatasks import flagdata, split  # type: ignore[import]
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
+
         raise CASANotAvailableError(
             "casatasks is not installed or cannot be imported.",
             ms_path=ms_path,
         ) from None
 
-    casa_calls.append(
-        f"casatasks.flagdata(mode='list', inpfile='{cmds_path}', flagbackup=True)"
-    )
+    casa_calls.append(f"casatasks.flagdata(mode='list', inpfile='{cmds_path}', flagbackup=True)")
     try:
         flagdata(
             vis=ms_str,
@@ -204,6 +206,7 @@ def run(
         )
     except Exception as exc:
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"flagdata(mode='list') failed: {exc}",
             ms_path=ms_path,
@@ -221,6 +224,7 @@ def run(
         )
     except Exception as exc:
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"split to calibrators.ms failed: {exc}",
             ms_path=ms_path,

@@ -26,7 +26,7 @@ from __future__ import annotations
 import numpy as np
 
 from ms_inspect.util.casa_context import open_table, validate_ms_path
-from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.formatting import response_envelope
 
 TOOL_NAME = "ms_refant"
 
@@ -34,6 +34,7 @@ TOOL_NAME = "ms_refant"
 # ---------------------------------------------------------------------------
 # Score helpers — pure Python / numpy, no CASA dependency
 # ---------------------------------------------------------------------------
+
 
 def _geo_score(positions: np.ndarray, flagged_rows: list[bool]) -> np.ndarray:
     """
@@ -111,6 +112,7 @@ def _flag_score(
 # ---------------------------------------------------------------------------
 # Main tool function
 # ---------------------------------------------------------------------------
+
 
 def run(
     ms_path: str,
@@ -198,14 +200,12 @@ def run(
 
         except ImportError:
             warnings.append(
-                "casatasks not available — flagging score skipped. "
-                "Geometry score only."
+                "casatasks not available — flagging score skipped. Geometry score only."
             )
             use_flagging = False
         except Exception as e:
             warnings.append(
-                f"flagdata(mode='summary') failed ({e}). "
-                "Falling back to geometry-only scoring."
+                f"flagdata(mode='summary') failed ({e}). Falling back to geometry-only scoring."
             )
             use_flagging = False
 
@@ -217,14 +217,16 @@ def run(
 
     ranked = []
     for rank_idx, ant_idx in enumerate(rank_order):
-        ranked.append({
-            "antenna": ant_names[ant_idx],
-            "geo_score": round(float(geo_scores[ant_idx]), 4),
-            "flag_score": round(float(flag_scores[ant_idx]), 4),
-            "combined_score": round(float(combined[ant_idx]), 4),
-            "rank": rank_idx + 1,
-            "flag_row": bool(flag_row[ant_idx]),
-        })
+        ranked.append(
+            {
+                "antenna": ant_names[ant_idx],
+                "geo_score": round(float(geo_scores[ant_idx]), 4),
+                "flag_score": round(float(flag_scores[ant_idx]), 4),
+                "combined_score": round(float(combined[ant_idx]), 4),
+                "rank": rank_idx + 1,
+                "flag_row": bool(flag_row[ant_idx]),
+            }
+        )
 
     refant_list = [r["antenna"] for r in ranked]
     best = refant_list[0] if refant_list else None

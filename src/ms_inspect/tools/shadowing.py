@@ -15,8 +15,6 @@ Also checks FLAG_CMD subtable for pre-existing online shadow flags.
 
 from __future__ import annotations
 
-import math
-
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import mjd_seconds_to_utc, seconds_to_human
 from ms_inspect.util.formatting import field, response_envelope
@@ -46,23 +44,21 @@ def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
     # Primary: msmd.shadowedAntennas()
     # ------------------------------------------------------------------
     shadow_events: list[dict] = []
-    method_flag   = "COMPLETE"
-    method_value  = "msmd.shadowedAntennas"
+    method_flag = "COMPLETE"
+    method_value = "msmd.shadowedAntennas"
 
     with open_msmd(ms_str) as msmd:
         casa_calls.append("msmd.open()")
 
         field_names = list(msmd.fieldnames())
-        scan_nums   = sorted(msmd.scannumbers())
+        scan_nums = sorted(msmd.scannumbers())
 
         has_shadow_method = hasattr(msmd, "shadowedAntennas")
 
         if has_shadow_method:
             casa_calls.append("msmd.shadowedAntennas(tolerance)")
             try:
-                shadow_events = _query_shadowed_antennas(
-                    msmd, scan_nums, field_names, tolerance_m
-                )
+                shadow_events = _query_shadowed_antennas(msmd, scan_nums, field_names, tolerance_m)
             except Exception as e:
                 warnings.append(
                     f"msmd.shadowedAntennas() failed: {e}. "
@@ -71,7 +67,7 @@ def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
                 has_shadow_method = False
 
         if not has_shadow_method:
-            method_flag  = "INFERRED"
+            method_flag = "INFERRED"
             method_value = "geometric (msmd.shadowedAntennas unavailable)"
             warnings.append(
                 "msmd.shadowedAntennas() is not available in this CASA version. "
@@ -88,20 +84,24 @@ def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
             casa_calls.append("tb.open(FLAG_CMD)")
             n_rows = tb.nrows()
             if n_rows > 0:
-                reasons  = tb.getcol("REASON")   if tb.iscelldefined("REASON", 0)  else []
-                commands = tb.getcol("COMMAND")  if tb.iscelldefined("COMMAND", 0) else []
-                times    = tb.getcol("TIME")     if tb.iscelldefined("TIME", 0)    else []
+                reasons = tb.getcol("REASON") if tb.iscelldefined("REASON", 0) else []
+                commands = tb.getcol("COMMAND") if tb.iscelldefined("COMMAND", 0) else []
+                times = tb.getcol("TIME") if tb.iscelldefined("TIME", 0) else []
 
                 for i in range(n_rows):
                     reason = str(reasons[i]) if i < len(reasons) else ""
-                    cmd    = str(commands[i]) if i < len(commands) else ""
+                    cmd = str(commands[i]) if i < len(commands) else ""
                     if "shadow" in reason.lower() or "shadow" in cmd.lower():
-                        flag_cmd_shadows.append({
-                            "row":     i,
-                            "reason":  reason,
-                            "command": cmd,
-                            "time":    mjd_seconds_to_utc(float(times[i])) if i < len(times) else "UNKNOWN",
-                        })
+                        flag_cmd_shadows.append(
+                            {
+                                "row": i,
+                                "reason": reason,
+                                "command": cmd,
+                                "time": mjd_seconds_to_utc(float(times[i]))
+                                if i < len(times)
+                                else "UNKNOWN",
+                            }
+                        )
     except Exception as e:
         warnings.append(f"Could not read FLAG_CMD subtable: {e}")
 
@@ -117,14 +117,14 @@ def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
     shadowing_detected = len(shadow_events) > 0 or len(flag_cmd_shadows) > 0
 
     data = {
-        "shadowing_detected":       shadowing_detected,
-        "n_shadow_events":          len(shadow_events),
-        "total_shadowed_seconds":   field(round(total_shadowed_s, 2)),
-        "total_shadowed_human":     seconds_to_human(total_shadowed_s),
-        "tolerance_m":              tolerance_m,
-        "method":                   field(method_value, flag=method_flag),
-        "shadowed_events":          shadow_events,
-        "flag_cmd_shadow_entries":  flag_cmd_shadows,
+        "shadowing_detected": shadowing_detected,
+        "n_shadow_events": len(shadow_events),
+        "total_shadowed_seconds": field(round(total_shadowed_s, 2)),
+        "total_shadowed_human": seconds_to_human(total_shadowed_s),
+        "tolerance_m": tolerance_m,
+        "method": field(method_value, flag=method_flag),
+        "shadowed_events": shadow_events,
+        "flag_cmd_shadow_entries": flag_cmd_shadows,
         "n_flag_cmd_shadow_entries": len(flag_cmd_shadows),
     }
 
@@ -157,19 +157,17 @@ def _query_shadowed_antennas(
             # Get time range for this scan
             times = msmd.timesforscans([scan_num])
             t_start = float(min(times))
-            t_end   = float(max(times))
+            t_end = float(max(times))
 
             # Get field for this scan
             fids = list(msmd.fieldsforscan(scan_num))
-            fid  = fids[0] if fids else 0
+            fid = fids[0] if fids else 0
             fname = field_names[fid] if 0 <= fid < len(field_names) else f"FIELD_{fid}"
 
             # Query shadowed antennas — API: returns list of antenna IDs
             # that are shadowed during this scan
             try:
-                shadowed = msmd.shadowedAntennas(
-                    scan=scan_num, tolerance=tolerance_m
-                )
+                shadowed = msmd.shadowedAntennas(scan=scan_num, tolerance=tolerance_m)
             except TypeError:
                 # Older API without tolerance parameter
                 shadowed = msmd.shadowedAntennas(scan=scan_num)
@@ -182,16 +180,21 @@ def _query_shadowed_antennas(
             for ant_id in shadowed_ids:
                 # msmd.shadowedAntennas doesn't return which antenna is doing
                 # the shadowing — that requires geometric computation.
-                events.append({
-                    "antenna_id":              int(ant_id),
-                    "shadowing_antenna_id":    field(None, flag="UNAVAILABLE",
-                                                      note="Shadowing antenna ID requires geometric computation"),
-                    "scan_number":             scan_num,
-                    "field_name":              fname,
-                    "start_utc":               mjd_seconds_to_utc(t_start),
-                    "end_utc":                 mjd_seconds_to_utc(t_end),
-                    "duration_s":              round(t_end - t_start, 2),
-                })
+                events.append(
+                    {
+                        "antenna_id": int(ant_id),
+                        "shadowing_antenna_id": field(
+                            None,
+                            flag="UNAVAILABLE",
+                            note="Shadowing antenna ID requires geometric computation",
+                        ),
+                        "scan_number": scan_num,
+                        "field_name": fname,
+                        "start_utc": mjd_seconds_to_utc(t_start),
+                        "end_utc": mjd_seconds_to_utc(t_end),
+                        "duration_s": round(t_end - t_start, 2),
+                    }
+                )
 
         except Exception:
             # Per-scan failure — skip rather than abort entire report

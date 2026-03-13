@@ -41,8 +41,6 @@ def run(ms_path: str) -> dict:
     casa_calls.append(f"tb.open('{obs_table}')")
     casa_calls.append("tb.getcol('TELESCOPE_NAME', 'OBSERVER', 'PROJECT', 'TIME_RANGE')")
 
-    rows: list[dict] = []
-
     with open_table(obs_table) as tb:
         n_rows = tb.nrows()
         if n_rows == 0:
@@ -53,7 +51,7 @@ def run(ms_path: str) -> dict:
             )
 
         telescope_names: list[str] = list(tb.getcol("TELESCOPE_NAME"))
-        observers:       list[str] = list(tb.getcol("OBSERVER"))
+        observers: list[str] = list(tb.getcol("OBSERVER"))
         # PROJECT may not exist in all MSs
         try:
             projects: list[str] = list(tb.getcol("PROJECT"))
@@ -96,10 +94,10 @@ def run(ms_path: str) -> dict:
     # ------------------------------------------------------------------
     # time_ranges shape: [2, n_rows] where row 0 = start, row 1 = end
     all_starts = time_ranges[0]
-    all_ends   = time_ranges[1]
-    obs_start  = float(min(all_starts))
-    obs_end    = float(max(all_ends))
-    total_s    = obs_end - obs_start
+    all_ends = time_ranges[1]
+    obs_start = float(min(all_starts))
+    obs_end = float(max(all_ends))
+    total_s = obs_end - obs_start
 
     # Sanity check: non-contiguous rows
     if n_rows > 1:
@@ -108,7 +106,7 @@ def run(ms_path: str) -> dict:
             if gap > 300:  # > 5 minutes gap between rows
                 warnings.append(
                     f"Non-contiguous time ranges between OBSERVATION rows "
-                    f"{i} and {i+1}: gap of {seconds_to_human(gap)}. "
+                    f"{i} and {i + 1}: gap of {seconds_to_human(gap)}. "
                     "This may indicate separate observing sessions concatenated together."
                 )
 
@@ -132,16 +130,20 @@ def run(ms_path: str) -> dict:
     # ------------------------------------------------------------------
     data = {
         "telescope_name": field(primary_telescope),
-        "observer":       field(observers[0].strip() if observers[0].strip() else None,
-                                flag="UNAVAILABLE" if not observers[0].strip() else "COMPLETE"),
-        "project_code":   field(projects[0].strip() if projects[0].strip() else None,
-                                flag="UNAVAILABLE" if not projects[0].strip() else "COMPLETE"),
-        "obs_start_utc":  field(mjd_seconds_to_utc(obs_start)),
-        "obs_end_utc":    field(mjd_seconds_to_utc(obs_end)),
-        "total_duration_s":      field(round(total_s, 2)),
-        "total_duration_human":  seconds_to_human(total_s),
-        "n_observation_rows":    n_rows,
-        "history_entries":       field(history_count, flag=history_flag),
+        "observer": field(
+            observers[0].strip() if observers[0].strip() else None,
+            flag="UNAVAILABLE" if not observers[0].strip() else "COMPLETE",
+        ),
+        "project_code": field(
+            projects[0].strip() if projects[0].strip() else None,
+            flag="UNAVAILABLE" if not projects[0].strip() else "COMPLETE",
+        ),
+        "obs_start_utc": field(mjd_seconds_to_utc(obs_start)),
+        "obs_end_utc": field(mjd_seconds_to_utc(obs_end)),
+        "total_duration_s": field(round(total_s, 2)),
+        "total_duration_human": seconds_to_human(total_s),
+        "n_observation_rows": n_rows,
+        "history_entries": field(history_count, flag=history_flag),
     }
 
     if n_rows > 1:

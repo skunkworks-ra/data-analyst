@@ -15,8 +15,7 @@ Covers:
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
-
+from datetime import UTC, datetime
 
 # ---------------------------------------------------------------------------
 # CASA correlation type codes → string labels
@@ -24,15 +23,15 @@ from datetime import datetime, timezone
 # Confidence: 99% — these are stable integer assignments in CASA since v4.
 # ---------------------------------------------------------------------------
 CORR_TYPE_MAP: dict[int, str] = {
-    1:  "I",
-    2:  "Q",
-    3:  "U",
-    4:  "V",
-    5:  "RR",
-    6:  "RL",
-    7:  "LR",
-    8:  "LL",
-    9:  "XX",
+    1: "I",
+    2: "Q",
+    3: "U",
+    4: "V",
+    5: "RR",
+    6: "RL",
+    7: "LR",
+    8: "LL",
+    9: "XX",
     10: "XY",
     11: "YX",
     12: "YY",
@@ -52,7 +51,7 @@ CORR_TYPE_MAP: dict[int, str] = {
 
 # Polarization basis inferred from correlation product set
 _CIRCULAR = {"RR", "RL", "LR", "LL"}
-_LINEAR   = {"XX", "XY", "YX", "YY"}
+_LINEAR = {"XX", "XY", "YX", "YY"}
 
 
 def corr_codes_to_labels(codes: list[int]) -> list[str]:
@@ -80,9 +79,9 @@ def is_full_stokes(corr_labels: list[str]) -> bool:
     """True if all four Stokes products are present."""
     s = set(corr_labels)
     return bool(
-        ({"RR", "RL", "LR", "LL"} <= s) or
-        ({"XX", "XY", "YX", "YY"} <= s) or
-        ({"I", "Q", "U", "V"} <= s)
+        ({"RR", "RL", "LR", "LL"} <= s)
+        or ({"XX", "XY", "YX", "YY"} <= s)
+        or ({"I", "Q", "U", "V"} <= s)
     )
 
 
@@ -105,7 +104,7 @@ def mjd_seconds_to_utc(mjd_seconds: float) -> str:
     Returns: '2017-03-15 10:23:01.000 UTC'
     """
     unix_ts = mjd_seconds + _MJD_EPOCH_UNIX
-    dt = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
+    dt = datetime.fromtimestamp(unix_ts, tz=UTC)
     return dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " UTC"
 
 
@@ -117,6 +116,7 @@ def mjd_seconds_to_unix(mjd_seconds: float) -> float:
 # ---------------------------------------------------------------------------
 # Frequency
 # ---------------------------------------------------------------------------
+
 
 def hz_to_human(freq_hz: float) -> str:
     """Format a frequency in Hz as a human-readable string."""
@@ -195,6 +195,7 @@ def freq_to_band_name(freq_hz: float, telescope: str) -> str | None:
 # Angles
 # ---------------------------------------------------------------------------
 
+
 def rad_to_deg(radians: float) -> float:
     """Radians to degrees."""
     return math.degrees(radians)
@@ -237,6 +238,7 @@ def rad_to_dms(radians: float) -> str:
 # Coordinate conversions
 # ---------------------------------------------------------------------------
 
+
 def ecef_to_geodetic(x: float, y: float, z: float) -> tuple[float, float, float]:
     """
     Convert ECEF (Earth-Centred Earth-Fixed) XYZ coordinates in metres
@@ -248,9 +250,9 @@ def ecef_to_geodetic(x: float, y: float, z: float) -> tuple[float, float, float]
     Reference: Bowring (1985), 'The geodetic line', Survey Review.
     """
     # WGS84 constants
-    a  = 6_378_137.0          # semi-major axis, m
-    f  = 1.0 / 298.257_223_563
-    b  = a * (1.0 - f)        # semi-minor axis
+    a = 6_378_137.0  # semi-major axis, m
+    f = 1.0 / 298.257_223_563
+    b = a * (1.0 - f)  # semi-minor axis
     e2 = 1.0 - (b / a) ** 2  # first eccentricity squared
     ep2 = (a / b) ** 2 - 1.0  # second eccentricity squared
 
@@ -278,15 +280,15 @@ def ecef_to_geodetic(x: float, y: float, z: float) -> tuple[float, float, float]
     return math.degrees(lat_rad), math.degrees(lon_rad), h
 
 
-def baseline_length_m(pos1: tuple[float, float, float],
-                      pos2: tuple[float, float, float]) -> float:
+def baseline_length_m(pos1: tuple[float, float, float], pos2: tuple[float, float, float]) -> float:
     """Euclidean distance between two ECEF positions, in metres."""
-    return math.sqrt(sum((a - b) ** 2 for a, b in zip(pos1, pos2)))
+    return math.sqrt(sum((a - b) ** 2 for a, b in zip(pos1, pos2, strict=False)))
 
 
 # ---------------------------------------------------------------------------
 # Angular scale
 # ---------------------------------------------------------------------------
+
 
 def angular_resolution_arcsec(max_baseline_m: float, freq_hz: float) -> float:
     """
@@ -329,6 +331,7 @@ def baseline_length_klambda(baseline_m: float, freq_hz: float) -> float:
 # ---------------------------------------------------------------------------
 # Duration formatting
 # ---------------------------------------------------------------------------
+
 
 def seconds_to_human(seconds: float) -> str:
     """Format a duration in seconds as 'Xh Ym Z.Zs'."""

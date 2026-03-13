@@ -19,6 +19,7 @@ from ms_modify.setjy import _DEFAULT_STANDARD, _build_setjy_block
 # _build_setjy_block
 # ---------------------------------------------------------------------------
 
+
 class TestBuildSetjyBlock:
     def test_contains_field_name(self):
         block = _build_setjy_block("3C286", _DEFAULT_STANDARD)
@@ -37,6 +38,7 @@ class TestBuildSetjyBlock:
 # ms_setjy.run — workdir and catalogue logic (mocked CASA reads)
 # ---------------------------------------------------------------------------
 
+
 class TestSetjyRun:
     def _make_ms(self, tmp_path) -> Path:
         ms = tmp_path / "test.ms"
@@ -47,12 +49,17 @@ class TestSetjyRun:
     def test_missing_workdir_raises(self, tmp_path):
         from ms_inspect.exceptions import ComputationError
         from ms_modify.setjy import run
+
         ms = self._make_ms(tmp_path)
-        with patch("ms_modify.setjy._get_field_names", return_value=["3C286"]), pytest.raises(ComputationError, match="workdir does not exist"):
+        with (
+            patch("ms_modify.setjy._get_field_names", return_value=["3C286"]),
+            pytest.raises(ComputationError, match="workdir does not exist"),
+        ):
             run(str(ms), str(tmp_path / "nodir"))
 
     def test_known_flux_field_included(self, tmp_path):
         from ms_modify.setjy import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -63,6 +70,7 @@ class TestSetjyRun:
 
     def test_unknown_field_is_skipped(self, tmp_path):
         from ms_modify.setjy import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -73,6 +81,7 @@ class TestSetjyRun:
 
     def test_script_written_execute_false(self, tmp_path):
         from ms_modify.setjy import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -104,6 +113,7 @@ class TestSetjyRun:
 
     def test_no_flux_fields_triggers_warning(self, tmp_path):
         from ms_modify.setjy import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -114,6 +124,7 @@ class TestSetjyRun:
 
     def test_script_contains_perley_butler(self, tmp_path):
         from ms_modify.setjy import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()

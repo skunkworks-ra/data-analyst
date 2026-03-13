@@ -7,8 +7,6 @@ No CASA dependency.
 
 from __future__ import annotations
 
-import pytest
-
 from ms_inspect.util.formatting import (
     _collect_flags,
     error_envelope,
@@ -18,7 +16,6 @@ from ms_inspect.util.formatting import (
     truncate_list,
     worst_flag,
 )
-
 
 # ---------------------------------------------------------------------------
 # field()
@@ -66,7 +63,10 @@ class TestWorstFlag:
         assert worst_flag(["COMPLETE", "COMPLETE", "COMPLETE"]) == "COMPLETE"
 
     def test_worst_wins(self):
-        assert worst_flag(["COMPLETE", "INFERRED", "PARTIAL", "SUSPECT", "UNAVAILABLE"]) == "UNAVAILABLE"
+        assert (
+            worst_flag(["COMPLETE", "INFERRED", "PARTIAL", "SUSPECT", "UNAVAILABLE"])
+            == "UNAVAILABLE"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ from ms_inspect.tools import caltables
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_tb_mock(n_rows: int, col_names: list[str]):
     """Return a mock table context manager that reports n_rows and col_names."""
     tb = MagicMock()
@@ -27,6 +28,7 @@ def _make_tb_mock(n_rows: int, col_names: list[str]):
 # ---------------------------------------------------------------------------
 # _check_table unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestCheckTable:
     def test_path_not_exists(self, tmp_path):
@@ -85,6 +87,7 @@ class TestCheckTable:
 # ---------------------------------------------------------------------------
 # run() integration-style unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestRun:
     def test_both_valid(self, tmp_path):

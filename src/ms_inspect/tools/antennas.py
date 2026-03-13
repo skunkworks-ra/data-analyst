@@ -27,7 +27,7 @@ from ms_inspect.util.conversions import (
 )
 from ms_inspect.util.formatting import field, response_envelope
 
-TOOL_ANT     = "ms_antenna_list"
+TOOL_ANT = "ms_antenna_list"
 TOOL_BASELINES = "ms_baseline_lengths"
 
 
@@ -39,11 +39,11 @@ def _read_antenna_table(ms_str: str) -> tuple[dict, list[str]]:
     """
     casa_calls = [f"tb.open('{ms_str}/ANTENNA')"]
     with open_table(ms_str + "/ANTENNA") as tb:
-        n_rows     = tb.nrows()
-        names      = list(tb.getcol("NAME"))
-        stations   = list(tb.getcol("STATION"))
-        positions  = tb.getcol("POSITION")   # shape [3, n_ant] ECEF metres
-        diameters  = list(tb.getcol("DISH_DIAMETER"))
+        n_rows = tb.nrows()
+        names = list(tb.getcol("NAME"))
+        stations = list(tb.getcol("STATION"))
+        positions = tb.getcol("POSITION")  # shape [3, n_ant] ECEF metres
+        diameters = list(tb.getcol("DISH_DIAMETER"))
 
         try:
             mounts = list(tb.getcol("MOUNT"))
@@ -53,12 +53,12 @@ def _read_antenna_table(ms_str: str) -> tuple[dict, list[str]]:
     casa_calls.append("tb.getcol(NAME, STATION, POSITION, DISH_DIAMETER, MOUNT)")
 
     return {
-        "names":     names,
-        "stations":  stations,
+        "names": names,
+        "stations": stations,
         "positions": positions,  # numpy [3, n]
         "diameters": diameters,
-        "mounts":    mounts,
-        "n_rows":    n_rows,
+        "mounts": mounts,
+        "n_rows": n_rows,
     }, casa_calls
 
 
@@ -86,14 +86,14 @@ def run_antenna_list(ms_path: str) -> dict:
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     casa_calls: list[str] = []
-    warnings:   list[str] = []
+    warnings: list[str] = []
 
     validate_subtable(p, "ANTENNA")
     ant_data, ant_calls = _read_antenna_table(ms_str)
     casa_calls.extend(ant_calls)
 
-    names     = ant_data["names"]
-    n_ant     = ant_data["n_rows"]
+    names = ant_data["names"]
+    n_ant = ant_data["n_rows"]
 
     # ------------------------------------------------------------------
     # Fail loud check 1: numeric-only antenna names (DESIGN.md §3.3)
@@ -137,12 +137,12 @@ def run_antenna_list(ms_path: str) -> dict:
     # Build antenna records
     # ------------------------------------------------------------------
     positions = ant_data["positions"]  # [3, n_ant]
-    stations  = ant_data["stations"]
+    stations = ant_data["stations"]
     diameters = ant_data["diameters"]
-    mounts    = ant_data["mounts"]
+    mounts = ant_data["mounts"]
 
     # Array centre (mean position → geodetic)
-    mean_xyz  = tuple(float(positions[i].mean()) for i in range(3))
+    mean_xyz = tuple(float(positions[i].mean()) for i in range(3))
     lat, lon, height = ecef_to_geodetic(*mean_xyz)
 
     ants_out: list[dict] = []
@@ -160,27 +160,29 @@ def run_antenna_list(ms_path: str) -> dict:
         diam = float(diameters[i])
         diam_flag = "COMPLETE" if diam > 0 else "SUSPECT"
 
-        ants_out.append({
-            "antenna_id":   i,
-            "name":         str(names[i]),
-            "station":      str(stations[i]),
-            "x_m":          field(round(x, 3), flag=pos_flag, note=pos_note),
-            "y_m":          field(round(y, 3), flag=pos_flag),
-            "z_m":          field(round(z, 3), flag=pos_flag),
-            "diameter_m":   field(round(diam, 2), flag=diam_flag),
-            "mount":        str(mounts[i]),
-        })
+        ants_out.append(
+            {
+                "antenna_id": i,
+                "name": str(names[i]),
+                "station": str(stations[i]),
+                "x_m": field(round(x, 3), flag=pos_flag, note=pos_note),
+                "y_m": field(round(y, 3), flag=pos_flag),
+                "z_m": field(round(z, 3), flag=pos_flag),
+                "diameter_m": field(round(diam, 2), flag=diam_flag),
+                "mount": str(mounts[i]),
+            }
+        )
 
     data = {
-        "n_antennas":                  n_ant,
-        "n_antennas_in_main_table":    len(main_ids - {a for a in main_ids if a == a and False}),
-        "n_baselines_cross":           n_ant * (n_ant - 1) // 2,
-        "orphaned_antenna_ids":        [],
-        "antenna_table_completeness":  "COMPLETE",
-        "array_centre_lat_deg":        round(lat, 6),
-        "array_centre_lon_deg":        round(lon, 6),
-        "array_centre_height_m":       round(height, 1),
-        "antennas":                    ants_out,
+        "n_antennas": n_ant,
+        "n_antennas_in_main_table": len(main_ids - {a for a in main_ids if False}),
+        "n_baselines_cross": n_ant * (n_ant - 1) // 2,
+        "orphaned_antenna_ids": [],
+        "antenna_table_completeness": "COMPLETE",
+        "array_centre_lat_deg": round(lat, 6),
+        "array_centre_lon_deg": round(lon, 6),
+        "array_centre_height_m": round(height, 1),
+        "antennas": ants_out,
     }
 
     return response_envelope(
@@ -207,14 +209,14 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     casa_calls: list[str] = []
-    warnings:   list[str] = []
+    warnings: list[str] = []
 
     validate_subtable(p, "ANTENNA")
     ant_data, ant_calls = _read_antenna_table(ms_str)
     casa_calls.extend(ant_calls)
 
-    names     = ant_data["names"]
-    n_ant     = ant_data["n_rows"]
+    names = ant_data["names"]
+    n_ant = ant_data["n_rows"]
     positions = ant_data["positions"]  # [3, n_ant]
 
     # Same fail-loud checks as antenna_list
@@ -244,7 +246,7 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
             casa_calls=casa_calls,
         )
 
-    all_lengths = np.array([l for _, _, l in lengths_m])
+    all_lengths = np.array([length for _, _, length in lengths_m])
 
     min_len = float(all_lengths.min())
     max_len = float(all_lengths.max())
@@ -272,26 +274,34 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
         res_arcsec = angular_resolution_arcsec(max_len, freq_hz)
         las_arcsec = largest_angular_scale_arcsec(min_len, freq_hz)
 
-        per_spw.append({
-            "spw_id":               idx,
-            "centre_freq_hz":       freq_hz,
-            "max_baseline_klambda": field(round(max_bl_kl, 2)),
-            "min_baseline_klambda": field(round(min_bl_kl, 4)),
-            "resolution_arcsec":    field(round(res_arcsec, 3), flag="COMPLETE",
-                                           note="θ ≈ λ/B_max; ignores weighting and taper"),
-            "las_arcsec":           field(round(las_arcsec, 1), flag="COMPLETE",
-                                           note="θ_LAS ≈ λ/B_min; maximum recoverable scale"),
-        })
+        per_spw.append(
+            {
+                "spw_id": idx,
+                "centre_freq_hz": freq_hz,
+                "max_baseline_klambda": field(round(max_bl_kl, 2)),
+                "min_baseline_klambda": field(round(min_bl_kl, 4)),
+                "resolution_arcsec": field(
+                    round(res_arcsec, 3),
+                    flag="COMPLETE",
+                    note="θ ≈ λ/B_max; ignores weighting and taper",
+                ),
+                "las_arcsec": field(
+                    round(las_arcsec, 1),
+                    flag="COMPLETE",
+                    note="θ_LAS ≈ λ/B_min; maximum recoverable scale",
+                ),
+            }
+        )
 
     data = {
-        "n_baselines":          len(lengths_m),
-        "min_baseline_m":       field(round(min_len, 2)),
-        "max_baseline_m":       field(round(max_len, 2)),
-        "median_baseline_m":    field(round(med_len, 2)),
-        "mean_baseline_m":      field(round(mean_len, 2)),
+        "n_baselines": len(lengths_m),
+        "min_baseline_m": field(round(min_len, 2)),
+        "max_baseline_m": field(round(max_len, 2)),
+        "median_baseline_m": field(round(med_len, 2)),
+        "mean_baseline_m": field(round(mean_len, 2)),
         "shortest_baseline_antennas": list(min_pair),
-        "longest_baseline_antennas":  list(max_pair),
-        "per_spw_derived":      per_spw,
+        "longest_baseline_antennas": list(max_pair),
+        "per_spw_derived": per_spw,
         "note": (
             "Baseline lengths computed from ANTENNA ECEF positions — "
             "these are physical (not projected) lengths. "
@@ -311,6 +321,7 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
 def _read_spw_freqs(ms_str: str, casa_calls: list[str]) -> list[float]:
     """Read SpW centre frequencies from msmetadata."""
     from ms_inspect.util.casa_context import open_msmd
+
     freqs: list[float] = []
     try:
         with open_msmd(ms_str) as msmd:

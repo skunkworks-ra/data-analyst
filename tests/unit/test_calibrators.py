@@ -7,8 +7,6 @@ No CASA dependency.
 
 from __future__ import annotations
 
-import pytest
-
 from ms_inspect.util.calibrators import (
     CATALOGUE,
     CalibratorEntry,
@@ -19,7 +17,6 @@ from ms_inspect.util.calibrators import (
     lookup,
     resolved_warning_message,
 )
-
 
 # ---------------------------------------------------------------------------
 # Name normalisation

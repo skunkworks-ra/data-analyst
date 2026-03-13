@@ -20,6 +20,7 @@ from ms_modify.preflag import _build_cmds_content
 # _build_cmds_content
 # ---------------------------------------------------------------------------
 
+
 class TestBuildCmdsContent:
     def test_no_online_file_includes_shadow_clip_extend(self):
         content = _build_cmds_content("", 0.0, True)
@@ -64,9 +65,11 @@ class TestBuildCmdsContent:
 # preflag.run — workdir validation and file creation
 # ---------------------------------------------------------------------------
 
+
 class TestPreflagRun:
     def test_missing_workdir_raises(self, tmp_path):
         from ms_inspect.exceptions import ComputationError
+
         # We need a fake MS path; validate_ms_path will fail first
         # so we test workdir validation by using a valid MS-like path
         # Actually validate_ms_path is called before workdir check,
@@ -78,6 +81,7 @@ class TestPreflagRun:
 
         with pytest.raises(ComputationError, match="workdir does not exist"):
             from ms_modify.preflag import run
+
             run(
                 ms_path=str(ms_fake),
                 workdir=str(tmp_path / "nonexistent_workdir"),
@@ -92,6 +96,7 @@ class TestPreflagRun:
         workdir.mkdir()
 
         from ms_modify.preflag import run
+
         result = run(
             ms_path=str(ms_fake),
             workdir=str(workdir),
@@ -111,6 +116,7 @@ class TestPreflagRun:
         workdir.mkdir()
 
         from ms_modify.preflag import run
+
         run(
             ms_path=str(ms_fake),
             workdir=str(workdir),
@@ -129,6 +135,7 @@ class TestPreflagRun:
         workdir.mkdir()
 
         from ms_modify.preflag import run
+
         run(
             ms_path=str(ms_fake),
             workdir=str(workdir),
@@ -147,6 +154,7 @@ class TestPreflagRun:
         workdir.mkdir()
 
         from ms_modify.preflag import run
+
         result = run(
             ms_path=str(ms_fake),
             workdir=str(workdir),
@@ -167,6 +175,7 @@ class TestPreflagRun:
         workdir.mkdir()
 
         from ms_modify.preflag import run
+
         result = run(
             ms_path=str(ms_fake),
             workdir=str(workdir),
@@ -184,6 +193,7 @@ class TestPreflagRun:
 # ms_online_flag_stats
 # ---------------------------------------------------------------------------
 
+
 class TestOnlineFlagStats:
     def _write_flag_file(self, tmp_path, content: str) -> Path:
         p = tmp_path / "online.flagonline.txt"
@@ -193,36 +203,49 @@ class TestOnlineFlagStats:
     def test_missing_file_raises(self, tmp_path):
         from ms_inspect.exceptions import MSNotFoundError
         from ms_inspect.tools.online_flags import run
+
         with pytest.raises(MSNotFoundError):
             run(str(tmp_path / "nonexistent.txt"))
 
     def test_counts_commands(self, tmp_path):
-        p = self._write_flag_file(tmp_path, """\
+        p = self._write_flag_file(
+            tmp_path,
+            """\
             mode='online' antenna='ea01' reason='OFFLINE'
             mode='online' antenna='ea02' reason='OFFLINE'
-        """)
+        """,
+        )
         from ms_inspect.tools.online_flags import run
+
         result = run(str(p))
         assert result["data"]["n_commands"]["value"] == 2
 
     def test_reason_breakdown(self, tmp_path):
-        p = self._write_flag_file(tmp_path, """\
+        p = self._write_flag_file(
+            tmp_path,
+            """\
             mode='online' antenna='ea01' reason='OFFLINE'
             mode='online' antenna='ea02' reason='NOT_ON_SOURCE'
             mode='online' antenna='ea03' reason='OFFLINE'
-        """)
+        """,
+        )
         from ms_inspect.tools.online_flags import run
+
         result = run(str(p))
         breakdown = result["data"]["reason_breakdown"]["value"]
         assert breakdown["OFFLINE"] == 2
         assert breakdown["NOT_ON_SOURCE"] == 1
 
     def test_antenna_extraction(self, tmp_path):
-        p = self._write_flag_file(tmp_path, """\
+        p = self._write_flag_file(
+            tmp_path,
+            """\
             mode='online' antenna='ea01' reason='OFFLINE'
             mode='online' antenna='ea03' reason='OFFLINE'
-        """)
+        """,
+        )
         from ms_inspect.tools.online_flags import run
+
         result = run(str(p))
         ants = result["data"]["antennas_flagged"]["value"]
         assert "ea01" in ants
@@ -230,17 +253,22 @@ class TestOnlineFlagStats:
         assert result["data"]["n_antennas_flagged"]["value"] == 2
 
     def test_comment_lines_ignored(self, tmp_path):
-        p = self._write_flag_file(tmp_path, """\
+        p = self._write_flag_file(
+            tmp_path,
+            """\
             # This is a comment
             mode='online' antenna='ea01' reason='OFFLINE'
-        """)
+        """,
+        )
         from ms_inspect.tools.online_flags import run
+
         result = run(str(p))
         assert result["data"]["n_commands"]["value"] == 1
 
     def test_empty_file_returns_zero(self, tmp_path):
         p = self._write_flag_file(tmp_path, "")
         from ms_inspect.tools.online_flags import run
+
         result = run(str(p))
         assert result["data"]["n_commands"]["value"] == 0
         assert result["data"]["n_antennas_flagged"]["value"] == 0

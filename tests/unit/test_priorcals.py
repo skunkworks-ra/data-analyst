@@ -16,6 +16,7 @@ import pytest
 # ms_generate_priorcals
 # ---------------------------------------------------------------------------
 
+
 class TestGeneratePriorcals:
     def _make_ms(self, tmp_path) -> Path:
         ms = tmp_path / "test.ms"
@@ -26,12 +27,14 @@ class TestGeneratePriorcals:
     def test_missing_workdir_raises(self, tmp_path):
         from ms_inspect.exceptions import ComputationError
         from ms_modify.priorcals import run
+
         ms = self._make_ms(tmp_path)
         with pytest.raises(ComputationError, match="workdir does not exist"):
             run(str(ms), str(tmp_path / "nodir"))
 
     def test_execute_false_writes_script(self, tmp_path):
         from ms_modify.priorcals import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -41,16 +44,18 @@ class TestGeneratePriorcals:
 
     def test_script_contains_all_four_gencal_calls(self, tmp_path):
         from ms_modify.priorcals import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
         run(str(ms), str(workdir), execute=False)
         script = (workdir / "priorcals.py").read_text()
         for caltype in ("gc", "opac", "rq", "antpos"):
-            assert f"caltype=\"{caltype}\"" in script or f"caltype='{caltype}'" in script
+            assert f'caltype="{caltype}"' in script or f"caltype='{caltype}'" in script
 
     def test_script_contains_ms_path(self, tmp_path):
         from ms_modify.priorcals import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -60,6 +65,7 @@ class TestGeneratePriorcals:
 
     def test_response_includes_expected_tables(self, tmp_path):
         from ms_modify.priorcals import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -70,6 +76,7 @@ class TestGeneratePriorcals:
 
     def test_script_contains_rq_mjd_threshold(self, tmp_path):
         from ms_modify.priorcals import _RQ_MJD_THRESHOLD, run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -82,6 +89,7 @@ class TestGeneratePriorcals:
 # ms_verify_priorcals — _check_table logic
 # ---------------------------------------------------------------------------
 
+
 class TestVerifyPriorcals:
     def _make_ms(self, tmp_path) -> Path:
         ms = tmp_path / "test.ms"
@@ -92,12 +100,14 @@ class TestVerifyPriorcals:
     def test_missing_workdir_raises(self, tmp_path):
         from ms_inspect.exceptions import ComputationError
         from ms_inspect.tools.priorcals_check import run
+
         ms = self._make_ms(tmp_path)
         with pytest.raises(ComputationError, match="workdir does not exist"):
             run(str(ms), str(tmp_path / "nodir"))
 
     def test_missing_tables_reported(self, tmp_path):
         from ms_inspect.tools.priorcals_check import _check_table
+
         result = _check_table(str(tmp_path / "nonexistent.gc"))
         assert not result["exists"]
         assert not result["valid"]
@@ -105,6 +115,7 @@ class TestVerifyPriorcals:
 
     def test_all_missing_reports_n_missing(self, tmp_path):
         from ms_inspect.tools.priorcals_check import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -114,6 +125,7 @@ class TestVerifyPriorcals:
 
     def test_custom_table_names_respected(self, tmp_path):
         from ms_inspect.tools.priorcals_check import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -122,6 +134,7 @@ class TestVerifyPriorcals:
 
     def test_default_checks_four_tables(self, tmp_path):
         from ms_inspect.tools.priorcals_check import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()

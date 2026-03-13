@@ -304,5 +304,3 @@ def _vla_positional_match(
     note += f" at {result.separation_arcsec:.3f} arcsec"
 
     return field(match_data, flag=flag_val, note=note)
-
-

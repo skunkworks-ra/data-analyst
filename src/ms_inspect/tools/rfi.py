@@ -33,7 +33,7 @@ TOOL_NAME = "ms_rfi_channel_stats"
 
 _DEFAULT_WORKERS = 4
 _MAX_WORKERS = 8
-_DEFAULT_FLAG_THRESHOLD = 0.50   # channel flagged if > 50% of visibilities flagged
+_DEFAULT_FLAG_THRESHOLD = 0.50  # channel flagged if > 50% of visibilities flagged
 
 
 # ---------------------------------------------------------------------------
@@ -42,27 +42,27 @@ _DEFAULT_FLAG_THRESHOLD = 0.50   # channel flagged if > 50% of visibilities flag
 # ---------------------------------------------------------------------------
 _RFI_CATALOGUE: list[tuple[str, float, float, str]] = [
     # L-band / UHF persistent RFI
-    ("GSM-900 downlink",     935.0,  960.0, "Mobile telephony (GSM)"),
-    ("GSM-900 uplink",       890.0,  915.0, "Mobile telephony (GSM)"),
-    ("GPS L1",              1575.2, 1575.7, "GPS L1 C/A signal"),
-    ("GPS L2",              1227.4, 1227.7, "GPS L2 signal"),
-    ("GLONASS L1",          1598.0, 1606.0, "GLONASS navigation"),
-    ("Iridium",             1616.0, 1626.5, "Iridium satellite phones"),
-    ("DECT cordless",       1880.0, 1900.0, "Digital cordless telephones"),
-    ("INMARSAT",            1525.0, 1559.0, "Geostationary mobile satellite"),
-    ("Galileo E1",          1559.0, 1592.0, "Galileo navigation system"),
-    ("ADS-B aviation",      1087.5, 1090.5, "Aircraft transponders"),
-    ("DME aviation",         960.0, 1215.0, "Distance Measuring Equipment (aviation)"),
-    ("L-band radar",        1215.0, 1400.0, "Various L-band radars (intermittent)"),
+    ("GSM-900 downlink", 935.0, 960.0, "Mobile telephony (GSM)"),
+    ("GSM-900 uplink", 890.0, 915.0, "Mobile telephony (GSM)"),
+    ("GPS L1", 1575.2, 1575.7, "GPS L1 C/A signal"),
+    ("GPS L2", 1227.4, 1227.7, "GPS L2 signal"),
+    ("GLONASS L1", 1598.0, 1606.0, "GLONASS navigation"),
+    ("Iridium", 1616.0, 1626.5, "Iridium satellite phones"),
+    ("DECT cordless", 1880.0, 1900.0, "Digital cordless telephones"),
+    ("INMARSAT", 1525.0, 1559.0, "Geostationary mobile satellite"),
+    ("Galileo E1", 1559.0, 1592.0, "Galileo navigation system"),
+    ("ADS-B aviation", 1087.5, 1090.5, "Aircraft transponders"),
+    ("DME aviation", 960.0, 1215.0, "Distance Measuring Equipment (aviation)"),
+    ("L-band radar", 1215.0, 1400.0, "Various L-band radars (intermittent)"),
     # P-band / UHF low
-    ("DAB digital radio",    174.0,  240.0, "Digital audio broadcasting (Europe)"),
-    ("DVB-T digital TV",     470.0,  862.0, "Digital terrestrial television"),
-    ("GSM-1800 downlink",   1805.0, 1880.0, "Mobile telephony (DCS-1800)"),
+    ("DAB digital radio", 174.0, 240.0, "Digital audio broadcasting (Europe)"),
+    ("DVB-T digital TV", 470.0, 862.0, "Digital terrestrial television"),
+    ("GSM-1800 downlink", 1805.0, 1880.0, "Mobile telephony (DCS-1800)"),
     # C-band
-    ("WiFi 5 GHz",          5150.0, 5850.0, "802.11a/n/ac wireless LAN"),
+    ("WiFi 5 GHz", 5150.0, 5850.0, "802.11a/n/ac wireless LAN"),
     # S-band
-    ("WiFi 2.4 GHz",        2400.0, 2484.0, "802.11b/g/n wireless LAN"),
-    ("Bluetooth",           2400.0, 2485.0, "Bluetooth devices"),
+    ("WiFi 2.4 GHz", 2400.0, 2484.0, "802.11b/g/n wireless LAN"),
+    ("Bluetooth", 2400.0, 2485.0, "Bluetooth devices"),
 ]
 
 
@@ -79,6 +79,7 @@ def _annotate_freq_mhz(freq_mhz: float) -> list[str]:
 # Worker function
 # ---------------------------------------------------------------------------
 
+
 def _rfi_chunk_worker(args: tuple) -> dict[int, np.ndarray]:
     """
     Worker: reads FLAG + DATA_DESC_ID for a row range.
@@ -89,16 +90,18 @@ def _rfi_chunk_worker(args: tuple) -> dict[int, np.ndarray]:
 
     # dd_id → [flagged_per_channel, total_per_channel]
     dd_flagged: dict[int, np.ndarray] = {}
-    dd_total:   dict[int, np.ndarray] = {}
+    dd_total: dict[int, np.ndarray] = {}
 
     try:
         import casatools  # type: ignore[import]
+
         tb = casatools.table()
         tb.open(ms_path, nomodify=True)
         try:
-            flag_chunk  = tb.getcolslice("FLAG", blc=[0, 0], trc=[-1, -1],
-                                         startrow=start_row, nrow=n_rows)
-            ddid_chunk  = tb.getcol("DATA_DESC_ID", startrow=start_row, nrow=n_rows)
+            flag_chunk = tb.getcolslice(
+                "FLAG", blc=[0, 0], trc=[-1, -1], startrow=start_row, nrow=n_rows
+            )
+            ddid_chunk = tb.getcol("DATA_DESC_ID", startrow=start_row, nrow=n_rows)
         finally:
             tb.close()
 
@@ -116,14 +119,14 @@ def _rfi_chunk_worker(args: tuple) -> dict[int, np.ndarray]:
 
             # Per-channel: count flagged corr elements
             chan_flagged = row_flags.sum(axis=0).astype(np.int64)  # [n_chan]
-            chan_total   = np.full(n_chan, n_corr, dtype=np.int64)
+            chan_total = np.full(n_chan, n_corr, dtype=np.int64)
 
             if ddid not in dd_flagged:
                 dd_flagged[ddid] = np.zeros(n_chan_max, dtype=np.int64)
-                dd_total[ddid]   = np.zeros(n_chan_max, dtype=np.int64)
+                dd_total[ddid] = np.zeros(n_chan_max, dtype=np.int64)
 
             dd_flagged[ddid][:n_chan] += chan_flagged
-            dd_total[ddid][:n_chan]   += chan_total
+            dd_total[ddid][:n_chan] += chan_total
 
     except Exception:
         pass
@@ -134,6 +137,7 @@ def _rfi_chunk_worker(args: tuple) -> dict[int, np.ndarray]:
 # ---------------------------------------------------------------------------
 # Main tool function
 # ---------------------------------------------------------------------------
+
 
 def run(
     ms_path: str,
@@ -151,7 +155,7 @@ def run(
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     casa_calls: list[str] = []
-    warnings:   list[str] = []
+    warnings: list[str] = []
 
     # ------------------------------------------------------------------
     # Read DATA_DESCRIPTION → SpW mapping
@@ -175,9 +179,7 @@ def run(
                 spw_chan_freqs[spw_id] = np.array([])
 
     # Max channel count across all SpWs — needed for worker array sizing
-    n_chan_max = max(
-        (len(v) for v in spw_chan_freqs.values()), default=1
-    )
+    n_chan_max = max((len(v) for v in spw_chan_freqs.values()), default=1)
 
     # ------------------------------------------------------------------
     # Get total row count and partition
@@ -187,19 +189,22 @@ def run(
 
     if n_total_rows == 0:
         warnings.append("MS MAIN table has zero rows.")
-        return response_envelope(TOOL_NAME, ms_path,
-                                 {"n_spw": n_spw, "per_spw": []},
-                                 warnings=warnings, casa_calls=casa_calls)
+        return response_envelope(
+            TOOL_NAME,
+            ms_path,
+            {"n_spw": n_spw, "per_spw": []},
+            warnings=warnings,
+            casa_calls=casa_calls,
+        )
 
-    n_workers = max(1, min(
-        int(os.environ.get("RADIO_MCP_WORKERS", _DEFAULT_WORKERS)),
-        _MAX_WORKERS
-    ))
+    n_workers = max(
+        1, min(int(os.environ.get("RADIO_MCP_WORKERS", _DEFAULT_WORKERS)), _MAX_WORKERS)
+    )
     chunk_size = max(1, n_total_rows // n_workers)
     chunks = []
     for i in range(n_workers):
         start = i * chunk_size
-        size  = chunk_size if i < n_workers - 1 else (n_total_rows - start)
+        size = chunk_size if i < n_workers - 1 else (n_total_rows - start)
         if size > 0:
             chunks.append((ms_str, start, size, n_chan_max))
 
@@ -223,28 +228,28 @@ def run(
     # Aggregate: dd_id → (flagged_per_chan, total_per_chan)
     # ------------------------------------------------------------------
     dd_flagged_agg: dict[int, np.ndarray] = {}
-    dd_total_agg:   dict[int, np.ndarray] = {}
+    dd_total_agg: dict[int, np.ndarray] = {}
     for result in chunk_results:
         for ddid, (nf, nt) in result.items():
             if ddid not in dd_flagged_agg:
                 dd_flagged_agg[ddid] = np.zeros(n_chan_max, dtype=np.int64)
-                dd_total_agg[ddid]   = np.zeros(n_chan_max, dtype=np.int64)
+                dd_total_agg[ddid] = np.zeros(n_chan_max, dtype=np.int64)
             dd_flagged_agg[ddid] += nf
-            dd_total_agg[ddid]   += nt
+            dd_total_agg[ddid] += nt
 
     # ------------------------------------------------------------------
     # Aggregate DD → SpW (multiple DDs can share a SpW for different pols)
     # ------------------------------------------------------------------
     spw_flagged: dict[int, np.ndarray] = {}
-    spw_total:   dict[int, np.ndarray] = {}
+    spw_total: dict[int, np.ndarray] = {}
     for ddid, spw_id in enumerate(dd_to_spw):
         nf = dd_flagged_agg.get(ddid, np.zeros(n_chan_max))
-        nt = dd_total_agg.get(ddid,   np.zeros(n_chan_max))
+        nt = dd_total_agg.get(ddid, np.zeros(n_chan_max))
         if spw_id not in spw_flagged:
             spw_flagged[spw_id] = np.zeros(n_chan_max, dtype=np.int64)
-            spw_total[spw_id]   = np.zeros(n_chan_max, dtype=np.int64)
+            spw_total[spw_id] = np.zeros(n_chan_max, dtype=np.int64)
         spw_flagged[spw_id] += nf
-        spw_total[spw_id]   += nt
+        spw_total[spw_id] += nt
 
     # ------------------------------------------------------------------
     # Build per-SpW result
@@ -257,7 +262,7 @@ def run(
             continue
 
         nf_arr = spw_flagged.get(spw_id, np.zeros(n_chan))[:n_chan]
-        nt_arr = spw_total.get(spw_id,   np.zeros(n_chan))[:n_chan]
+        nt_arr = spw_total.get(spw_id, np.zeros(n_chan))[:n_chan]
 
         with np.errstate(divide="ignore", invalid="ignore"):
             frac_arr = np.where(nt_arr > 0, nf_arr / nt_arr, 0.0)
@@ -268,47 +273,47 @@ def run(
 
         # Bad channel ranges (contiguous runs above threshold)
         bad_channels = np.where(frac_arr > flag_threshold)[0]
-        bad_ranges   = _contiguous_ranges(bad_channels, min_run=min_bad_chan_run)
+        bad_ranges = _contiguous_ranges(bad_channels, min_run=min_bad_chan_run)
 
         # Annotate bad ranges with RFI catalogue
         annotated_ranges = []
-        for (ch_start, ch_end) in bad_ranges:
+        for ch_start, ch_end in bad_ranges:
             freq_lo_mhz = float(chan_freqs_hz[ch_start]) / 1e6
             freq_hi_mhz = float(chan_freqs_hz[min(ch_end, n_chan - 1)]) / 1e6
             rfi_hits = _annotate_freq_range(freq_lo_mhz, freq_hi_mhz)
-            annotated_ranges.append({
-                "channel_start":  ch_start,
-                "channel_end":    ch_end,
-                "freq_start_mhz": round(freq_lo_mhz, 3),
-                "freq_end_mhz":   round(freq_hi_mhz, 3),
-                "mean_flag_frac": round(float(frac_arr[ch_start:ch_end + 1].mean()), 4),
-                "rfi_candidates": rfi_hits,
-                "casa_flagdata_cmd": (
-                    f"mode='manual' spw='{spw_id}:{ch_start}~{ch_end}'"
-                ),
-            })
+            annotated_ranges.append(
+                {
+                    "channel_start": ch_start,
+                    "channel_end": ch_end,
+                    "freq_start_mhz": round(freq_lo_mhz, 3),
+                    "freq_end_mhz": round(freq_hi_mhz, 3),
+                    "mean_flag_frac": round(float(frac_arr[ch_start : ch_end + 1].mean()), 4),
+                    "rfi_candidates": rfi_hits,
+                    "casa_flagdata_cmd": (f"mode='manual' spw='{spw_id}:{ch_start}~{ch_end}'"),
+                }
+            )
 
-        per_spw.append({
-            "spw_id":              spw_id,
-            "n_channels":          n_chan,
-            "centre_freq_mhz":     field(
-                round(float(chan_freqs_hz[n_chan // 2]) / 1e6, 3)
-            ),
-            "overall_flag_frac":   field(round(overall_frac, 4)),
-            "fully_flagged":       fully_flagged,
-            "n_bad_channels":      len(bad_channels),
-            "bad_channel_ranges":  annotated_ranges,
-            "flag_threshold_used": flag_threshold,
-        })
+        per_spw.append(
+            {
+                "spw_id": spw_id,
+                "n_channels": n_chan,
+                "centre_freq_mhz": field(round(float(chan_freqs_hz[n_chan // 2]) / 1e6, 3)),
+                "overall_flag_frac": field(round(overall_frac, 4)),
+                "fully_flagged": fully_flagged,
+                "n_bad_channels": len(bad_channels),
+                "bad_channel_ranges": annotated_ranges,
+                "flag_threshold_used": flag_threshold,
+            }
+        )
         if fully_flagged:
             warnings.append(f"SpW {spw_id} is fully flagged.")
 
     data = {
-        "n_spw":             n_spw,
-        "flag_threshold":    flag_threshold,
-        "min_bad_chan_run":   min_bad_chan_run,
+        "n_spw": n_spw,
+        "flag_threshold": flag_threshold,
+        "min_bad_chan_run": min_bad_chan_run,
         "n_total_rows_read": n_total_rows,
-        "per_spw":           per_spw,
+        "per_spw": per_spw,
     }
 
     return response_envelope(
@@ -324,13 +329,14 @@ def run(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _contiguous_ranges(indices: np.ndarray, min_run: int = 1) -> list[tuple[int, int]]:
     """Convert an array of indices into (start, end) inclusive ranges."""
     if len(indices) == 0:
         return []
     ranges = []
     start = indices[0]
-    prev  = indices[0]
+    prev = indices[0]
     for idx in indices[1:]:
         if idx == prev + 1:
             prev = idx
@@ -338,7 +344,7 @@ def _contiguous_ranges(indices: np.ndarray, min_run: int = 1) -> list[tuple[int,
             if (prev - start + 1) >= min_run:
                 ranges.append((int(start), int(prev)))
             start = idx
-            prev  = idx
+            prev = idx
     if (prev - start + 1) >= min_run:
         ranges.append((int(start), int(prev)))
     return ranges

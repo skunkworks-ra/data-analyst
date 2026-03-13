@@ -50,12 +50,14 @@ def _compute_intent_map(
         cal_entry = cal_lookup(name)
         if cal_entry:
             intents = infer_intents_from_role(cal_entry.role)
-            results.append({
-                "field_id": fid,
-                "name": name,
-                "intents": intents,
-                "source": "primary_catalogue",
-            })
+            results.append(
+                {
+                    "field_id": fid,
+                    "name": name,
+                    "intents": intents,
+                    "source": "primary_catalogue",
+                }
+            )
             continue
 
         # 2. VLA cone search positional match
@@ -63,23 +65,27 @@ def _compute_intent_map(
             try:
                 result = vla_cone_search(ra_deg, dec_deg, radius_arcsec=5.0)
                 if result is not None and result.name:
-                    results.append({
-                        "field_id": fid,
-                        "name": name,
-                        "intents": ["CALIBRATE_PHASE#ON_SOURCE"],
-                        "source": "vla_cone_search",
-                    })
+                    results.append(
+                        {
+                            "field_id": fid,
+                            "name": name,
+                            "intents": ["CALIBRATE_PHASE#ON_SOURCE"],
+                            "source": "vla_cone_search",
+                        }
+                    )
                     continue
             except Exception:
                 pass  # graceful fallback — treat as target
 
         # 3. Default: target
-        results.append({
-            "field_id": fid,
-            "name": name,
-            "intents": ["OBSERVE_TARGET#ON_SOURCE"],
-            "source": "default_target",
-        })
+        results.append(
+            {
+                "field_id": fid,
+                "name": name,
+                "intents": ["OBSERVE_TARGET#ON_SOURCE"],
+                "source": "default_target",
+            }
+        )
 
     return results
 
@@ -91,10 +97,7 @@ def _build_set_intents_script(
 ) -> str:
     """Return a self-contained Python script that reproduces the STATE writes."""
     obs_modes_repr = repr(obs_modes)
-    field_to_state = {
-        m["field_id"]: obs_modes[";".join(sorted(m["intents"]))]
-        for m in intent_map
-    }
+    field_to_state = {m["field_id"]: obs_modes[";".join(sorted(m["intents"]))] for m in intent_map}
     field_to_state_repr = repr(field_to_state)
     return f"""\
 #!/usr/bin/env python
@@ -175,6 +178,7 @@ def set_intents(
     # Handle deprecated dry_run alias
     if dry_run is not None:
         import warnings as _warnings
+
         _warnings.warn(
             "dry_run is deprecated; use execute=not dry_run instead.",
             DeprecationWarning,
@@ -218,13 +222,15 @@ def set_intents(
                 existing = set()
             casa_calls.append(f"msmd.intentsforfield({fid})")
 
-            fields_info.append({
-                "field_id": fid,
-                "name": field_names[fid],
-                "ra_deg": ra_deg,
-                "dec_deg": dec_deg,
-                "existing_intents": existing,
-            })
+            fields_info.append(
+                {
+                    "field_id": fid,
+                    "name": field_names[fid],
+                    "ra_deg": ra_deg,
+                    "dec_deg": dec_deg,
+                    "existing_intents": existing,
+                }
+            )
 
     # ------------------------------------------------------------------
     # Step 2: Guard — refuse if intents are already populated
@@ -261,10 +267,9 @@ def set_intents(
         script_path: str | None = None
         if workdir:
             from pathlib import Path as _Path
+
             script_path = str(_Path(workdir) / "set_intents.py")
-            _Path(script_path).write_text(
-                _build_set_intents_script(ms_path, intent_map, obs_modes)
-            )
+            _Path(script_path).write_text(_build_set_intents_script(ms_path, intent_map, obs_modes))
             casa_calls.append(f"write_script → {script_path}")
 
         data = {
@@ -290,7 +295,9 @@ def set_intents(
                 "Set execute=True to write intents to the MS."
             )
         else:
-            warnings.append("Preview only — no changes written to the MS. Pass workdir to also generate a script.")
+            warnings.append(
+                "Preview only — no changes written to the MS. Pass workdir to also generate a script."
+            )
         return response_envelope(
             tool_name=TOOL_NAME,
             ms_path=ms_path,

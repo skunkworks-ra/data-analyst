@@ -43,6 +43,7 @@ def run(flag_file: str) -> dict:
     p = Path(flag_file)
     if not p.exists():
         from ms_inspect.exceptions import MSNotFoundError
+
         raise MSNotFoundError(
             f"Online flag file not found: {flag_file}",
             ms_path=flag_file,

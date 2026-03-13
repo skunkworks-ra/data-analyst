@@ -101,6 +101,7 @@ def run(
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"workdir does not exist: {workdir}. Create it before calling this tool.",
             ms_path=ms_path,
@@ -148,6 +149,7 @@ def run(
         from casatasks import flagdata  # type: ignore[import]
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
+
         raise CASANotAvailableError(
             "casatasks is not installed or cannot be imported.",
             ms_path=ms_path,
@@ -162,7 +164,9 @@ def run(
             versionname="before_rflag",
             comment="Flag state before ms_apply_rflag",
         )
-        casa_calls.append("casatasks.flagdata(mode='flagmanager', action='save', versionname='before_rflag')")
+        casa_calls.append(
+            "casatasks.flagdata(mode='flagmanager', action='save', versionname='before_rflag')"
+        )
     except Exception as exc:
         warnings.append(f"Could not save flag backup: {exc}. Proceeding without backup.")
 
@@ -185,6 +189,7 @@ def run(
         )
     except Exception as exc:
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"flagdata(mode='rflag', action='apply') failed: {exc}",
             ms_path=ms_path,

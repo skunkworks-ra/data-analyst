@@ -21,14 +21,12 @@ from __future__ import annotations
 import math
 from typing import Any
 
-import numpy as np
-
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
-from ms_inspect.util.conversions import ecef_to_geodetic, mjd_seconds_to_unix, rad_to_deg
+from ms_inspect.util.conversions import ecef_to_geodetic, mjd_seconds_to_unix
 from ms_inspect.util.formatting import field, response_envelope
 
-TOOL_EL  = "ms_elevation_vs_time"
-TOOL_PA  = "ms_parallactic_angle_vs_time"
+TOOL_EL = "ms_elevation_vs_time"
+TOOL_PA = "ms_parallactic_angle_vs_time"
 
 # Default low-elevation warning threshold
 DEFAULT_EL_THRESHOLD_DEG = 20.0
@@ -37,25 +35,26 @@ DEFAULT_EL_THRESHOLD_DEG = 20.0
 # ALT-AZ: PA_feed = PA_sky - 90°
 # Equatorial: PA_feed = PA_sky (feed rotates mechanically, PA_feed is constant)
 _MOUNT_PA_OFFSET_DEG: dict[str, float] = {
-    "ALT-AZ":     -90.0,
-    "alt-az":     -90.0,
-    "ALTAZ":      -90.0,
-    "X-Y":         0.0,   # rare mount type
-    "EQUATORIAL":  0.0,
-    "equatorial":  0.0,
-    "SPACE":       0.0,
+    "ALT-AZ": -90.0,
+    "alt-az": -90.0,
+    "ALTAZ": -90.0,
+    "X-Y": 0.0,  # rare mount type
+    "EQUATORIAL": 0.0,
+    "equatorial": 0.0,
+    "SPACE": 0.0,
 }
 
 
 def _require_astropy() -> Any:
     try:
         import astropy  # noqa: F401
+
         return astropy
-    except ImportError:
+    except ImportError as exc:
         raise RuntimeError(
             "astropy is required for elevation and parallactic angle computation. "
             "Install with: pip install astropy>=6.0"
-        )
+        ) from exc
 
 
 def _read_field_coords(ms_str: str) -> tuple[list[str], list[tuple[float, float]], list[str]]:
@@ -63,8 +62,9 @@ def _read_field_coords(ms_str: str) -> tuple[list[str], list[tuple[float, float]
     Read field names and J2000 phase centres from msmetadata.
     Returns (names, [(ra_rad, dec_rad), ...], casa_calls).
     """
-    from ms_inspect.util.casa_context import open_msmd
     import math as _math
+
+    from ms_inspect.util.casa_context import open_msmd
 
     names: list[str] = []
     coords: list[tuple[float, float]] = []
@@ -75,7 +75,7 @@ def _read_field_coords(ms_str: str) -> tuple[list[str], list[tuple[float, float]
         for fid in range(len(field_names)):
             try:
                 pc = msmd.phasecenter(fid)
-                ra  = float(pc["m0"]["value"]) % (2 * _math.pi)
+                ra = float(pc["m0"]["value"]) % (2 * _math.pi)
                 dec = float(pc["m1"]["value"])
                 coords.append((ra, dec))
             except Exception:
@@ -100,16 +100,18 @@ def _read_scan_times_and_fields(ms_str: str) -> tuple[list[dict], list[str]]:
             try:
                 times = msmd.timesforscans([snum])
                 t_start = float(min(times))
-                t_end   = float(max(times))
+                t_end = float(max(times))
                 fids = list(msmd.fieldsforscan(snum))
                 fid = fids[0] if fids else 0
-                records.append({
-                    "scan_num": snum,
-                    "field_id": fid,
-                    "t_start_mjd_s": t_start,
-                    "t_end_mjd_s":   t_end,
-                    "t_mid_mjd_s":   (t_start + t_end) / 2.0,
-                })
+                records.append(
+                    {
+                        "scan_num": snum,
+                        "field_id": fid,
+                        "t_start_mjd_s": t_start,
+                        "t_end_mjd_s": t_end,
+                        "t_mid_mjd_s": (t_start + t_end) / 2.0,
+                    }
+                )
             except Exception:
                 continue
 
@@ -158,9 +160,9 @@ def _compute_el_pa(
 
     Uses astropy AltAz frame.
     """
+    import astropy.units as u
     from astropy.coordinates import AltAz, EarthLocation, SkyCoord
     from astropy.time import Time
-    import astropy.units as u
 
     location = EarthLocation(lat=lat_deg * u.deg, lon=lon_deg * u.deg, height=height_m * u.m)
     t = Time(t_unix, format="unix", scale="utc")
@@ -174,7 +176,6 @@ def _compute_el_pa(
     # Parallactic angle (sky-frame: North through East)
     # astropy's position_angle gives PA of the direction to NCP
     # from the source position, measured North through East.
-    from astropy.coordinates import ICRS
     import astropy.units as u
 
     # Compute PA using the standard formula via hour angle
@@ -182,11 +183,13 @@ def _compute_el_pa(
     dec_rad_local = dec_rad
     ha_rad = float(t.sidereal_time("apparent", lon_deg * u.deg).rad) - ra_rad
 
-    pa_sky = math.degrees(math.atan2(
-        math.cos(lat_rad) * math.sin(ha_rad),
-        math.sin(lat_rad) * math.cos(dec_rad_local)
-        - math.cos(lat_rad) * math.sin(dec_rad_local) * math.cos(ha_rad)
-    ))
+    pa_sky = math.degrees(
+        math.atan2(
+            math.cos(lat_rad) * math.sin(ha_rad),
+            math.sin(lat_rad) * math.cos(dec_rad_local)
+            - math.cos(lat_rad) * math.sin(dec_rad_local) * math.cos(ha_rad),
+        )
+    )
 
     return el_deg, pa_sky
 
@@ -202,15 +205,16 @@ def run_elevation_vs_time(ms_path: str, threshold_deg: float = DEFAULT_EL_THRESH
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     casa_calls: list[str] = []
-    warnings:   list[str] = []
+    warnings: list[str] = []
 
     field_names, field_coords, fc_calls = _read_field_coords(ms_str)
-    scan_records, sc_calls              = _read_scan_times_and_fields(ms_str)
-    lat, lon, height, arr_calls         = _read_array_centre(ms_str)
+    scan_records, sc_calls = _read_scan_times_and_fields(ms_str)
+    lat, lon, height, arr_calls = _read_array_centre(ms_str)
     casa_calls.extend(fc_calls + sc_calls + arr_calls)
 
     # Group scans by field
     from collections import defaultdict
+
     field_scans: dict[int, list[dict]] = defaultdict(list)
     for rec in scan_records:
         field_scans[rec["field_id"]].append(rec)
@@ -218,34 +222,41 @@ def run_elevation_vs_time(ms_path: str, threshold_deg: float = DEFAULT_EL_THRESH
     fields_out: list[dict] = []
 
     for fid, fname in enumerate(field_names):
-        ra_rad, dec_rad = field_coords[fid] if fid < len(field_coords) else (float("nan"), float("nan"))
+        ra_rad, dec_rad = (
+            field_coords[fid] if fid < len(field_coords) else (float("nan"), float("nan"))
+        )
 
         # Skip suspect coordinates
         if math.isnan(ra_rad) or math.isnan(dec_rad):
-            fields_out.append({
-                "field_id":   fid,
-                "field_name": fname,
-                "scans":      field(None, flag="UNAVAILABLE",
-                                    note="Cannot compute elevation — field coordinates are invalid"),
-            })
+            fields_out.append(
+                {
+                    "field_id": fid,
+                    "field_name": fname,
+                    "scans": field(
+                        None,
+                        flag="UNAVAILABLE",
+                        note="Cannot compute elevation — field coordinates are invalid",
+                    ),
+                }
+            )
             continue
 
         scans_out: list[dict] = []
         for rec in field_scans.get(fid, []):
-            t_mid  = mjd_seconds_to_unix(rec["t_mid_mjd_s"])
+            t_mid = mjd_seconds_to_unix(rec["t_mid_mjd_s"])
             t_start = mjd_seconds_to_unix(rec["t_start_mjd_s"])
-            t_end  = mjd_seconds_to_unix(rec["t_end_mjd_s"])
+            t_end = mjd_seconds_to_unix(rec["t_end_mjd_s"])
 
             try:
-                el_mid, _   = _compute_el_pa(ra_rad, dec_rad, t_mid,   lat, lon, height)
+                el_mid, _ = _compute_el_pa(ra_rad, dec_rad, t_mid, lat, lon, height)
                 el_start, _ = _compute_el_pa(ra_rad, dec_rad, t_start, lat, lon, height)
-                el_end, _   = _compute_el_pa(ra_rad, dec_rad, t_end,   lat, lon, height)
+                el_end, _ = _compute_el_pa(ra_rad, dec_rad, t_end, lat, lon, height)
             except Exception as e:
                 warnings.append(f"Elevation computation failed for scan {rec['scan_num']}: {e}")
                 continue
 
             el_min = min(el_start, el_mid, el_end)
-            below  = el_min < threshold_deg
+            below = el_min < threshold_deg
 
             if below:
                 warnings.append(
@@ -253,28 +264,32 @@ def run_elevation_vs_time(ms_path: str, threshold_deg: float = DEFAULT_EL_THRESH
                     f"minimum elevation {el_min:.1f}° is below threshold {threshold_deg:.0f}°."
                 )
 
-            scans_out.append({
-                "scan_number":     rec["scan_num"],
-                "el_start_deg":    field(round(el_start, 2)),
-                "el_mid_deg":      field(round(el_mid, 2)),
-                "el_end_deg":      field(round(el_end, 2)),
-                "el_min_deg":      field(round(el_min, 2)),
-                "below_threshold": below,
-            })
+            scans_out.append(
+                {
+                    "scan_number": rec["scan_num"],
+                    "el_start_deg": field(round(el_start, 2)),
+                    "el_mid_deg": field(round(el_mid, 2)),
+                    "el_end_deg": field(round(el_end, 2)),
+                    "el_min_deg": field(round(el_min, 2)),
+                    "below_threshold": below,
+                }
+            )
 
-        fields_out.append({
-            "field_id":      fid,
-            "field_name":    fname,
-            "threshold_deg": threshold_deg,
-            "scans":         field(scans_out, flag="COMPLETE"),
-        })
+        fields_out.append(
+            {
+                "field_id": fid,
+                "field_name": fname,
+                "threshold_deg": threshold_deg,
+                "scans": field(scans_out, flag="COMPLETE"),
+            }
+        )
 
     data = {
         "array_lat_deg": round(lat, 6),
         "array_lon_deg": round(lon, 6),
-        "computation":   "astropy AltAz frame",
+        "computation": "astropy AltAz frame",
         "threshold_deg": threshold_deg,
-        "fields":        fields_out,
+        "fields": fields_out,
     }
 
     return response_envelope(
@@ -300,12 +315,12 @@ def run_parallactic_angle_vs_time(ms_path: str) -> dict:
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     casa_calls: list[str] = []
-    warnings:   list[str] = []
+    warnings: list[str] = []
 
     field_names, field_coords, fc_calls = _read_field_coords(ms_str)
-    scan_records, sc_calls              = _read_scan_times_and_fields(ms_str)
-    lat, lon, height, arr_calls         = _read_array_centre(ms_str)
-    mount_types                         = _read_mount_types(ms_str)
+    scan_records, sc_calls = _read_scan_times_and_fields(ms_str)
+    lat, lon, height, arr_calls = _read_array_centre(ms_str)
+    mount_types = _read_mount_types(ms_str)
     casa_calls.extend(fc_calls + sc_calls + arr_calls)
     casa_calls.append("tb.getcol(MOUNT) from ANTENNA subtable")
 
@@ -324,6 +339,7 @@ def run_parallactic_angle_vs_time(ms_path: str) -> dict:
 
     # Group scans by field
     from collections import defaultdict
+
     field_scans: dict[int, list[dict]] = defaultdict(list)
     for rec in scan_records:
         field_scans[rec["field_id"]].append(rec)
@@ -331,15 +347,22 @@ def run_parallactic_angle_vs_time(ms_path: str) -> dict:
     fields_out: list[dict] = []
 
     for fid, fname in enumerate(field_names):
-        ra_rad, dec_rad = field_coords[fid] if fid < len(field_coords) else (float("nan"), float("nan"))
+        ra_rad, dec_rad = (
+            field_coords[fid] if fid < len(field_coords) else (float("nan"), float("nan"))
+        )
 
         if math.isnan(ra_rad) or math.isnan(dec_rad):
-            fields_out.append({
-                "field_id":   fid,
-                "field_name": fname,
-                "pa_sky":     field(None, flag="UNAVAILABLE",
-                                    note="Field coordinates invalid — cannot compute PA"),
-            })
+            fields_out.append(
+                {
+                    "field_id": fid,
+                    "field_name": fname,
+                    "pa_sky": field(
+                        None,
+                        flag="UNAVAILABLE",
+                        note="Field coordinates invalid — cannot compute PA",
+                    ),
+                }
+            )
             continue
 
         pa_sky_values: list[float] = []
@@ -356,47 +379,58 @@ def run_parallactic_angle_vs_time(ms_path: str) -> dict:
                     continue
 
         if not pa_sky_values:
-            fields_out.append({
-                "field_id":   fid,
-                "field_name": fname,
-                "pa_sky":     field(None, flag="UNAVAILABLE",
-                                    note="PA computation failed for all scans"),
-            })
+            fields_out.append(
+                {
+                    "field_id": fid,
+                    "field_name": fname,
+                    "pa_sky": field(
+                        None, flag="UNAVAILABLE", note="PA computation failed for all scans"
+                    ),
+                }
+            )
             continue
 
         pa_sky_start = pa_sky_values[0]
-        pa_sky_end   = pa_sky_values[-1]
+        pa_sky_end = pa_sky_values[-1]
         pa_sky_range = max(pa_sky_values) - min(pa_sky_values)
 
         pa_feed_start = pa_sky_start + pa_offset_deg
-        pa_feed_end   = pa_sky_end   + pa_offset_deg
+        pa_feed_end = pa_sky_end + pa_offset_deg
         pa_feed_range = pa_sky_range  # range is identical, only zero-point shifts
 
-        fields_out.append({
-            "field_id":            fid,
-            "field_name":          fname,
-            "mount_type":          primary_mount,
-            "pa_sky_start_deg":    field(round(pa_sky_start, 2), flag="COMPLETE",
-                                          note="astropy sky-frame PA, North through East"),
-            "pa_sky_end_deg":      field(round(pa_sky_end, 2),   flag="COMPLETE"),
-            "pa_sky_range_deg":    field(round(pa_sky_range, 2), flag="COMPLETE"),
-            "pa_feed_start_deg":   field(round(pa_feed_start, 2), flag="COMPLETE",
-                                          note=f"Feed-frame PA = PA_sky + ({pa_offset_deg}°), "
-                                               f"CASA convention for {primary_mount} mount"),
-            "pa_feed_end_deg":     field(round(pa_feed_end, 2),   flag="COMPLETE"),
-            "pa_feed_range_deg":   field(round(pa_feed_range, 2), flag="COMPLETE"),
-            "convention_offset_deg": pa_offset_deg,
-            "convention_note": (
-                f"PA_feed = PA_sky + {pa_offset_deg}° "
-                f"({primary_mount} mount, CASA convention). "
-                "Pending cross-validation against casatools.measures."
-            ),
-            "validation_status":   "PENDING",
-        })
+        fields_out.append(
+            {
+                "field_id": fid,
+                "field_name": fname,
+                "mount_type": primary_mount,
+                "pa_sky_start_deg": field(
+                    round(pa_sky_start, 2),
+                    flag="COMPLETE",
+                    note="astropy sky-frame PA, North through East",
+                ),
+                "pa_sky_end_deg": field(round(pa_sky_end, 2), flag="COMPLETE"),
+                "pa_sky_range_deg": field(round(pa_sky_range, 2), flag="COMPLETE"),
+                "pa_feed_start_deg": field(
+                    round(pa_feed_start, 2),
+                    flag="COMPLETE",
+                    note=f"Feed-frame PA = PA_sky + ({pa_offset_deg}°), "
+                    f"CASA convention for {primary_mount} mount",
+                ),
+                "pa_feed_end_deg": field(round(pa_feed_end, 2), flag="COMPLETE"),
+                "pa_feed_range_deg": field(round(pa_feed_range, 2), flag="COMPLETE"),
+                "convention_offset_deg": pa_offset_deg,
+                "convention_note": (
+                    f"PA_feed = PA_sky + {pa_offset_deg}° "
+                    f"({primary_mount} mount, CASA convention). "
+                    "Pending cross-validation against casatools.measures."
+                ),
+                "validation_status": "PENDING",
+            }
+        )
 
     data = {
-        "array_lat_deg":     round(lat, 6),
-        "computation":       "astropy LST + atan2 formula",
+        "array_lat_deg": round(lat, 6),
+        "computation": "astropy LST + atan2 formula",
         "pa_convention_note": (
             "PA_sky: angle to NCP, North through East (astropy convention). "
             "PA_feed: feed-frame PA = PA_sky + offset for mount type. "

@@ -106,6 +106,7 @@ def run(
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"workdir does not exist: {workdir}. Create it before calling this tool.",
             ms_path=ms_path,
@@ -153,14 +154,13 @@ def run(
         from casatasks import flagdata  # type: ignore[import]
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
+
         raise CASANotAvailableError(
             "casatasks is not installed or cannot be imported.",
             ms_path=ms_path,
         ) from None
 
-    casa_calls.append(
-        f"casatasks.flagdata(mode='list', inpfile='{cmds_path}', flagbackup=True)"
-    )
+    casa_calls.append(f"casatasks.flagdata(mode='list', inpfile='{cmds_path}', flagbackup=True)")
     try:
         flagdata(
             vis=ms_str,
@@ -170,6 +170,7 @@ def run(
         )
     except Exception as exc:
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"flagdata(mode='list') for initial rflag failed: {exc}",
             ms_path=ms_path,

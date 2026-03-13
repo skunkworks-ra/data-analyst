@@ -16,32 +16,31 @@ Used by:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Optional
-
+from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PolFreqEntry:
     freq_ghz: float
-    frac_pol_pct: Optional[float]        # None = upper limit only
-    frac_pol_upper_limit: bool           # True when frac_pol_pct is an upper bound
-    pol_angle_deg: Optional[float]       # None = unmeasurable / unstable at this freq
+    frac_pol_pct: float | None  # None = upper limit only
+    frac_pol_upper_limit: bool  # True when frac_pol_pct is an upper bound
+    pol_angle_deg: float | None  # None = unmeasurable / unstable at this freq
 
 
 @dataclass
 class PolCalEntry:
-    j2000_name: str                      # "J1331+3030"
-    b1950_name: str                      # "3C286"
-    category: str                        # "A", "B", "C", "D"
-    role: list[str]                      # ["angle"], ["leakage"], ["angle", "leakage"]
-    stable_pa: bool                      # True = PA reliable across bands (only 3C286)
-    variability_note: Optional[str]      # e.g. "in flare Jan 2025 at K/Ka/Q"
+    j2000_name: str  # "J1331+3030"
+    b1950_name: str  # "3C286"
+    category: str  # "A", "B", "C", "D"
+    role: list[str]  # ["angle"], ["leakage"], ["angle", "leakage"]
+    stable_pa: bool  # True = PA reliable across bands (only 3C286)
+    variability_note: str | None  # e.g. "in flare Jan 2025 at K/Ka/Q"
     epochs: dict[str, list[PolFreqEntry]]  # {"2010": [...], "2019": [...]}
-    aka: list[str]                       # alternative names for field matching
+    aka: list[str]  # alternative names for field matching
 
 
 # ---------------------------------------------------------------------------
@@ -78,15 +77,33 @@ POL_CATALOGUE: list[PolCalEntry] = [
         aka=["1331+305", "1331+3030", "3c286", "j1331+305"],
         epochs={
             "2019": [
-                PolFreqEntry(freq_ghz=0.35,  frac_pol_pct=None, frac_pol_upper_limit=True, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=1.45,  frac_pol_pct=9.8,  frac_pol_upper_limit=False, pol_angle_deg=33.0),
-                PolFreqEntry(freq_ghz=3.0,   frac_pol_pct=11.0, frac_pol_upper_limit=False, pol_angle_deg=33.0),
-                PolFreqEntry(freq_ghz=6.0,   frac_pol_pct=11.3, frac_pol_upper_limit=False, pol_angle_deg=33.0),
-                PolFreqEntry(freq_ghz=10.0,  frac_pol_pct=11.7, frac_pol_upper_limit=False, pol_angle_deg=33.0),
-                PolFreqEntry(freq_ghz=15.0,  frac_pol_pct=11.9, frac_pol_upper_limit=False, pol_angle_deg=33.0),
-                PolFreqEntry(freq_ghz=22.0,  frac_pol_pct=12.1, frac_pol_upper_limit=False, pol_angle_deg=33.0),
-                PolFreqEntry(freq_ghz=33.0,  frac_pol_pct=12.0, frac_pol_upper_limit=False, pol_angle_deg=33.0),
-                PolFreqEntry(freq_ghz=45.0,  frac_pol_pct=11.4, frac_pol_upper_limit=False, pol_angle_deg=33.0),
+                PolFreqEntry(
+                    freq_ghz=0.35, frac_pol_pct=None, frac_pol_upper_limit=True, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=1.45, frac_pol_pct=9.8, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=3.0, frac_pol_pct=11.0, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=6.0, frac_pol_pct=11.3, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=10.0, frac_pol_pct=11.7, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=15.0, frac_pol_pct=11.9, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=22.0, frac_pol_pct=12.1, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=33.0, frac_pol_pct=12.0, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=45.0, frac_pol_pct=11.4, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                ),
             ],
         },
     ),
@@ -100,14 +117,33 @@ POL_CATALOGUE: list[PolCalEntry] = [
         aka=["0518+165", "0521+1638", "3c138", "j0518+165"],
         epochs={
             "2019": [
-                PolFreqEntry(freq_ghz=1.45,  frac_pol_pct=5.6,  frac_pol_upper_limit=False, pol_angle_deg=-14.0),
-                PolFreqEntry(freq_ghz=3.0,   frac_pol_pct=7.5,  frac_pol_upper_limit=False, pol_angle_deg=-11.0),
-                PolFreqEntry(freq_ghz=6.0,   frac_pol_pct=10.4, frac_pol_upper_limit=False, pol_angle_deg=-11.0),
-                PolFreqEntry(freq_ghz=10.0,  frac_pol_pct=9.0,  frac_pol_upper_limit=False, pol_angle_deg=-12.0),
-                PolFreqEntry(freq_ghz=15.0,  frac_pol_pct=10.6, frac_pol_upper_limit=False, pol_angle_deg=-10.0),
-                PolFreqEntry(freq_ghz=22.0,  frac_pol_pct=9.9,  frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=33.0,  frac_pol_pct=10.0, frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=45.0,  frac_pol_pct=9.7,  frac_pol_upper_limit=False, pol_angle_deg=None),
+                PolFreqEntry(
+                    freq_ghz=1.45, frac_pol_pct=5.6, frac_pol_upper_limit=False, pol_angle_deg=-14.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=3.0, frac_pol_pct=7.5, frac_pol_upper_limit=False, pol_angle_deg=-11.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=6.0, frac_pol_pct=10.4, frac_pol_upper_limit=False, pol_angle_deg=-11.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=10.0, frac_pol_pct=9.0, frac_pol_upper_limit=False, pol_angle_deg=-12.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=15.0,
+                    frac_pol_pct=10.6,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-10.0,
+                ),
+                PolFreqEntry(
+                    freq_ghz=22.0, frac_pol_pct=9.9, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=33.0, frac_pol_pct=10.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=45.0, frac_pol_pct=9.7, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
             ],
         },
     ),
@@ -123,15 +159,31 @@ POL_CATALOGUE: list[PolCalEntry] = [
             "2019": [
                 # Below 4 GHz: polarisation is very low and PA is unstable/undefined.
                 # Encode explicitly so callers can gate on these values.
-                PolFreqEntry(freq_ghz=0.35,  frac_pol_pct=0.3, frac_pol_upper_limit=True,  pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=1.45,  frac_pol_pct=0.5, frac_pol_upper_limit=True,  pol_angle_deg=None),
+                PolFreqEntry(
+                    freq_ghz=0.35, frac_pol_pct=0.3, frac_pol_upper_limit=True, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=1.45, frac_pol_pct=0.5, frac_pol_upper_limit=True, pol_angle_deg=None
+                ),
                 # Usable above 4 GHz:
-                PolFreqEntry(freq_ghz=6.0,   frac_pol_pct=5.0,  frac_pol_upper_limit=False, pol_angle_deg=-66.0),
-                PolFreqEntry(freq_ghz=10.0,  frac_pol_pct=6.0,  frac_pol_upper_limit=False, pol_angle_deg=-67.0),
-                PolFreqEntry(freq_ghz=15.0,  frac_pol_pct=7.4,  frac_pol_upper_limit=False, pol_angle_deg=-67.0),
-                PolFreqEntry(freq_ghz=22.0,  frac_pol_pct=7.5,  frac_pol_upper_limit=False, pol_angle_deg=-68.0),
-                PolFreqEntry(freq_ghz=33.0,  frac_pol_pct=7.4,  frac_pol_upper_limit=False, pol_angle_deg=-67.0),
-                PolFreqEntry(freq_ghz=45.0,  frac_pol_pct=8.5,  frac_pol_upper_limit=False, pol_angle_deg=-71.0),
+                PolFreqEntry(
+                    freq_ghz=6.0, frac_pol_pct=5.0, frac_pol_upper_limit=False, pol_angle_deg=-66.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=10.0, frac_pol_pct=6.0, frac_pol_upper_limit=False, pol_angle_deg=-67.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=15.0, frac_pol_pct=7.4, frac_pol_upper_limit=False, pol_angle_deg=-67.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=22.0, frac_pol_pct=7.5, frac_pol_upper_limit=False, pol_angle_deg=-68.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=33.0, frac_pol_pct=7.4, frac_pol_upper_limit=False, pol_angle_deg=-67.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=45.0, frac_pol_pct=8.5, frac_pol_upper_limit=False, pol_angle_deg=-71.0
+                ),
             ],
         },
     ),
@@ -147,14 +199,30 @@ POL_CATALOGUE: list[PolCalEntry] = [
             "2019": [
                 # <10 GHz: essentially unpolarised (<0.05%) — ideal leakage calibrator.
                 # Rises to ~5% above 10 GHz where it is less useful.
-                PolFreqEntry(freq_ghz=1.45,  frac_pol_pct=0.05, frac_pol_upper_limit=True,  pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=3.0,   frac_pol_pct=0.05, frac_pol_upper_limit=True,  pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=6.0,   frac_pol_pct=0.05, frac_pol_upper_limit=True,  pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=10.0,  frac_pol_pct=0.5,  frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=15.0,  frac_pol_pct=2.5,  frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=22.0,  frac_pol_pct=4.8,  frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=33.0,  frac_pol_pct=5.0,  frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=45.0,  frac_pol_pct=5.0,  frac_pol_upper_limit=False, pol_angle_deg=None),
+                PolFreqEntry(
+                    freq_ghz=1.45, frac_pol_pct=0.05, frac_pol_upper_limit=True, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=3.0, frac_pol_pct=0.05, frac_pol_upper_limit=True, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=6.0, frac_pol_pct=0.05, frac_pol_upper_limit=True, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=10.0, frac_pol_pct=0.5, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=15.0, frac_pol_pct=2.5, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=22.0, frac_pol_pct=4.8, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=33.0, frac_pol_pct=5.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=45.0, frac_pol_pct=5.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
             ],
         },
     ),
@@ -168,10 +236,18 @@ POL_CATALOGUE: list[PolCalEntry] = [
         aka=["0316+413", "0319+4130", "3c84", "j0316+413", "ngc1275"],
         epochs={
             "2019": [
-                PolFreqEntry(freq_ghz=1.45,  frac_pol_pct=0.4, frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=3.0,   frac_pol_pct=0.6, frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=6.0,   frac_pol_pct=1.5, frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=10.0,  frac_pol_pct=2.0, frac_pol_upper_limit=False, pol_angle_deg=None),
+                PolFreqEntry(
+                    freq_ghz=1.45, frac_pol_pct=0.4, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=3.0, frac_pol_pct=0.6, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=6.0, frac_pol_pct=1.5, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=10.0, frac_pol_pct=2.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
             ],
         },
     ),
@@ -185,8 +261,12 @@ POL_CATALOGUE: list[PolCalEntry] = [
         aka=["0359+509", "0359+5057", "nrao150", "j0359+509"],
         epochs={
             "2019": [
-                PolFreqEntry(freq_ghz=1.45,  frac_pol_pct=3.0,  frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=6.0,   frac_pol_pct=5.0,  frac_pol_upper_limit=False, pol_angle_deg=None),
+                PolFreqEntry(
+                    freq_ghz=1.45, frac_pol_pct=3.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=6.0, frac_pol_pct=5.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
             ],
         },
     ),
@@ -200,8 +280,12 @@ POL_CATALOGUE: list[PolCalEntry] = [
         aka=["2200+420", "2202+4216", "bllac", "bl lac", "j2200+420"],
         epochs={
             "2019": [
-                PolFreqEntry(freq_ghz=1.45,  frac_pol_pct=5.0,  frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=6.0,   frac_pol_pct=6.0,  frac_pol_upper_limit=False, pol_angle_deg=None),
+                PolFreqEntry(
+                    freq_ghz=1.45, frac_pol_pct=5.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=6.0, frac_pol_pct=6.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
             ],
         },
     ),
@@ -215,8 +299,12 @@ POL_CATALOGUE: list[PolCalEntry] = [
         aka=["2251+158", "2253+1608", "3c454.3", "3c4543", "j2251+158"],
         epochs={
             "2019": [
-                PolFreqEntry(freq_ghz=1.45,  frac_pol_pct=8.0,  frac_pol_upper_limit=False, pol_angle_deg=None),
-                PolFreqEntry(freq_ghz=6.0,   frac_pol_pct=9.0,  frac_pol_upper_limit=False, pol_angle_deg=None),
+                PolFreqEntry(
+                    freq_ghz=1.45, frac_pol_pct=8.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=6.0, frac_pol_pct=9.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                ),
             ],
         },
     ),
@@ -226,6 +314,7 @@ POL_CATALOGUE: list[PolCalEntry] = [
 # ---------------------------------------------------------------------------
 # Name normalisation (mirrors util/calibrators.py)
 # ---------------------------------------------------------------------------
+
 
 def _normalise(name: str) -> str:
     """Lowercase, strip separators — same lossy normalisation as calibrators.py."""
@@ -253,6 +342,7 @@ _build_pol_index()
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def lookup_pol(field_name: str) -> PolCalEntry | None:
     """

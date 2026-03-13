@@ -87,6 +87,7 @@ def run(
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
+
         raise ComputationError(
             f"workdir does not exist: {workdir}",
             ms_path=ms_path,
@@ -108,8 +109,7 @@ def run(
 
     if n_missing > 0:
         warnings.append(
-            f"{n_missing} table(s) not found on disk. "
-            "Run priorcals.py first, then re-verify."
+            f"{n_missing} table(s) not found on disk. Run priorcals.py first, then re-verify."
         )
 
     data = {

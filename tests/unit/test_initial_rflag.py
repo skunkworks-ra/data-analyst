@@ -18,6 +18,7 @@ from ms_modify.initial_rflag import _build_cmds_content
 # _build_cmds_content
 # ---------------------------------------------------------------------------
 
+
 class TestBuildCmdsContent:
     def test_contains_rflag(self):
         content = _build_cmds_content(5.0, 5.0, 4.0, 4.0)
@@ -54,6 +55,7 @@ class TestBuildCmdsContent:
 # initial_rflag.run
 # ---------------------------------------------------------------------------
 
+
 class TestInitialRflagRun:
     def _make_ms(self, tmp_path) -> Path:
         ms = tmp_path / "test.ms"
@@ -64,12 +66,14 @@ class TestInitialRflagRun:
     def test_missing_workdir_raises(self, tmp_path):
         from ms_inspect.exceptions import ComputationError
         from ms_modify.initial_rflag import run
+
         ms = self._make_ms(tmp_path)
         with pytest.raises(ComputationError, match="workdir does not exist"):
             run(str(ms), str(tmp_path / "nodir"))
 
     def test_execute_false_writes_both_files(self, tmp_path):
         from ms_modify.initial_rflag import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -80,6 +84,7 @@ class TestInitialRflagRun:
 
     def test_cmds_file_contains_residual(self, tmp_path):
         from ms_modify.initial_rflag import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -89,6 +94,7 @@ class TestInitialRflagRun:
 
     def test_script_references_cmds_file(self, tmp_path):
         from ms_modify.initial_rflag import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -98,6 +104,7 @@ class TestInitialRflagRun:
 
     def test_script_has_flagbackup_true(self, tmp_path):
         from ms_modify.initial_rflag import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -107,6 +114,7 @@ class TestInitialRflagRun:
 
     def test_response_includes_thresholds(self, tmp_path):
         from ms_modify.initial_rflag import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -116,6 +124,7 @@ class TestInitialRflagRun:
 
     def test_custom_thresholds_in_cmds_file(self, tmp_path):
         from ms_modify.initial_rflag import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -127,6 +136,7 @@ class TestInitialRflagRun:
     def test_re_run_overwrites_files(self, tmp_path):
         """Deterministic filenames mean re-running replaces previous output."""
         from ms_modify.initial_rflag import run
+
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()

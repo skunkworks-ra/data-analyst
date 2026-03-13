@@ -18,10 +18,10 @@ from typing import Any, Literal
 CompletionFlag = Literal["COMPLETE", "INFERRED", "PARTIAL", "SUSPECT", "UNAVAILABLE"]
 
 _FLAG_SEVERITY: dict[str, int] = {
-    "COMPLETE":    0,
-    "INFERRED":    1,
-    "PARTIAL":     2,
-    "SUSPECT":     3,
+    "COMPLETE": 0,
+    "INFERRED": 1,
+    "PARTIAL": 2,
+    "SUSPECT": 3,
     "UNAVAILABLE": 4,
 }
 
@@ -146,6 +146,7 @@ def _collect_flags(obj: Any) -> list[CompletionFlag]:
 # Numeric formatting helpers
 # ---------------------------------------------------------------------------
 
+
 def round_dict(d: dict, decimals: int = 4) -> dict:
     """
     Recursively round all float values in a nested dict to `decimals` places.
@@ -158,9 +159,7 @@ def round_dict(d: dict, decimals: int = 4) -> dict:
         elif isinstance(v, dict):
             result[k] = round_dict(v, decimals)
         elif isinstance(v, list):
-            result[k] = [
-                round(i, decimals) if isinstance(i, float) else i for i in v
-            ]
+            result[k] = [round(i, decimals) if isinstance(i, float) else i for i in v]
         else:
             result[k] = v
     return result

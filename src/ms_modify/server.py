@@ -16,7 +16,16 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect.exceptions import RadioMSError
-from ms_modify import __version__, initial_bandpass, initial_rflag, intents, preflag, priorcals, rflag, setjy
+from ms_modify import (
+    __version__,
+    initial_bandpass,
+    initial_rflag,
+    intents,
+    preflag,
+    priorcals,
+    rflag,
+    setjy,
+)
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -34,6 +43,7 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 # Input models
 # ---------------------------------------------------------------------------
+
 
 class SetIntentsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -104,8 +114,7 @@ class InitialBandpassInput(BaseModel):
     uvrange: str = Field(
         default="",
         description=(
-            "UV range restriction (e.g. '>1klambda'). "
-            "Set for 3C84 to exclude extended emission."
+            "UV range restriction (e.g. '>1klambda'). Set for 3C84 to exclude extended emission."
         ),
     )
     execute: bool = Field(
@@ -120,13 +129,25 @@ class InitialBandpassInput(BaseModel):
 
 class ApplyRflagInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    ms_path: str = Field(..., description="Path to the MS (CORRECTED column must exist).", min_length=1)
-    workdir: str = Field(..., description="Existing directory for the generated script and flag backups.", min_length=1)
+    ms_path: str = Field(
+        ..., description="Path to the MS (CORRECTED column must exist).", min_length=1
+    )
+    workdir: str = Field(
+        ...,
+        description="Existing directory for the generated script and flag backups.",
+        min_length=1,
+    )
     field: str = Field(default="", description="CASA field selection (empty = all).")
     spw: str = Field(default="", description="CASA SpW selection (empty = all).")
-    datacolumn: str = Field(default="corrected", description="Column to flag on (default 'corrected').")
-    timedevscale: float = Field(default=5.0, description="rflag time deviation scale threshold (default 5.0).", gt=0.0)
-    freqdevscale: float = Field(default=5.0, description="rflag frequency deviation scale threshold (default 5.0).", gt=0.0)
+    datacolumn: str = Field(
+        default="corrected", description="Column to flag on (default 'corrected')."
+    )
+    timedevscale: float = Field(
+        default=5.0, description="rflag time deviation scale threshold (default 5.0).", gt=0.0
+    )
+    freqdevscale: float = Field(
+        default=5.0, description="rflag frequency deviation scale threshold (default 5.0).", gt=0.0
+    )
     execute: bool = Field(
         default=False,
         description=(
@@ -140,6 +161,7 @@ class ApplyRflagInput(BaseModel):
 # ---------------------------------------------------------------------------
 # Tool error handling wrapper
 # ---------------------------------------------------------------------------
+
 
 def _run_tool(tool_fn, *args, **kwargs) -> str:
     """
@@ -157,6 +179,7 @@ def _run_tool(tool_fn, *args, **kwargs) -> str:
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool(
     name="ms_set_intents",
@@ -305,6 +328,7 @@ async def ms_apply_rflag(params: ApplyRflagInput) -> str:
 # Input models — Preflag
 # ---------------------------------------------------------------------------
 
+
 class ApplyPreflagInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to the full MS.", min_length=1)
@@ -338,7 +362,9 @@ class ApplyPreflagInput(BaseModel):
 
 class GeneratePriorcalsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    ms_path: str = Field(..., description="Path to the MS (calibrators.ms or full MS).", min_length=1)
+    ms_path: str = Field(
+        ..., description="Path to the MS (calibrators.ms or full MS).", min_length=1
+    )
     workdir: str = Field(..., description="Existing directory for caltable output.", min_length=1)
     execute: bool = Field(
         default=False,
@@ -406,6 +432,7 @@ class ApplyInitialRflagInput(BaseModel):
 # ---------------------------------------------------------------------------
 # Tools — Preflag
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool(
     name="ms_apply_preflag",
@@ -572,6 +599,7 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()

@@ -18,10 +18,10 @@ Usage:
 
 from __future__ import annotations
 
-import sys
-from contextlib import contextmanager
+from collections.abc import Generator
+from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 from ms_inspect.exceptions import (
     CASANotAvailableError,
@@ -39,14 +39,15 @@ def _require_casatools() -> Any:
     """
     try:
         import casatools  # type: ignore[import]
+
         return casatools
-    except ImportError:
+    except ImportError as exc:
         raise CASANotAvailableError(
             "casatools is not installed or cannot be imported.\n"
             "Install with: pip install casatools casatasks\n"
             "Or via pixi: pixi install (casatools is in [pypi-dependencies]).\n"
             "Requires Python 3.12 on Linux x86_64 or macOS ARM64/x86_64."
-        )
+        ) from exc
 
 
 def validate_ms_path(ms_path: str) -> Path:
@@ -132,10 +133,10 @@ def open_msmd(ms_path: str) -> Generator[Any, None, None]:
             ms_path=ms_path,
         ) from exc
     finally:
-        try:
-            msmd.close()
-        except Exception:
-            pass  # best-effort close; don't mask the original exception
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            msmd.close()  # best-effort close; don't mask the original exception
 
 
 @contextmanager
@@ -174,10 +175,8 @@ def open_table(table_path: str, *, read_only: bool = True) -> Generator[Any, Non
             f"casatools.table raised an exception opening '{table_path}': {exc}",
         ) from exc
     finally:
-        try:
+        with suppress(Exception):
             tb.close()
-        except Exception:
-            pass
 
 
 @contextmanager
@@ -213,7 +212,5 @@ def open_ms(ms_path: str) -> Generator[Any, None, None]:
             ms_path=ms_path,
         ) from exc
     finally:
-        try:
+        with suppress(Exception):
             ms.close()
-        except Exception:
-            pass
