@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "ms-inspect",
+  "name": "data-analyst",
   "description": "Radio interferometric Measurement Set inspector — MCP tools and skills for VLA/MeerKAT/uGMRT",
   "metadata": {
     "description": "Radio interferometric Measurement Set inspector — MCP tools and skills for VLA/MeerKAT/uGMRT"
