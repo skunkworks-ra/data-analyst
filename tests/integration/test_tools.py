@@ -266,3 +266,143 @@ class TestAntennaFlagFractionReal:
             frac = ant["flag_fraction"]["value"]
             assert 0.0 <= frac <= 1.0
             assert ant["n_flagged_elements"] <= ant["n_total_elements"]
+
+
+@_SKIP
+class TestPolCalFeasibilityReal:
+    """Integration tests for ms_pol_cal_feasibility against a real MS."""
+
+    def test_returns_ok(self):
+        from ms_inspect.tools import pol_cal_feasibility
+
+        result = pol_cal_feasibility.run(_TEST_MS)
+        assert result["status"] == "ok"
+
+    def test_verdict_is_valid(self):
+        from ms_inspect.tools import pol_cal_feasibility
+
+        result = pol_cal_feasibility.run(_TEST_MS)
+        verdict = result["data"]["verdict"]
+        assert verdict in {"FULL", "LEAKAGE_ONLY", "DEGRADED", "NOT_FEASIBLE"}
+
+    def test_band_centre_present(self):
+        from ms_inspect.tools import pol_cal_feasibility
+
+        result = pol_cal_feasibility.run(_TEST_MS)
+        band = result["data"]["band_centre_ghz"]
+        assert band["value"] is not None
+        assert band["value"] > 0.0
+
+    def test_pa_spread_threshold_respected(self):
+        """Relaxed threshold should not make NOT_FEASIBLE worse than strict threshold."""
+        from ms_inspect.tools import pol_cal_feasibility
+
+        strict  = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=90.0)
+        relaxed = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=10.0)
+
+        _order = {"FULL": 0, "DEGRADED": 1, "LEAKAGE_ONLY": 2, "NOT_FEASIBLE": 3}
+        # A relaxed threshold should never produce a worse verdict than a strict one
+        assert _order[relaxed["data"]["verdict"]] <= _order[strict["data"]["verdict"]]
+
+
+@_SKIP
+class TestRefAntReal:
+    """Integration tests for ms_refant against a real MS."""
+
+    def test_returns_ok(self):
+        from ms_inspect.tools import refant
+
+        result = refant.run(_TEST_MS)
+        assert result["status"] == "ok"
+
+    def test_refant_list_non_empty(self):
+        from ms_inspect.tools import refant
+
+        result = refant.run(_TEST_MS)
+        assert len(result["data"]["refant_list"]["value"]) > 0
+
+    def test_refant_is_first_in_list(self):
+        from ms_inspect.tools import refant
+
+        result = refant.run(_TEST_MS)
+        data = result["data"]
+        assert data["refant"]["value"] == data["refant_list"]["value"][0]
+
+    def test_ranked_list_length_matches_n_antennas(self):
+        from ms_inspect.tools import refant
+
+        result = refant.run(_TEST_MS)
+        data = result["data"]
+        assert len(data["ranked"]) == data["n_antennas"]
+
+    def test_scores_in_valid_range(self):
+        from ms_inspect.tools import refant
+
+        result = refant.run(_TEST_MS)
+        n = result["data"]["n_antennas"]
+        for r in result["data"]["ranked"]:
+            assert 0.0 <= r["geo_score"] <= float(n)
+            assert 0.0 <= r["flag_score"] <= float(n)
+            assert r["combined_score"] == pytest.approx(
+                r["geo_score"] + r["flag_score"], abs=1e-3
+            )
+
+    def test_ranked_descending_order(self):
+        from ms_inspect.tools import refant
+
+        result = refant.run(_TEST_MS)
+        scores = [r["combined_score"] for r in result["data"]["ranked"]]
+        assert scores == sorted(scores, reverse=True)
+
+
+@_SKIP
+class TestInitialBandpassReal:
+    """Integration tests for ms_initial_bandpass against a real MS."""
+
+    @pytest.fixture(scope="class")
+    def bp_workdir(self, tmp_path_factory):
+        return str(tmp_path_factory.mktemp("bp_workdir"))
+
+    @pytest.fixture(scope="class")
+    def bp_result(self, bp_workdir):
+        from ms_inspect.tools.refant import run as refant_run
+        from ms_modify.initial_bandpass import run as bp_run
+
+        # Get refant from real MS
+        refant_result = refant_run(_TEST_MS)
+        ref_ant = refant_result["data"]["refant"]["value"]
+
+        # Get bandpass field: first field with CALIBRATE_BANDPASS intent
+        from ms_inspect.tools.fields import run as fields_run
+        fields_result = fields_run(_TEST_MS)
+        bp_field = None
+        for f in fields_result["data"]["fields"]:
+            intents = f.get("intents", {}).get("value", [])
+            if any("BANDPASS" in i for i in intents):
+                bp_field = f["name"]
+                break
+
+        if bp_field is None:
+            pytest.skip("No CALIBRATE_BANDPASS field found in test MS")
+
+        return bp_run(_TEST_MS, bp_field=bp_field, ref_ant=ref_ant, workdir=bp_workdir)
+
+    def test_returns_ok(self, bp_result):
+        assert bp_result["status"] == "ok"
+
+    def test_init_gain_table_exists(self, bp_result):
+        import os
+        table_path = bp_result["data"]["init_gain_table"]["value"]
+        assert os.path.exists(table_path)
+
+    def test_bp_table_exists(self, bp_result):
+        import os
+        table_path = bp_result["data"]["bp_table"]["value"]
+        assert os.path.exists(table_path)
+
+    def test_corrected_written(self, bp_result):
+        assert bp_result["data"]["corrected_written"]["value"] is True
+
+    def test_provenance_has_three_steps(self, bp_result):
+        calls = bp_result["provenance"]["casa_calls"]
+        assert len(calls) == 3

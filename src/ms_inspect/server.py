@@ -31,6 +31,8 @@ from ms_inspect.tools import (
     flags,
     geometry,
     observation,
+    pol_cal_feasibility,
+    refant,
     scans,
     shadowing,
     spectral,
@@ -88,6 +90,40 @@ class ShadowingInput(BaseModel):
             "tolerance_m before it is reported."
         ),
         ge=0.0,
+    )
+
+
+class PolCalFeasibilityInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set", min_length=1)
+    pa_spread_threshold_deg: float = Field(
+        default=60.0,
+        description=(
+            "Minimum parallactic angle spread (degrees) required for a reliable "
+            "D-term leakage solution (default 60°). Lower values relax the criterion."
+        ),
+        ge=0.0,
+        le=180.0,
+    )
+
+
+class RefAntInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set", min_length=1)
+    field: str = Field(
+        default="",
+        description=(
+            "CASA field selection string for the flagging heuristic "
+            "(e.g. '3C147'). Empty string = all fields."
+        ),
+    )
+    use_geometry: bool = Field(
+        default=True,
+        description="Score antennas by distance from array centre.",
+    )
+    use_flagging: bool = Field(
+        default=True,
+        description="Score antennas by unflagged data fraction.",
     )
 
 
@@ -490,6 +526,94 @@ async def ms_antenna_flag_fraction(params: MSPathInput) -> str:
         n_total_elements, n_flag_commands_online}.
     """
     return _run_tool(flags.run, params.ms_path)
+
+
+# ---------------------------------------------------------------------------
+# Reference antenna selection
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="ms_refant",
+    annotations={
+        "title": "Reference Antenna Selection",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_refant(params: RefAntInput) -> str:
+    """
+    Select the best reference antenna using geometry and flagging heuristics.
+
+    Scores each antenna on two independent criteria (each normalised to
+    [0, n_antennas]) and returns a full ranked list:
+
+      Geometry score: antennas closest to the array centre score highest.
+      Flagging score: antennas with the most unflagged data score highest.
+
+    Combined score = geo_score + flag_score (when both enabled).
+
+    Args:
+        params.ms_path:      Path to the Measurement Set.
+        params.field:        CASA field selection for flagging heuristic (default = all fields).
+        params.use_geometry: Include geometry score (default True).
+        params.use_flagging: Include flagging score (default True).
+
+    Returns:
+        JSON with refant (top-ranked antenna name), refant_list (full ranked list),
+        and ranked array with per-antenna geo_score, flag_score, combined_score.
+    """
+    return _run_tool(
+        refant.run,
+        params.ms_path,
+        params.field,
+        params.use_geometry,
+        params.use_flagging,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Polarisation calibration feasibility
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="ms_pol_cal_feasibility",
+    annotations={
+        "title": "Polarisation Calibration Feasibility",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_pol_cal_feasibility(params: PolCalFeasibilityInput) -> str:
+    """
+    Assess whether full VLA polarisation calibration is feasible for this dataset.
+
+    Cross-matches observed fields against the bundled VLA pol calibrator catalogue
+    (3C286, 3C138, 3C48, 3C147, 3C84, and Category B secondaries), then computes
+    the parallactic angle spread of the leakage calibrator across its observed scans.
+
+    Verdict values:
+      FULL         — pol angle cal + leakage cal with sufficient PA spread (≥ threshold)
+      LEAKAGE_ONLY — no angle cal, but leakage cal present with sufficient spread
+      DEGRADED     — angle cal available but flagged as variable or in active flare
+      NOT_FEASIBLE — no pol cals found, or PA spread below threshold
+
+    Args:
+        params.ms_path:                Path to the Measurement Set.
+        params.pa_spread_threshold_deg: PA spread threshold for D-term feasibility (default 60°).
+
+    Returns:
+        JSON with band_centre_ghz, pol_angle_calibrator (source, frac_pol, PA, stable_pa),
+        leakage_calibrator (pa_spread, n_scans, meets_threshold), verdict, and blocker.
+    """
+    return _run_tool(
+        pol_cal_feasibility.run,
+        params.ms_path,
+        params.pa_spread_threshold_deg,
+    )
 
 
 # ---------------------------------------------------------------------------
