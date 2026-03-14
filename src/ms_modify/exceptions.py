@@ -21,3 +21,9 @@ class InitialBandpassFailedError(RadioMSError):
     """
 
     error_type = "INITIAL_BANDPASS_FAILED"
+
+
+class SlurmNotAvailableError(RadioMSError):
+    """Raised when sbatch is not found on PATH."""
+
+    error_type = "SLURM_NOT_AVAILABLE"

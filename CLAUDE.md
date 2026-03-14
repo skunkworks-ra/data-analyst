@@ -169,6 +169,7 @@ and scripts.
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_set_intents` | `ms_modify/intents.py` | Populate STATE subtable and STATE_ID from calibrator catalogue matching |
+| *(utility)* | `ms_modify/slurm.py` | SLURM batch submission: wrap scripts in sbatch files, chain with afterok dependencies |
 
 `set_intents` logic:
 1. Read fields + positions via `open_msmd`
