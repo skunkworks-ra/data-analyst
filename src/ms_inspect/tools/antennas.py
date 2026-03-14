@@ -7,7 +7,8 @@ ms_antenna_list:    Antenna names, ECEF positions, diameters, completeness check
 ms_baseline_lengths: Physical baseline length statistics and derived resolution.
 
 CASA access: tb → ANTENNA subtable; tb → MAIN table for orphan check.
-Raises InsufficientMetadataError on incomplete or numeric-only antenna tables.
+Raises InsufficientMetadataError on incomplete antenna tables, or when
+numeric-only names are combined with unusable ECEF positions.
 """
 
 from __future__ import annotations
@@ -29,6 +30,44 @@ from ms_inspect.util.formatting import field, offload_detail, response_envelope
 
 TOOL_ANT = "ms_antenna_list"
 TOOL_BASELINES = "ms_baseline_lengths"
+
+# Minimum ECEF magnitude for a position on Earth's surface (metres).
+# True Earth radius is ~6.37e6 m; use a generous lower bound.
+_EARTH_RADIUS_MIN_M = 6.0e6
+
+# Minimum positional spread (metres) across antennas to consider positions
+# non-degenerate.  Even the most compact arrays have baselines >> 1 m.
+_MIN_POSITION_SPREAD_M = 1.0
+
+
+def _positions_are_reasonable(positions: np.ndarray, n_ant: int) -> tuple[bool, str]:
+    """
+    Check whether ECEF antenna positions are physically plausible.
+
+    Returns (ok, reason).  If ok is False, reason describes the problem.
+    """
+    if n_ant == 0:
+        return False, "Antenna table is empty."
+
+    # 1. Positions should be on Earth's surface (ECEF magnitude ~ 6.4e6 m).
+    magnitudes = np.sqrt((positions**2).sum(axis=0))  # [n_ant]
+    if (magnitudes < _EARTH_RADIUS_MIN_M).all():
+        return (
+            False,
+            "All antenna positions are near the ECEF origin — "
+            "likely placeholders, not real geodetic coordinates.",
+        )
+
+    # 2. Spread across antennas should give baselines > ~1 m.
+    spread = max(float(positions[dim].max() - positions[dim].min()) for dim in range(3))
+    if spread < _MIN_POSITION_SPREAD_M:
+        return (
+            False,
+            f"All antenna positions are within {_MIN_POSITION_SPREAD_M} m "
+            "of each other — likely identical placeholders.",
+        )
+
+    return True, ""
 
 
 def _read_antenna_table(ms_str: str) -> tuple[dict, list[str]]:
@@ -80,7 +119,9 @@ def run_antenna_list(ms_path: str) -> dict:
     Return the antenna list with ECEF positions, diameters, and completeness check.
 
     Raises InsufficientMetadataError if:
-    - Antenna names are purely numeric (UVFITS artefact)
+    - Antenna names are purely numeric AND positions are unusable
+      (near ECEF origin or degenerate).  Numeric names with valid
+      positions produce a warning instead.
     - Antenna IDs in MAIN table are not all present in ANTENNA subtable
     """
     p = validate_ms_path(ms_path)
@@ -96,21 +137,32 @@ def run_antenna_list(ms_path: str) -> dict:
     n_ant = ant_data["n_rows"]
 
     # ------------------------------------------------------------------
-    # Fail loud check 1: numeric-only antenna names (DESIGN.md §3.3)
+    # Numeric-only antenna names (DESIGN.md §3.3)
+    # Names are labels; positions are what matter.  If positions look
+    # reasonable we warn and continue, otherwise fail loud.
     # ------------------------------------------------------------------
     if n_ant > 0 and all(str(n).strip().isdigit() for n in names):
-        raise InsufficientMetadataError(
-            f"All {n_ant} antenna names are purely numeric "
-            f"(e.g. '{names[0]}', '{names[1] if n_ant > 1 else ''}', ...). "
-            "This is a known artefact of UVFITS-converted Measurement Sets — "
-            "the original station metadata was not preserved.\n\n"
-            "Cannot compute baseline lengths, array configuration, shadowing, "
-            "or flag fractions without meaningful antenna names and positions.\n\n"
-            "To fix: populate the ANTENNA subtable with correct names, stations, "
-            "and ECEF positions (ITRF). Contact the observatory archive or use "
-            "the original telescope-format data before UVFITS conversion.",
-            ms_path=ms_path,
-        )
+        pos_ok, pos_reason = _positions_are_reasonable(ant_data["positions"], n_ant)
+        if pos_ok:
+            warnings.append(
+                f"All {n_ant} antenna names are purely numeric "
+                f"(e.g. '{names[0]}', '{names[1] if n_ant > 1 else ''}', ...). "
+                "This is a known artefact of UVFITS-converted Measurement Sets. "
+                "Positions appear valid, so analysis can proceed, but station "
+                "metadata may be absent."
+            )
+        else:
+            raise InsufficientMetadataError(
+                f"All {n_ant} antenna names are purely numeric "
+                f"(e.g. '{names[0]}', '{names[1] if n_ant > 1 else ''}', ...) "
+                f"and antenna positions are unusable: {pos_reason}\n\n"
+                "Cannot compute baseline lengths, array configuration, shadowing, "
+                "or flag fractions without valid antenna positions.\n\n"
+                "To fix: populate the ANTENNA subtable with correct names, stations, "
+                "and ECEF positions (ITRF). Contact the observatory archive or use "
+                "the original telescope-format data before UVFITS conversion.",
+                ms_path=ms_path,
+            )
 
     # ------------------------------------------------------------------
     # Fail loud check 2: orphaned antenna IDs (DESIGN.md §3.3)
@@ -233,13 +285,21 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
     n_ant = ant_data["n_rows"]
     positions = ant_data["positions"]  # [3, n_ant]
 
-    # Same fail-loud checks as antenna_list
+    # Numeric names are OK if positions are valid (see run_antenna_list).
     if n_ant > 0 and all(str(n).strip().isdigit() for n in names):
-        raise InsufficientMetadataError(
-            "Antenna names are purely numeric — cannot compute baseline lengths. "
-            "See ms_antenna_list for details and repair instructions.",
-            ms_path=ms_path,
-        )
+        pos_ok, pos_reason = _positions_are_reasonable(positions, n_ant)
+        if pos_ok:
+            warnings.append(
+                "Antenna names are purely numeric (UVFITS artefact). "
+                "Positions appear valid — proceeding with baseline computation."
+            )
+        else:
+            raise InsufficientMetadataError(
+                "Antenna names are purely numeric and positions are unusable: "
+                f"{pos_reason} Cannot compute baseline lengths. "
+                "See ms_antenna_list for repair instructions.",
+                ms_path=ms_path,
+            )
 
     # Compute all pairwise baseline lengths
     lengths_m: list[tuple[int, int, float]] = []  # (ant_i, ant_j, length_m)
