@@ -36,8 +36,10 @@ from ms_inspect.util.pol_calibrators import (
 
 TOOL_NAME = "ms_pol_cal_feasibility"
 
-# Default PA spread threshold for leakage calibration feasibility
-DEFAULT_PA_SPREAD_THRESHOLD_DEG = 60.0
+# Default PA spread threshold for leakage calibration feasibility.
+# 45° is sufficient for Df+QU (which recovers Q,U simultaneously).
+# Below 45° the D-term solution becomes degenerate regardless of poltype.
+DEFAULT_PA_SPREAD_THRESHOLD_DEG = 45.0
 
 # Pol epoch used for property lookup
 POL_DATA_EPOCH = "2019"

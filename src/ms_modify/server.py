@@ -25,6 +25,7 @@ from ms_modify import (
     priorcals,
     rflag,
     setjy,
+    setjy_polcal,
 )
 
 # ---------------------------------------------------------------------------
@@ -392,6 +393,69 @@ class SetjyInput(BaseModel):
     )
 
 
+class SetjyPolcalInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the Measurement Set.", min_length=1)
+    field: str = Field(
+        ...,
+        description=(
+            "CASA field selection string for the polarization angle calibrator "
+            "(e.g. '3C48', 'J0137+3309')."
+        ),
+        min_length=1,
+    )
+    workdir: str = Field(
+        ...,
+        description="Existing directory for the generated setjy_polcal.py script.",
+        min_length=1,
+    )
+    reffreq_ghz: float = Field(
+        ...,
+        description=(
+            "Reference frequency in GHz for the polynomial expansion (e.g. 3.0 for S-band centre)."
+        ),
+        gt=0.0,
+    )
+    calibrator_name: str = Field(
+        default="",
+        description=(
+            "Catalogue name to look up (e.g. '3C48'). Defaults to field if empty. "
+            "Use this when the field name in the MS differs from the catalogue name."
+        ),
+    )
+    epoch: str = Field(
+        default="perley_butler_2013",
+        description="Catalogue epoch key for the polarization data.",
+    )
+    pol_freq_range_lo_ghz: float | None = Field(
+        default=None,
+        description="Lower bound (GHz) to restrict polindex and polangle fits.",
+        gt=0.0,
+    )
+    pol_freq_range_hi_ghz: float | None = Field(
+        default=None,
+        description="Upper bound (GHz) to restrict polindex and polangle fits.",
+        gt=0.0,
+    )
+    polindex_deg: int = Field(
+        default=3,
+        description="Polynomial degree for polindex (default 3).",
+        ge=1,
+    )
+    polangle_deg: int = Field(
+        default=4,
+        description="Polynomial degree for polangle (default 4).",
+        ge=1,
+    )
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write setjy_polcal.py and return. "
+            "If True, run setjy(standard='manual') in-process."
+        ),
+    )
+
+
 class ApplyInitialRflagInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(
@@ -550,6 +614,66 @@ async def ms_setjy(params: SetjyInput) -> str:
         params.ms_path,
         params.workdir,
         params.standard,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_setjy_polcal",
+    annotations={
+        "title": "Set Polarization Calibrator Model",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
+    """
+    Set the full polarization model for a polarization angle calibrator.
+
+    Fits three polynomial models from the Perley & Butler (2013) catalogue:
+      - Stokes I spectral index (log-polynomial → spix)
+      - Pol fraction vs frequency (ascending polynomial → polindex)
+      - Pol angle vs frequency in radians (ascending polynomial → polangle)
+
+    All polynomials use x = (f - f_ref)/f_ref, ASCENDING coefficient order
+    [c0, c1, ...] as required by CASA setjy(standard='manual').
+
+    Writes workdir/setjy_polcal.py. Run it with CASA to populate the MODEL
+    column with the full polarized flux density model before solving Kcross,
+    D-terms, or position angle calibration tables.
+
+    Args:
+        params.ms_path:               Path to the Measurement Set.
+        params.field:                 CASA field selection for the polcal source.
+        params.workdir:               Existing directory for the generated script.
+        params.reffreq_ghz:           Reference frequency in GHz.
+        params.calibrator_name:       Catalogue lookup name (defaults to field).
+        params.epoch:                 Catalogue epoch (default 'perley_butler_2013').
+        params.pol_freq_range_lo_ghz: Lower GHz bound to restrict pol fits.
+        params.pol_freq_range_hi_ghz: Upper GHz bound to restrict pol fits.
+        params.polindex_deg:          Polynomial degree for polindex (default 3).
+        params.polangle_deg:          Polynomial degree for polangle (default 4).
+        params.execute:               Generate script only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, calibrator, reffreq_ghz, flux_jy, polindex,
+        polangle, polindex_c0 (pol fraction at reffreq), polangle_c0_rad
+        (pol angle in radians at reffreq).
+    """
+    return _run_tool(
+        setjy_polcal.run,
+        params.ms_path,
+        params.field,
+        params.workdir,
+        params.reffreq_ghz,
+        params.calibrator_name or None,
+        params.epoch,
+        params.pol_freq_range_lo_ghz,
+        params.pol_freq_range_hi_ghz,
+        params.polindex_deg,
+        params.polangle_deg,
         params.execute,
     )
 

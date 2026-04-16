@@ -911,7 +911,10 @@ def main() -> None:
     port = int(os.environ.get("RADIO_MCP_PORT", "8000"))
 
     if transport == "http":
-        mcp.run(transport="streamable-http", host="127.0.0.1", port=port)
+        import uvicorn
+
+        app = mcp.sse_app()
+        uvicorn.run(app, host="0.0.0.0", port=port)
     else:
         # stdio — default, for Claude Desktop and local use
         mcp.run(transport="stdio")

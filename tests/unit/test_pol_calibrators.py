@@ -234,3 +234,121 @@ class Test3C147LeakageOnly:
         props = pol_properties_at_freq(entry, 6.0)
         assert props is not None
         assert props.frac_pol_upper_limit is True
+
+
+# ---------------------------------------------------------------------------
+# 3C48 — perley_butler_2013 epoch
+# ---------------------------------------------------------------------------
+
+
+class Test3C48PerleyButler2013:
+    def _get_3c48(self) -> PolCalEntry:
+        entry = lookup_pol("3C48")
+        assert entry is not None
+        return entry
+
+    def test_epoch_present(self):
+        entry = self._get_3c48()
+        assert "perley_butler_2013" in entry.epochs
+
+    def test_17_nodes(self):
+        entry = self._get_3c48()
+        rows = entry.epochs["perley_butler_2013"]
+        assert len(rows) == 17
+
+    def test_flux_jy_populated(self):
+        entry = self._get_3c48()
+        rows = entry.epochs["perley_butler_2013"]
+        for row in rows:
+            assert row.flux_jy is not None
+            assert row.flux_jy > 0.0
+
+    def test_flux_jy_decreasing_with_frequency(self):
+        """Flux density should fall monotonically for this steep-spectrum source."""
+        entry = self._get_3c48()
+        rows = sorted(entry.epochs["perley_butler_2013"], key=lambda r: r.freq_ghz)
+        fluxes = [r.flux_jy for r in rows]
+        for i in range(len(fluxes) - 1):
+            assert fluxes[i] > fluxes[i + 1], (
+                f"Flux not decreasing: {rows[i].freq_ghz} GHz → {rows[i + 1].freq_ghz} GHz"
+            )
+
+    def test_lband_pa_undefined(self):
+        """PA undefined for 1.022, 1.465, 1.865 GHz nodes due to RM wrapping."""
+        entry = self._get_3c48()
+        rows = entry.epochs["perley_butler_2013"]
+        ambiguous = [r for r in rows if r.freq_ghz <= 1.865]
+        assert len(ambiguous) == 3
+        for row in ambiguous:
+            assert row.pol_angle_deg is None, f"Expected None pol_angle at {row.freq_ghz} GHz"
+
+    def test_sband_pa_defined(self):
+        """PA defined and negative for S-band nodes (2.565 GHz and above)."""
+        entry = self._get_3c48()
+        rows = entry.epochs["perley_butler_2013"]
+        sband_and_above = [r for r in rows if r.freq_ghz >= 2.565]
+        assert len(sband_and_above) == 14
+        for row in sband_and_above:
+            assert row.pol_angle_deg is not None
+            assert row.pol_angle_deg < 0.0, (
+                f"Expected negative pol_angle at {row.freq_ghz} GHz, got {row.pol_angle_deg:.2f}°"
+            )
+
+    def test_sband_polfrac_rising(self):
+        """Pol fraction should rise from S-band into C-band."""
+        entry = self._get_3c48()
+        props_s = pol_properties_at_freq(entry, 3.0, epoch="perley_butler_2013")
+        props_c = pol_properties_at_freq(entry, 6.5, epoch="perley_butler_2013")
+        assert props_s is not None and props_c is not None
+        assert props_c.frac_pol_pct > props_s.frac_pol_pct
+
+    def test_interpolation_sband(self):
+        """Interpolation at 3.0 GHz should fall between the 2.565 and 3.565 GHz nodes."""
+        entry = self._get_3c48()
+        props = pol_properties_at_freq(entry, 3.0, epoch="perley_butler_2013")
+        assert props is not None
+        assert 1.548 < props.frac_pol_pct < 2.911
+        assert props.pol_angle_deg is not None
+        assert -112.89 < props.pol_angle_deg < -83.94
+
+    def test_lband_upper_limit_preserved(self):
+        entry = self._get_3c48()
+        rows = entry.epochs["perley_butler_2013"]
+        lband = [r for r in rows if r.freq_ghz <= 1.465]
+        for row in lband:
+            assert row.frac_pol_upper_limit is True
+
+    def test_2019_epoch_unaffected(self):
+        """The existing 2019 epoch must still be present and unchanged."""
+        entry = self._get_3c48()
+        props = pol_properties_at_freq(entry, 6.0, epoch="2019")
+        assert props is not None
+        assert abs(props.frac_pol_pct - 5.0) < 0.1
+        assert props.pol_angle_deg == pytest.approx(-66.0, abs=1.0)
+
+    def test_flux_jy_defaults_none_in_2019_epoch(self):
+        """flux_jy was not tabulated for the 2019 band-averaged data."""
+        entry = self._get_3c48()
+        props = pol_properties_at_freq(entry, 6.0, epoch="2019")
+        assert props is not None
+        assert props.flux_jy is None
+
+
+# ---------------------------------------------------------------------------
+# flux_jy field — backward compatibility
+# ---------------------------------------------------------------------------
+
+
+class TestFluxJyField:
+    def test_flux_jy_defaults_none_for_2019_entries(self):
+        """All 2019 PolFreqEntry instances should have flux_jy=None by default."""
+        entry = lookup_pol("3C286")
+        assert entry is not None
+        for row in entry.epochs.get("2019", []):
+            assert row.flux_jy is None
+
+    def test_flux_jy_populated_for_pb2013(self):
+        entry = lookup_pol("3C48")
+        assert entry is not None
+        for row in entry.epochs.get("perley_butler_2013", []):
+            assert row.flux_jy is not None

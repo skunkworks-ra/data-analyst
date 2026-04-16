@@ -93,21 +93,76 @@ They are used for:
    3C286 intrinsic EVPA: ~33° at L-band (defined relative to IAU convention).
 2. **D-term calibration:** combined with PA coverage from `ms_parallactic_angle_vs_time`.
 
+### 3C48 at S-band (2–4 GHz)
+3C48 has low but usable linear polarisation at S-band and above, and is commonly
+observed as the flux/bandpass calibrator. When it is the only well-characterised
+calibrator in the observation, it can also serve as a position-angle calibrator.
+
+**Key properties (Perley & Butler 2013):**
+- Pol fraction rises from ~1.5% at 2.565 GHz to ~5.4% at 8.435 GHz
+- PA at S-band: negative, ranging from −112.9° (2.565 GHz) to −63.4° (8.435 GHz)
+- L-band nodes (< 2.0 GHz): PA is undefined due to Faraday rotation wrapping —
+  do NOT include these frequencies in the polindex/polangle fit
+- Recommended pol_freq_range_ghz for S-band: (2.0, 9.0) — includes 14 nodes with
+  well-defined PA, excludes the three RM-wrapped L-band nodes
+
+**Setting the model with ms_setjy_polcal:**
+```
+ms_setjy_polcal(
+    ms_path=..., field='3C48', workdir=...,
+    reffreq_ghz=3.0,             # S-band centre
+    pol_freq_range_lo_ghz=2.0,
+    pol_freq_range_hi_ghz=9.0,
+)
+```
+This calls `fit_from_catalogue("3C48", ...)` and writes `setjy_polcal.py` using
+`standard='manual'` with the fitted polynomial coefficients.
+
 ### PKS1934-638 (MeerKAT)
 Unpolarised to < 0.2%. Do NOT use for polarisation angle calibration.
 For MeerKAT polarimetry: use a separate linearly polarised calibrator
 observed at multiple parallactic angles.
 
-### Identifying which calibrator to use for which step
-In a standard VLA L-band reduction:
-1. `setjy` → 3C286 (flux scale)
-2. `bandpass` → 3C286 (bandpass calibrator, same scan)
+---
+
+## Polynomial model convention for setjy(standard='manual')
+
+CASA `setjy(standard='manual')` accepts polynomial models for polindex and polangle.
+The convention is **ascending coefficient order**: `[c0, c1, c2, ...]` where the
+polynomial variable is `x = (f − f_ref) / f_ref`.
+
+```
+polindex(f) = c0 + c1·x + c2·x² + ...     (fractional polarisation, 0–1 scale)
+polangle(f) = c0 + c1·x + c2·x² + ...     (position angle in radians)
+```
+
+**Critical:** `c0` is the value at the reference frequency — it is the intercept,
+not a slope. This is the ascending-order convention from
+`numpy.polynomial.polynomial.polyfit`. Do NOT use `numpy.polyfit` for these fits
+as it returns descending order (`[cn, ..., c1, c0]`), which would make `c0` the
+highest-power coefficient — a silent correctness bug.
+
+**Checking a fit is reasonable:**
+- `polindex[0]` should match the catalogued pol fraction at reffreq (within ~0.5%)
+- `polangle[0]` in radians should match the catalogued PA at reffreq
+- For 3C48 at reffreq=3.0 GHz: `polindex[0] ≈ 0.022`, `polangle[0] ≈ −1.69 rad`
+
+---
+
+## Identifying which calibrator to use for which step
+
+In a standard VLA L-band/S-band reduction:
+1. `setjy` → 3C286 or 3C48 (flux scale, Perley-Butler 2017)
+2. `bandpass` → same as flux calibrator
 3. `gaincal(calmode='p')` → phase calibrator (phase-only, short solint)
 4. `gaincal(calmode='ap')` → flux calibrator (amplitude+phase, long solint)
 5. `fluxscale` → transfer flux scale from flux cal to phase cal
-6. `polcal(poltype='Df')` → D-terms from calibrator with good PA coverage
-7. `polcal(poltype='Xf')` → absolute PA from 3C286 or 3C138
+6. `ms_setjy_polcal` → set full pol model (Stokes I + polindex + polangle) on angle cal
+7. `polcal(poltype='Kcross')` → cross-hand delay from angle cal
+8. `polcal(poltype='Df')` → D-terms from leakage cal with good PA coverage
+9. `polcal(poltype='Xf')` → absolute PA from 3C286 or 3C138 (or 3C48 at S-band)
+10. `applycal(parang=True)` → apply all tables with parallactic angle correction
 
-This sequence is out of scope for Phase 1/2 but is documented here so that
-the Phase 1/2 analysis report can flag whether all necessary calibrators
-are present.
+Steps 6–10 are polarisation calibration and are covered in `09-polcal-execution.md`.
+Steps 1–5 are documented here as context for flagging whether all required calibrators
+are present during Phase 1/2 inspection.
