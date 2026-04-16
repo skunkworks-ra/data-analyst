@@ -7,6 +7,11 @@ allowed-tools: ms_observation_info, ms_field_list, ms_scan_list, ms_scan_intent_
                ms_spectral_window_list, ms_correlator_config, ms_antenna_list,
                ms_baseline_lengths, ms_elevation_vs_time, ms_parallactic_angle_vs_time,
                ms_shadowing_report, ms_antenna_flag_fraction,
+               ms_refant, ms_verify_caltables, ms_rfi_channel_stats, ms_flag_summary,
+               ms_pol_cal_feasibility, ms_online_flag_stats, ms_verify_priorcals,
+               ms_residual_stats,
+               ms_set_intents, ms_initial_bandpass, ms_apply_rflag, ms_apply_preflag,
+               ms_generate_priorcals, ms_setjy, ms_setjy_polcal, ms_apply_initial_rflag,
                Bash, Read, Write, Edit
 ---
 
@@ -34,3 +39,6 @@ decide what the numbers mean and what to do next.
 @.claude/skills/radio-interferometry/04-diagnostic-reasoning.md
 @.claude/skills/radio-interferometry/05-calibrator-science.md
 @.claude/skills/radio-interferometry/06-failure-modes.md
+@.claude/skills/radio-interferometry/07-calibration-execution.md
+@.claude/skills/radio-interferometry/08-pband-specifics.md
+@.claude/skills/radio-interferometry/09-polcal-execution.md
