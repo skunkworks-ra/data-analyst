@@ -26,6 +26,7 @@ from ms_inspect import __version__
 from ms_inspect.exceptions import RadioMSError
 from ms_inspect.tools import (
     antennas,
+    calsol_stats,
     caltables,
     fields,
     flag_summary,
@@ -215,6 +216,15 @@ class BaselineLengthInput(BaseModel):
             "Optional list of SpW centre frequencies in Hz for kλ / arcsec conversion. "
             "If not provided, frequencies are read from the MS spectral window table."
         ),
+    )
+
+
+class CalsolStatsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    caltable_path: str = Field(
+        ...,
+        description="Path to CASA calibration table directory (e.g. gain.g, BP0.b, delay.k)",
+        min_length=1,
     )
 
 
@@ -899,6 +909,38 @@ async def ms_residual_stats(params: ResidualStatsInput) -> str:
         params.field_id,
         params.max_rows,
     )
+
+
+@mcp.tool(
+    name="ms_calsol_stats",
+    annotations={
+        "title": "Calibration Solution Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_calsol_stats(params: CalsolStatsInput) -> str:
+    """
+    Inspect a CASA calibration table and return per-(antenna, SPW, field) diagnostics.
+
+    Supports G Jones (complex gain), B Jones (bandpass), and K Jones (delay) tables.
+    Returns flagged fractions, SNR, amplitude/phase stats, and — for B tables — the
+    full per-channel amplitude array. Used by the skill to make go/no-go decisions
+    after a calibration solve.
+
+    Stats arrays have shape [n_ant, n_spw, n_field]. Use ant_names, spw_ids,
+    field_ids, and field_names to map indices back to physical labels.
+
+    Args:
+        params.caltable_path: Path to the caltable directory.
+
+    Returns:
+        JSON with table_type, axis metadata, flagged_frac, snr_mean, amplitude/phase
+        stats (G/B), delay_ns and delay_rms_ns (K), and scalar summaries.
+    """
+    return _run_tool(calsol_stats.run, params.caltable_path)
 
 
 # ---------------------------------------------------------------------------

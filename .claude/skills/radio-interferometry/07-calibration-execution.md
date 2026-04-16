@@ -103,10 +103,18 @@ ms_gaincal(
 )
 ```
 
-**After running:** solutions should show smooth phase variation with time and no
-antennas completely flagged. A single integration with a phase jump on one antenna
-is acceptable — do not re-solve. Phase RMS > 60° across integrations on most
-antennas suggests a problem with the source model or the data column.
+**Inspect G0 solutions:**
+```
+ms_calsol_stats(caltable_path = {WORKDIR}/initial_phase.G0)
+```
+
+| Field | Index | Threshold | Action if exceeded |
+|---|---|---|---|
+| `phase_rms_deg[ant, spw=0, field=0]` | all antennas | < 60° | > 60° on most antennas → suspect source model or data column; do not proceed |
+| `overall_flagged_frac` | scalar | < 0.15 | > 0.15 → check refant and CENTER_CHANNELS selection |
+| `antennas_lost` | list | empty or 1 | > 1 → note antenna names; re-examine flagging |
+
+A single integration with a phase jump on one antenna is acceptable — do not re-solve.
 
 ---
 
@@ -135,11 +143,19 @@ ms_gaincal(
 )
 ```
 
-**Inspect delay values:**
-- Delays relative to refant should be within ±30 ns for most arrays
-- VLA: typically within ±5 ns after a recent configuration change
-- Delays > ±50 ns on one antenna suggest a hardware or cabling problem — note in summary
-- Delays of ±200+ ns may indicate a polarization feed swap — escalate
+**Inspect K solutions:**
+```
+ms_calsol_stats(caltable_path = {WORKDIR}/delay.K)
+```
+
+| Field | Index | Threshold | Action if exceeded |
+|---|---|---|---|
+| `delay_ns[ant, spw, field=0, corr]` | all antennas | abs value < 30 ns | > 50 ns on one antenna → hardware or cabling problem; note in summary |
+| `delay_rms_ns[spw, field=0]` | all SPWs | < 10 ns | > 10 ns → delay solve may have failed on that SPW |
+| `overall_flagged_frac` | scalar | < 0.10 | > 0.10 → check WIDE_CHANNELS selection |
+
+VLA typically shows delays within ±5 ns after a recent configuration change.
+Delays of ±200+ ns on any antenna may indicate a polarization feed swap — escalate.
 
 ---
 
@@ -170,17 +186,19 @@ ms_bandpass(
 **interp note:** use `'nearest,nearestflag'` for the K table — linear interpolation
 of a delay solution makes no physical sense and creates artifacts at scan edges.
 
-**After running — quality gate:**
+**Inspect B solutions:**
+```
+ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B)
+```
 
-| Metric | Good | Warning | Action |
+| Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
-| Overall flagged fraction | < 0.10 | 0.10–0.20 | > 0.20 → loop to CALIBRATION_PREFLAG |
-| Antennas with no BP solutions | 0–1 | 2–3 | > 3 → check refant and bp_field selection |
-| Phase residuals after K removal | < 10° RMS | 10–30° | > 30° → delay solve may have failed |
+| `overall_flagged_frac` | scalar | < 0.10 | 0.10–0.20 → note; > 0.20 → loop to CALIBRATION_PREFLAG |
+| `n_antennas_lost` | scalar | ≤ 1 | 2–3 → check refant and bp_field; > 3 → hard stop |
+| `phase_rms_deg[ant, spw, field=bp_field_idx]` | all antennas | < 10° | 10–30° → warn; > 30° → delay solve likely failed; re-run Step 2 |
+| `amp_array[ant, spw, field=bp_field_idx, :]` | all antennas | smooth, ~1.0 | Large mid-band excursions → suspect antenna; edge roll-off is normal |
 
-BP amplitudes should be smooth and close to 1.0 across channels, with the same
-shape for both polarizations on a given antenna (within ~10%). Large amplitude
-excursions at band edges are normal — these channels will be edge-flagged later.
+Both polarizations on a given antenna should show the same amplitude shape within ~10%.
 
 ---
 
@@ -217,14 +235,25 @@ ms_gaincal(
 )
 ```
 
-**After running — quality gate:**
+---
 
-| Metric | Good | Warning | Action |
+## Step 5 — Inspect gain solutions
+
+```
+ms_calsol_stats(caltable_path = {WORKDIR}/gain.G)
+```
+
+The `gain.G` table contains solutions for both flux and phase calibrators. Use
+`field_names` from the output to identify which field index corresponds to each.
+
+| Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
-| Overall flagged fraction | < 0.08 | 0.08–0.15 | > 0.15 → loop to CALIBRATION_PREFLAG |
-| Antennas lost (no solutions) | 0–1 | 2–3 | > 3 → check data quality and refant |
-| Amplitude scatter per antenna | < 5% RMS | 5–15% | > 15% → suspect antenna or RFI |
-| Phase scatter per antenna | < 20° RMS | 20–45° | > 45° → ionospheric conditions or bad data |
+| `overall_flagged_frac` | scalar | < 0.08 | 0.08–0.15 → note; > 0.15 → loop to CALIBRATION_PREFLAG |
+| `n_antennas_lost` | scalar | ≤ 1 | > 3 → check data quality and refant |
+| `amp_std[ant, spw, field=flux_idx]` | flux cal | < 5% of `amp_mean` | > 15% → suspect antenna or RFI |
+| `phase_rms_deg[ant, spw, field=flux_idx]` | flux cal | < 20° | > 45° → ionospheric or bad data |
+| `amp_mean[ant, spw, field=flux_idx]` | flux cal | close to 1.0 | Large deviation → setjy model may be wrong |
+| `amp_mean[ant, spw, field=phase_idx]` | phase cal | systematically higher than flux cal | Expected — fluxscale will correct this |
 
 ---
 
