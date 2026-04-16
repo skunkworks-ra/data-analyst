@@ -9,7 +9,7 @@ output shape, flagged-fraction accounting, and the response envelope.
 from __future__ import annotations
 
 import math
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -32,7 +32,7 @@ def _make_tb(
     keywords: dict | None = None,
     getcol_side: dict | None = None,
     nrows: int = 0,
-    query_result: "MagicMock | None" = None,
+    query_result: MagicMock | None = None,
 ) -> MagicMock:
     """Build a mock table context manager."""
     tb = MagicMock()
@@ -220,14 +220,11 @@ class TestProcessSliceG:
     def _run(self, tmp_path, ant1, cparam, flag, snr):
         tbl = tmp_path / "gain.g"
         tbl.mkdir()
-        sub = _make_subtable(
-            nrows=len(ant1), ant1=ant1, cparam=cparam, flag=flag, snr=snr
-        )
+        sub = _make_subtable(nrows=len(ant1), ant1=ant1, cparam=cparam, flag=flag, snr=snr)
         tb = _make_tb(nrows=len(ant1), query_result=sub)
         with patch("ms_inspect.tools.calsol_stats.open_table", return_value=tb):
             return calsol_stats._process_slice(
-                str(tbl), spw=0, field=0,
-                ant_names=_ANT_NAMES, table_type="G", n_chan_max=1
+                str(tbl), spw=0, field=0, ant_names=_ANT_NAMES, table_type="G", n_chan_max=1
             )
 
     def test_all_antennas_present(self, tmp_path):
@@ -276,8 +273,7 @@ class TestProcessSliceG:
         tb = _make_tb(nrows=0, query_result=sub)
         with patch("ms_inspect.tools.calsol_stats.open_table", return_value=tb):
             result = calsol_stats._process_slice(
-                str(tbl), spw=0, field=0,
-                ant_names=_ANT_NAMES, table_type="G", n_chan_max=1
+                str(tbl), spw=0, field=0, ant_names=_ANT_NAMES, table_type="G", n_chan_max=1
             )
         assert result == {}
 
@@ -291,8 +287,7 @@ class TestProcessSliceG:
         tb = _make_tb(query_result=sub)
         with patch("ms_inspect.tools.calsol_stats.open_table", return_value=tb):
             calsol_stats._process_slice(
-                str(tbl), spw=0, field=0,
-                ant_names=_ANT_NAMES, table_type="G", n_chan_max=1
+                str(tbl), spw=0, field=0, ant_names=_ANT_NAMES, table_type="G", n_chan_max=1
             )
         sub.close.assert_called_once()
 
@@ -307,14 +302,11 @@ class TestProcessSliceB:
         tbl = tmp_path / "BP.b"
         tbl.mkdir()
         ant1, cparam, flag, snr = _b_table_data()
-        sub = _make_subtable(
-            nrows=_N_ANT, ant1=ant1, cparam=cparam, flag=flag, snr=snr
-        )
+        sub = _make_subtable(nrows=_N_ANT, ant1=ant1, cparam=cparam, flag=flag, snr=snr)
         tb = _make_tb(nrows=_N_ANT, query_result=sub)
         with patch("ms_inspect.tools.calsol_stats.open_table", return_value=tb):
             return calsol_stats._process_slice(
-                str(tbl), spw=0, field=0,
-                ant_names=_ANT_NAMES, table_type="B", n_chan_max=_N_CHAN_B
+                str(tbl), spw=0, field=0, ant_names=_ANT_NAMES, table_type="B", n_chan_max=_N_CHAN_B
             )
 
     def test_amp_array_length(self, tmp_path):
@@ -337,14 +329,12 @@ class TestProcessSliceB:
         flag_short = flag[:, :2, :]
         snr_short = snr[:, :2, :]
         sub = _make_subtable(
-            nrows=_N_ANT, ant1=ant1, cparam=cparam_short,
-            flag=flag_short, snr=snr_short
+            nrows=_N_ANT, ant1=ant1, cparam=cparam_short, flag=flag_short, snr=snr_short
         )
         tb = _make_tb(nrows=_N_ANT, query_result=sub)
         with patch("ms_inspect.tools.calsol_stats.open_table", return_value=tb):
             result = calsol_stats._process_slice(
-                str(tbl), spw=0, field=0,
-                ant_names=_ANT_NAMES, table_type="B", n_chan_max=4
+                str(tbl), spw=0, field=0, ant_names=_ANT_NAMES, table_type="B", n_chan_max=4
             )
         for a in range(_N_ANT):
             arr = result[a]["amp_array"]
@@ -364,14 +354,11 @@ class TestProcessSliceK:
         tbl = tmp_path / "delay.k"
         tbl.mkdir()
         ant1, fparam, flag, snr = _k_table_data()
-        sub = _make_subtable(
-            nrows=_N_ANT, ant1=ant1, fparam=fparam, flag=flag, snr=snr
-        )
+        sub = _make_subtable(nrows=_N_ANT, ant1=ant1, fparam=fparam, flag=flag, snr=snr)
         tb = _make_tb(nrows=_N_ANT, query_result=sub)
         with patch("ms_inspect.tools.calsol_stats.open_table", return_value=tb):
             return calsol_stats._process_slice(
-                str(tbl), spw=0, field=0,
-                ant_names=_ANT_NAMES, table_type="K", n_chan_max=1
+                str(tbl), spw=0, field=0, ant_names=_ANT_NAMES, table_type="K", n_chan_max=1
             )
 
     def test_delay_ns_shape(self, tmp_path):
@@ -391,14 +378,11 @@ class TestProcessSliceK:
         tbl.mkdir()
         ant1, fparam, flag, snr = _k_table_data()
         flag[:, :, 0] = True  # flag antenna 0
-        sub = _make_subtable(
-            nrows=_N_ANT, ant1=ant1, fparam=fparam, flag=flag, snr=snr
-        )
+        sub = _make_subtable(nrows=_N_ANT, ant1=ant1, fparam=fparam, flag=flag, snr=snr)
         tb = _make_tb(nrows=_N_ANT, query_result=sub)
         with patch("ms_inspect.tools.calsol_stats.open_table", return_value=tb):
             result = calsol_stats._process_slice(
-                str(tbl), spw=0, field=0,
-                ant_names=_ANT_NAMES, table_type="K", n_chan_max=1
+                str(tbl), spw=0, field=0, ant_names=_ANT_NAMES, table_type="K", n_chan_max=1
             )
         for corr in range(_N_CORR):
             assert math.isnan(result[0]["delay_ns"][corr][0])
@@ -425,9 +409,7 @@ def _patch_all_for_g(tbl_path, spw_ids=(0,), field_ids=(0, 1)):
             "FIELD_ID": np.array([0, 0, 0, 1, 1, 1]),
         }
     )
-    sub = _make_subtable(
-        nrows=_N_ANT * 3, ant1=ant1, cparam=cparam, flag=flag, snr=snr
-    )
+    sub = _make_subtable(nrows=_N_ANT * 3, ant1=ant1, cparam=cparam, flag=flag, snr=snr)
     slice_tb = _make_tb(nrows=_N_ANT * 3, query_result=sub)
 
     calls = []

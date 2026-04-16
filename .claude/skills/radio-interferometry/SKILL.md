@@ -9,7 +9,7 @@ allowed-tools: ms_observation_info, ms_field_list, ms_scan_list, ms_scan_intent_
                ms_shadowing_report, ms_antenna_flag_fraction,
                ms_refant, ms_verify_caltables, ms_rfi_channel_stats, ms_flag_summary,
                ms_pol_cal_feasibility, ms_online_flag_stats, ms_verify_priorcals,
-               ms_residual_stats, ms_calsol_stats,
+               ms_residual_stats, ms_calsol_stats, ms_calsol_plot,
                ms_set_intents, ms_initial_bandpass, ms_apply_rflag, ms_apply_preflag,
                ms_generate_priorcals, ms_setjy, ms_setjy_polcal, ms_apply_initial_rflag,
                ms_gaincal, ms_bandpass, ms_fluxscale, ms_applycal,

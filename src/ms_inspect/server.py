@@ -26,6 +26,7 @@ from ms_inspect import __version__
 from ms_inspect.exceptions import RadioMSError
 from ms_inspect.tools import (
     antennas,
+    calsol_plot,
     calsol_stats,
     caltables,
     fields,
@@ -224,6 +225,20 @@ class CalsolStatsInput(BaseModel):
     caltable_path: str = Field(
         ...,
         description="Path to CASA calibration table directory (e.g. gain.g, BP0.b, delay.k)",
+        min_length=1,
+    )
+
+
+class CalsolPlotInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    caltable_path: str = Field(
+        ...,
+        description="Path to CASA calibration table directory.",
+        min_length=1,
+    )
+    output_dir: str = Field(
+        ...,
+        description="Directory to write {name}_stats.npz and {name}_dashboard.html.",
         min_length=1,
     )
 
@@ -941,6 +956,35 @@ async def ms_calsol_stats(params: CalsolStatsInput) -> str:
         stats (G/B), delay_ns and delay_rms_ns (K), and scalar summaries.
     """
     return _run_tool(calsol_stats.run, params.caltable_path)
+
+
+@mcp.tool(
+    name="ms_calsol_plot",
+    annotations={
+        "title": "Calibration Solution Dashboard",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_calsol_plot(params: CalsolPlotInput) -> str:
+    """
+    Generate a Bokeh HTML dashboard and NPZ file from a CASA calibration table.
+
+    Calls ms_calsol_stats internally, saves raw arrays to {name}_stats.npz, and
+    writes a self-contained Bokeh dashboard to {name}_dashboard.html. Dashboard
+    layout adapts to table type: G (amplitude/phase per antenna), B (bandpass
+    spectrum per antenna), K (delay per antenna).
+
+    Args:
+        params.caltable_path: Path to the caltable directory.
+        params.output_dir:    Directory to write output files.
+
+    Returns:
+        JSON with npz_path, html_path, table_type, and axis dimensions.
+    """
+    return _run_tool(calsol_plot.run, params.caltable_path, params.output_dir)
 
 
 # ---------------------------------------------------------------------------
