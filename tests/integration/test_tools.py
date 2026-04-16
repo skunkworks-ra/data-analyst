@@ -617,3 +617,93 @@ class TestResidualStatsReal:
         result = run(_TEST_MS, field_id=0)
         assert result["status"] == "ok"
         assert "per_spw" in result["data"]
+
+
+@_SKIP
+class TestCalsolStatsReal:
+    """Integration tests for ms_calsol_stats against real caltables.
+
+    Requires RADIO_MCP_TEST_MS to point to an MS from which caltables have
+    already been produced (e.g. via ms_gaincal / ms_bandpass). Set
+    RADIO_MCP_TEST_CALTABLE to the path of a G or B table to run these tests.
+    """
+
+    def test_g_table_status_ok(self, tmp_path):
+        import os
+
+        caltable = os.environ.get("RADIO_MCP_TEST_CALTABLE")
+        if not caltable:
+            pytest.skip("RADIO_MCP_TEST_CALTABLE not set")
+        from ms_inspect.tools.calsol_stats import run
+
+        result = run(caltable)
+        assert result["status"] == "ok"
+
+    def test_g_table_has_expected_fields(self, tmp_path):
+        import os
+
+        caltable = os.environ.get("RADIO_MCP_TEST_CALTABLE")
+        if not caltable:
+            pytest.skip("RADIO_MCP_TEST_CALTABLE not set")
+        from ms_inspect.tools.calsol_stats import run
+
+        result = run(caltable)
+        d = result["data"]
+        assert "table_type" in d
+        assert "ant_names" in d
+        assert "flagged_frac" in d
+        assert "snr_mean" in d
+        assert d["n_antennas"]["value"] > 0
+
+    def test_flagged_frac_shape(self, tmp_path):
+        import os
+
+        caltable = os.environ.get("RADIO_MCP_TEST_CALTABLE")
+        if not caltable:
+            pytest.skip("RADIO_MCP_TEST_CALTABLE not set")
+        from ms_inspect.tools.calsol_stats import run
+
+        result = run(caltable)
+        d = result["data"]
+        n_ant = d["n_antennas"]["value"]
+        n_spw = d["n_spw"]["value"]
+        n_field = d["n_field"]["value"]
+        ff = d["flagged_frac"]["value"]
+        assert len(ff) == n_ant
+        assert len(ff[0]) == n_spw
+        assert len(ff[0][0]) == n_field
+
+
+@_SKIP
+class TestCalsolPlotReal:
+    """Integration tests for ms_calsol_plot against real caltables."""
+
+    def test_produces_html_and_npz(self, tmp_path):
+        import os
+
+        caltable = os.environ.get("RADIO_MCP_TEST_CALTABLE")
+        if not caltable:
+            pytest.skip("RADIO_MCP_TEST_CALTABLE not set")
+        from ms_inspect.tools.calsol_plot import run
+
+        result = run(caltable, str(tmp_path))
+        assert result["status"] == "ok"
+        from pathlib import Path
+
+        assert Path(result["data"]["html_path"]["value"]).exists()
+        assert Path(result["data"]["npz_path"]["value"]).exists()
+
+    def test_npz_loads_cleanly(self, tmp_path):
+        import os
+
+        caltable = os.environ.get("RADIO_MCP_TEST_CALTABLE")
+        if not caltable:
+            pytest.skip("RADIO_MCP_TEST_CALTABLE not set")
+        from ms_inspect.tools.calsol_plot import run
+
+        result = run(caltable, str(tmp_path))
+        import numpy as np
+
+        npz = np.load(result["data"]["npz_path"]["value"], allow_pickle=True)
+        assert "ant_names" in npz
+        assert "flagged_frac" in npz

@@ -139,7 +139,7 @@ def _build_g_dashboard(data: dict) -> object:
     for fi, (fname, color) in enumerate(zip(field_names, colors, strict=False)):
         if amp_mean is not None:
             y_amp = np.nanmean(amp_mean[:, :, fi], axis=1)
-            r = amp_fig.circle(
+            r = amp_fig.scatter(
                 x=ant_names,
                 y=y_amp.tolist(),
                 size=8,
@@ -159,7 +159,7 @@ def _build_g_dashboard(data: dict) -> object:
 
         if phase_rms is not None:
             y_ph = np.nanmean(phase_rms[:, :, fi], axis=1)
-            r = phase_fig.circle(
+            r = phase_fig.scatter(
                 x=ant_names,
                 y=y_ph.tolist(),
                 size=8,
@@ -281,7 +281,7 @@ def _build_k_dashboard(data: dict) -> object:
         for fi, (fname, color) in enumerate(zip(field_names, colors, strict=False)):
             # mean over SPW and corr axes
             y = np.nanmean(delay_ns[:, :, fi, :], axis=(1, 2))
-            r = delay_fig.circle(
+            r = delay_fig.scatter(
                 x=ant_names,
                 y=y.tolist(),
                 size=9,

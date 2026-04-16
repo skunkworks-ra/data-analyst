@@ -157,6 +157,13 @@ Environment variable reference:
 | `ms_shadowing_report` | `tools/shadowing.py` | `msmd.shadowedAntennas()` |
 | `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` parallel reads |
 
+### Calibration inspection (2 tools)
+
+| Tool | Module | What it does |
+|------|--------|-------------|
+| `ms_calsol_stats` | `tools/calsol_stats.py` | Per-(antenna, SPW, field) stats from G/B/K caltables — flagged fraction, SNR, amplitude/phase arrays, delays |
+| `ms_calsol_plot` | `tools/calsol_plot.py` | Bokeh HTML dashboard + NPZ from a caltable; calls `ms_calsol_stats` internally |
+
 ---
 
 ## Write utilities (ms_modify)
