@@ -18,6 +18,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from ms_inspect.exceptions import RadioMSError
 from ms_modify import (
     __version__,
+    applycal,
+    bandpass,
+    fluxscale,
+    gaincal,
     initial_bandpass,
     initial_rflag,
     intents,
@@ -716,6 +720,375 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
         params.freqdevscale,
         params.timecutoff,
         params.freqcutoff,
+        params.execute,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Input models — Gaincal / Bandpass / Fluxscale / Applycal
+# ---------------------------------------------------------------------------
+
+
+class GaincalInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the Measurement Set.", min_length=1)
+    field: str = Field(
+        ...,
+        description="CASA field selection (e.g. '3C147' or '3C147,J0555+3948').",
+        min_length=1,
+    )
+    spw: str = Field(default="", description="CASA SpW/channel selection (e.g. '0:5~58').")
+    caltable: str = Field(..., description="Output caltable path.", min_length=1)
+    workdir: str = Field(..., description="Existing directory for script output.", min_length=1)
+    gaintype: str = Field(
+        default="G",
+        description="'G' for complex gains, 'K' for delays.",
+    )
+    calmode: str = Field(
+        default="ap",
+        description="'p' phase-only, 'a' amp-only, 'ap' amplitude+phase.",
+    )
+    solint: str = Field(default="inf", description="Solution interval ('int', 'inf', or e.g. '60s').")
+    combine: str = Field(default="", description="Data axes to combine (e.g. 'scan').")
+    refant: str = Field(default="", description="Reference antenna name.")
+    minsnr: float = Field(default=3.0, description="Minimum SNR for a valid solution.", gt=0.0)
+    minblperant: int = Field(default=4, description="Minimum baselines per antenna.", ge=1)
+    solnorm: bool = Field(default=False, description="Normalise solutions to unit amplitude.")
+    gaintable: list[str] = Field(default_factory=list, description="Prior caltables to apply.")
+    interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
+    parang: bool = Field(default=True, description="Apply parallactic angle correction.")
+    execute: bool = Field(
+        default=False,
+        description="If False (default), write script and return. If True, run in-process.",
+    )
+
+
+class BandpassInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the Measurement Set.", min_length=1)
+    field: str = Field(..., description="CASA field selection for the bandpass calibrator.", min_length=1)
+    spw: str = Field(default="", description="CASA SpW selection (empty = all).")
+    caltable: str = Field(..., description="Output caltable path.", min_length=1)
+    workdir: str = Field(..., description="Existing directory for script output.", min_length=1)
+    solint: str = Field(default="inf", description="Solution interval (default 'inf').")
+    combine: str = Field(default="scan", description="Data axes to combine (default 'scan').")
+    refant: str = Field(default="", description="Reference antenna name.")
+    minsnr: float = Field(default=3.0, description="Minimum SNR threshold.", gt=0.0)
+    minblperant: int = Field(default=4, description="Minimum baselines per antenna.", ge=1)
+    fillgaps: int = Field(
+        default=0,
+        description=(
+            "Fill flagged channels up to this width by interpolation. "
+            "Default 0 (no filling) for the final bandpass. "
+            "Use 62 only for the initial coarse bandpass (ms_initial_bandpass)."
+        ),
+        ge=0,
+    )
+    solnorm: bool = Field(default=False, description="Normalise solutions to unit amplitude.")
+    gaintable: list[str] = Field(default_factory=list, description="Prior caltables to apply.")
+    interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
+    parang: bool = Field(default=True, description="Apply parallactic angle correction.")
+    execute: bool = Field(
+        default=False,
+        description="If False (default), write script and return. If True, run in-process.",
+    )
+
+
+class FluxscaleInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the Measurement Set.", min_length=1)
+    caltable: str = Field(
+        ...,
+        description="Input gain table containing solutions for all calibrators.",
+        min_length=1,
+    )
+    fluxtable: str = Field(..., description="Output path for the flux-scaled gain table.", min_length=1)
+    reference: str = Field(..., description="Field name of the primary flux calibrator.", min_length=1)
+    transfer: list[str] = Field(
+        ...,
+        description="List of field names whose flux densities are to be derived.",
+        min_length=1,
+    )
+    workdir: str = Field(..., description="Existing directory for script output.", min_length=1)
+    incremental: bool = Field(
+        default=False,
+        description=(
+            "If False (default), fluxtable replaces caltable at applycal. "
+            "If True, fluxtable is used in addition to caltable."
+        ),
+    )
+    execute: bool = Field(
+        default=False,
+        description="If False (default), write script and return. If True, run in-process.",
+    )
+
+
+class ApplycalInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the Measurement Set.", min_length=1)
+    field: str = Field(..., description="CASA field selection to apply calibration to.", min_length=1)
+    gaintable: list[str] = Field(..., description="Ordered list of caltable paths to apply.")
+    workdir: str = Field(..., description="Existing directory for script output.", min_length=1)
+    gainfield: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Per-table field selection for which solutions to use. "
+            "Default: all solutions in each table. "
+            "Set to the calibrator field name for the gain/fluxtable entry."
+        ),
+    )
+    interp: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Per-table interpolation mode. "
+            "Use 'nearest' for calibrators, 'linear' for target, "
+            "'nearest,nearestflag' for delay (K) tables."
+        ),
+    )
+    calwt: bool = Field(
+        default=False,
+        description=(
+            "Calibrate the weights. Default False — VLA weights are not properly "
+            "normalised; use statwt before imaging instead."
+        ),
+    )
+    applymode: str = Field(
+        default="calflagstrict",
+        description=(
+            "'calflagstrict' flags data with missing solutions (recommended). "
+            "'calonly' applies without additional flagging."
+        ),
+    )
+    parang: bool = Field(default=True, description="Apply parallactic angle correction.")
+    flagbackup: bool = Field(
+        default=False,
+        description="Save a flag backup before applying. Set True for the first applycal call.",
+    )
+    execute: bool = Field(
+        default=False,
+        description="If False (default), write script and return. If True, run in-process.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tools — Gaincal / Bandpass / Fluxscale / Applycal
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="ms_gaincal",
+    annotations={
+        "title": "Gain Calibration",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_gaincal(params: GaincalInput) -> str:
+    """
+    Solve for antenna-based gain calibration solutions.
+
+    Covers three use cases via gaintype and calmode:
+      gaintype='K'             → delay solutions (one per antenna per SPW)
+      gaintype='G', calmode='p'  → phase-only (initial phase prior to bandpass)
+      gaintype='G', calmode='ap' → amplitude+phase (final gain calibration)
+
+    Always sets parang=True. Writes a self-contained script to workdir when
+    execute=False (default). Hard fails if the caltable is not produced.
+
+    Args:
+        params.ms_path:      Path to the Measurement Set.
+        params.field:        CASA field selection (all cal fields for gain solve).
+        params.spw:          SpW/channel selection.
+        params.caltable:     Output caltable path.
+        params.workdir:      Existing directory for script output.
+        params.gaintype:     'G' or 'K'.
+        params.calmode:      'p', 'a', or 'ap'.
+        params.solint:       Solution interval.
+        params.combine:      Data axes to combine (use 'scan' for delay solve).
+        params.refant:       Reference antenna.
+        params.gaintable:    Prior caltables to apply on-the-fly.
+        params.interp:       Interpolation mode per gaintable.
+        params.execute:      Generate script only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, caltable, gaintype, calmode, solint, refant.
+    """
+    return _run_tool(
+        gaincal.run,
+        params.ms_path,
+        params.field,
+        params.spw,
+        params.caltable,
+        params.workdir,
+        params.gaintype,
+        params.calmode,
+        params.solint,
+        params.combine,
+        params.refant,
+        params.minsnr,
+        params.minblperant,
+        params.solnorm,
+        params.gaintable,
+        params.interp,
+        params.parang,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_bandpass",
+    annotations={
+        "title": "Bandpass Calibration",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_bandpass(params: BandpassInput) -> str:
+    """
+    Solve for the complex bandpass calibration (channel-by-channel gains).
+
+    This is the final bandpass solve run after RFI flagging is complete.
+    Distinct from ms_initial_bandpass which is used to generate CORRECTED
+    for rflag. Use gaintable to apply the prior delay (K) and initial
+    phase (G0) solutions on-the-fly during the solve.
+
+    Args:
+        params.ms_path:      Path to the Measurement Set.
+        params.field:        Bandpass calibrator field selection.
+        params.spw:          SpW selection (empty = all).
+        params.caltable:     Output caltable path.
+        params.workdir:      Existing directory for script output.
+        params.solint:       Solution interval (default 'inf').
+        params.combine:      Data axes to combine (default 'scan').
+        params.refant:       Reference antenna.
+        params.fillgaps:     Fill flagged channels up to this width (default 0).
+        params.gaintable:    Prior caltables (include G0 and K).
+        params.interp:       Interpolation mode per gaintable.
+        params.execute:      Generate script only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, caltable, solint, combine, refant, fillgaps.
+    """
+    return _run_tool(
+        bandpass.run,
+        params.ms_path,
+        params.field,
+        params.spw,
+        params.caltable,
+        params.workdir,
+        params.solint,
+        params.combine,
+        params.refant,
+        params.minsnr,
+        params.minblperant,
+        params.fillgaps,
+        params.solnorm,
+        params.gaintable,
+        params.interp,
+        params.parang,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_fluxscale",
+    annotations={
+        "title": "Flux Scale Bootstrap",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_fluxscale(params: FluxscaleInput) -> str:
+    """
+    Bootstrap the flux density scale from a primary to secondary calibrators.
+
+    Reads the gain table produced by ms_gaincal (containing solutions for all
+    calibrator fields), computes the amplitude ratio between reference and
+    transfer fields, and writes a new fluxtable with properly-scaled solutions.
+    Use the fluxtable (not the original gain table) in ms_applycal.
+
+    Args:
+        params.ms_path:    Path to the Measurement Set.
+        params.caltable:   Input gain table with all calibrator solutions.
+        params.fluxtable:  Output flux-scaled gain table path.
+        params.reference:  Primary flux calibrator field name.
+        params.transfer:   Secondary calibrator field names to rescale.
+        params.workdir:    Existing directory for script output.
+        params.incremental: If False (default), fluxtable replaces caltable.
+        params.execute:    Generate script only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, fluxtable, derived_flux_jy per field per SPW.
+    """
+    return _run_tool(
+        fluxscale.run,
+        params.ms_path,
+        params.caltable,
+        params.fluxtable,
+        params.reference,
+        params.transfer,
+        params.workdir,
+        params.incremental,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_applycal",
+    annotations={
+        "title": "Apply Calibration",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_applycal(params: ApplycalInput) -> str:
+    """
+    Apply calibration tables to a field and write CORRECTED_DATA.
+
+    Call once per field category with appropriate gainfield and interp:
+      Flux cal:   gainfield=[..., flux_field],  interp=[..., 'nearest']
+      Phase cal:  gainfield=[..., phase_field], interp=[..., 'nearest']
+      Target:     gainfield=[..., phase_field], interp=[..., 'linear']
+
+    Uses applymode='calflagstrict' by default — data with missing solutions
+    are flagged rather than left uncorrected. Set calwt=False for VLA data.
+
+    Args:
+        params.ms_path:    Path to the Measurement Set.
+        params.field:      Field to apply calibration to.
+        params.gaintable:  Ordered list of caltables (priorcals + K + B + fluxtable).
+        params.workdir:    Existing directory for script output.
+        params.gainfield:  Per-table field selection for solution rows.
+        params.interp:     Per-table interpolation mode.
+        params.calwt:      Calibrate weights (default False for VLA).
+        params.applymode:  'calflagstrict' (default) or 'calonly'.
+        params.parang:     Parallactic angle correction (default True).
+        params.flagbackup: Save flag backup first (default False).
+        params.execute:    Generate script only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, corrected_written, field, n_tables, applymode.
+    """
+    return _run_tool(
+        applycal.run,
+        params.ms_path,
+        params.field,
+        params.gaintable,
+        params.workdir,
+        params.gainfield or None,
+        params.interp or None,
+        params.calwt,
+        params.applymode,
+        params.parang,
+        params.flagbackup,
         params.execute,
     )
 

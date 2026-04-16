@@ -23,6 +23,30 @@ class InitialBandpassFailedError(RadioMSError):
     error_type = "INITIAL_BANDPASS_FAILED"
 
 
+class GaincalFailedError(RadioMSError):
+    """Raised when gaincal fails to produce the expected caltable."""
+
+    error_type = "GAINCAL_FAILED"
+
+
+class BandpassFailedError(RadioMSError):
+    """Raised when bandpass fails to produce the expected caltable."""
+
+    error_type = "BANDPASS_FAILED"
+
+
+class FluxscaleFailedError(RadioMSError):
+    """Raised when fluxscale fails to produce the expected fluxtable."""
+
+    error_type = "FLUXSCALE_FAILED"
+
+
+class ApplycalFailedError(RadioMSError):
+    """Raised when applycal raises an exception during in-process execution."""
+
+    error_type = "APPLYCAL_FAILED"
+
+
 class SlurmNotAvailableError(RadioMSError):
     """Raised when sbatch is not found on PATH."""
 
