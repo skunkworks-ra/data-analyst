@@ -42,3 +42,4 @@ decide what the numbers mean and what to do next.
 @.claude/skills/radio-interferometry/07-calibration-execution.md
 @.claude/skills/radio-interferometry/08-pband-specifics.md
 @.claude/skills/radio-interferometry/09-polcal-execution.md
+@.claude/skills/radio-interferometry/10-precal-workflow.md

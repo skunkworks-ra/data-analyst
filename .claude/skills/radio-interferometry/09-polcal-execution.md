@@ -14,6 +14,35 @@ Prerequisites:
 
 ---
 
+## Feasibility gate — read before proceeding
+
+Always run `ms_pol_cal_feasibility` before any polarisation calibration step.
+The verdict determines which steps are possible.
+
+| Verdict | Meaning | Action |
+|---------|---------|--------|
+| `FULL` | Angle calibrator present + PA coverage meets threshold | Proceed through all steps (1–5) |
+| `LEAKAGE_ONLY` | No angle calibrator, but PA coverage sufficient for D-terms | Skip Steps 1 and 4 (no setjy_polcal, no Xf solve); proceed with Steps 2–3 and 5 |
+| `DEGRADED` | Angle calibrator present but flagged as variable or in active flare | Proceed with caution; annotate all outputs with the variability warning; check `variability_note` field for source and dates |
+| `NOT_FEASIBLE` | No pol calibrators found, or PA spread below threshold | Do not proceed; report `blocker` field verbatim in the summary |
+
+**For `LEAKAGE_ONLY`:** D-term solutions will correct instrumental leakage but
+the absolute position angle of the polarisation will be uncalibrated. Science
+targets requiring absolute EVPA accuracy cannot use this dataset for that purpose.
+Document this constraint explicitly.
+
+**For `DEGRADED`:** The specific flaring sources and affected bands are encoded
+in `variability_note`. If the observation predates the flare period by > 6 months,
+the degradation may be negligible — note the observation date and the flare dates.
+
+**PA spread threshold:** The default threshold is 60°. The `meets_threshold`
+field in the response tells you whether the observed spread meets it. If
+`pa_spread_deg` is between 45° and 60° and the source is bright, a D-term
+solve may still succeed — use `poltype='Df+QU'` which is more robust at lower
+PA coverage. Document the reduced coverage in the output summary.
+
+---
+
 ## Step 1 — Set the polarisation calibrator model
 
 Before any polcal solve, populate the MODEL column for the angle calibrator:
