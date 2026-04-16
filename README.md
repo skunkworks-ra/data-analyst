@@ -1,4 +1,4 @@
-# data-analyst
+# radio-analyst
 
 MCP servers, skills, and slash commands for AI-assisted radio interferometric
 data reduction. Targets VLA/JVLA/EVLA, MeerKAT, and uGMRT observations stored
@@ -16,64 +16,36 @@ Built on [casatools](https://casa.nrao.edu/) and the
 
 ## Installation
 
-### Prerequisites
+### Claude Code plugin (recommended)
 
-Install [pixi](https://prefix.dev) and set up the environment:
-
-```bash
-pixi install
-pixi run pip install casatools casatasks
-```
-
-### Option A — Claude Code plugin (recommended)
-
-Installs both MCP servers, skills, and slash commands:
+Installs both MCP servers, skills, and slash commands in two commands:
 
 ```bash
 # Register the marketplace (once per machine)
-claude plugin marketplace add https://github.com/skunkworks-ra/data-analyst --scope user
+claude plugin marketplace add https://github.com/skunkworks-ra/radio-analyst
 
 # Install the plugin
-claude plugin install ms-inspect@data-analyst --scope user
+claude plugin install radio-analyst@radio-analyst
 ```
 
 After install, the `ms-inspect` and `ms-modify` MCP servers are registered
 globally, and the `/inspect` and `/simulate` commands are available in all
-projects.
-
-### Option B — Claude Code (manual MCP only, no skills)
-
-Register only the MCP servers (skills and commands not included):
-
-```bash
-pixi install && pixi run pip install casatools casatasks
-
-# Read-only inspection server
-claude mcp add --scope user --transport stdio ms-inspect -- \
-  pixi run --manifest-path /path/to/data-analyst/pixi.toml serve
-
-# Modification server (optional)
-claude mcp add --scope user --transport stdio ms-modify -- \
-  pixi run --manifest-path /path/to/data-analyst/pixi.toml serve-modify
-```
-
-Scope options:
-- `--scope user` — persists in `~/.claude.json`, available in all projects
-- `--scope project` — persists in `.claude/mcp.json`, shared via git
-- `--scope local` — persists in `.claude/.mcp.local.json`, project-only, not committed
+projects. CASA tools are installed automatically on first use (~500 MB,
+Linux x86_64 and macOS arm64 only).
 
 To remove:
 
 ```bash
-claude mcp remove --scope user ms-inspect
-claude mcp remove --scope user ms-modify
+claude plugin uninstall radio-analyst@radio-analyst
 ```
 
-### Option C — Claude Desktop and other MCP clients (HTTP transport)
+### Claude Desktop and other MCP clients (HTTP transport)
 
-Start the servers in HTTP mode:
+Clone the repo, install the environment, then start the servers in HTTP mode:
 
 ```bash
+git clone https://github.com/skunkworks-ra/radio-analyst.git
+cd radio-analyst
 pixi install && pixi run pip install casatools casatasks
 
 # Inspection server (port 8000)
@@ -90,29 +62,17 @@ Add to your Claude Desktop `claude_desktop_config.json`:
   "mcpServers": {
     "ms-inspect": {
       "command": "pixi",
-      "args": ["run", "--manifest-path", "/path/to/data-analyst/pixi.toml", "serve-http"]
+      "args": ["run", "--manifest-path", "/path/to/radio-analyst/pixi.toml", "serve-http"]
     },
     "ms-modify": {
       "command": "pixi",
-      "args": ["run", "--manifest-path", "/path/to/data-analyst/pixi.toml", "serve-modify-http"]
+      "args": ["run", "--manifest-path", "/path/to/radio-analyst/pixi.toml", "serve-modify-http"]
     }
   }
 }
 ```
 
-For any MCP-compatible client (LangGraph, AutoGen, etc.) — point at
-`http://localhost:8000/sse` or `http://localhost:8000/mcp/v1` (streamable HTTP).
-
-### Option D — pip install (no pixi)
-
-```bash
-pip install ms-inspect[casa]
-ms-inspect  # starts the stdio inspection server
-ms-modify   # starts the stdio modification server
-```
-
-> **Note:** casatools wheels are platform-specific (Linux x86_64, macOS arm64).
-> If your platform is not supported, use the pixi path above.
+For any MCP-compatible client — point at `http://localhost:8000/mcp` (streamable HTTP).
 
 ---
 

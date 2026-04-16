@@ -1,28 +1,29 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "data-analyst",
+  "name": "radio-analyst",
   "description": "Radio interferometric Measurement Set inspector — MCP tools and skills for VLA/MeerKAT/uGMRT",
   "metadata": {
     "description": "Radio interferometric Measurement Set inspector — MCP tools and skills for VLA/MeerKAT/uGMRT"
   },
   "owner": {
-    "name": "ms-inspect contributors",
+    "name": "Srikrishna Sekhar and Preshanth Jagannathan",
     "email": ""
   },
   "plugins": [
     {
-      "name": "ms-inspect",
+      "name": "radio-analyst",
       "description": "Radio interferometric Measurement Set inspector — MCP tools + skills for VLA/MeerKAT/uGMRT",
       "version": "0.1.0",
-      "author": {
-        "name": "ms-inspect contributors"
-      },
+      "authors": [
+        { "name": "Srikrishna Sekhar" },
+        { "name": "Preshanth Jagannathan" }
+      ],
       "source": {
         "source": "url",
-        "url": "https://github.com/skunkworks-ra/data-analyst.git"
+        "url": "https://github.com/skunkworks-ra/radio-analyst.git"
       },
       "category": "development",
-      "homepage": "https://github.com/skunkworks-ra/data-analyst"
+      "homepage": "https://github.com/skunkworks-ra/radio-analyst"
     }
   ]
 }

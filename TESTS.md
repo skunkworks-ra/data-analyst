@@ -48,7 +48,7 @@ as a marketplace once, then install the plugin from it.
 
 ```bash
 # Step 1 — register the repo as a marketplace (once per machine)
-claude plugin marketplace add https://github.com/skunkworks-ra/data-analyst --scope user
+claude plugin marketplace add https://github.com/skunkworks-ra/radio-analyst
 
 # Step 2 — install the plugin
 claude plugin install ms-inspect --scope user
