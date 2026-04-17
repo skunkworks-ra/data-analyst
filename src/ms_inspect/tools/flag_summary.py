@@ -71,9 +71,10 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
     # ------------------------------------------------------------------
     # Extract top-level total
     # ------------------------------------------------------------------
-    total_block = summary.get("total", {})
-    total_flagged = int(total_block.get("flagged", 0))
-    total_count = int(total_block.get("total", 0))
+    # flagdata summary returns 'total' as a flat float (total visibility count)
+    # and 'flagged' as a flat float at the top level.
+    total_count = int(summary.get("total", 0))
+    total_flagged = int(summary.get("flagged", 0))
     total_frac = total_flagged / total_count if total_count > 0 else 0.0
 
     # ------------------------------------------------------------------

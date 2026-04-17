@@ -258,7 +258,7 @@ def run(caltable_path: str) -> dict:
     n_chan_max = 1
     if table_type == "B":
         with open_table(caltable_path) as tb:
-            sub0 = tb.query(f"SPECTRAL_WINDOW_ID == {spw_ids[0]}", limitrow=1)
+            sub0 = tb.query(f"SPECTRAL_WINDOW_ID == {spw_ids[0]}")
             try:
                 if sub0.nrows() > 0:
                     n_chan_max = sub0.getcol("CPARAM").shape[1]
@@ -268,7 +268,7 @@ def run(caltable_path: str) -> dict:
         n_chan_max_global = n_chan_max
         for spw in spw_ids[1:]:
             with open_table(caltable_path) as tb:
-                sub = tb.query(f"SPECTRAL_WINDOW_ID == {spw}", limitrow=1)
+                sub = tb.query(f"SPECTRAL_WINDOW_ID == {spw}")
                 try:
                     if sub.nrows() > 0:
                         nc = sub.getcol("CPARAM").shape[1]
