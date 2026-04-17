@@ -200,8 +200,15 @@ def run(
             field_name = fdata.get("fieldName", fid)
             spw_fluxes: dict[str, float] = {}
             for key, val in fdata.items():
-                if key in ("fieldName", "fitFluxd", "fitFluxdErr", "fitRefFreq",
-                           "spidx", "spidxerr", "covarMat"):
+                if key in (
+                    "fieldName",
+                    "fitFluxd",
+                    "fitFluxdErr",
+                    "fitRefFreq",
+                    "spidx",
+                    "spidxerr",
+                    "covarMat",
+                ):
                     continue
                 if isinstance(val, dict) and "fluxd" in val:
                     try:
@@ -228,7 +235,9 @@ def run(
             "reference": reference,
             "transfer": transfer,
             "incremental": incremental,
-            "derived_flux_jy": fmt_field(derived) if derived else fmt_field(
+            "derived_flux_jy": fmt_field(derived)
+            if derived
+            else fmt_field(
                 None, flag="PARTIAL", note="fluxscale returned no parseable flux densities"
             ),
         },

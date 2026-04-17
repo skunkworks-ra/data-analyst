@@ -748,7 +748,9 @@ class GaincalInput(BaseModel):
         default="ap",
         description="'p' phase-only, 'a' amp-only, 'ap' amplitude+phase.",
     )
-    solint: str = Field(default="inf", description="Solution interval ('int', 'inf', or e.g. '60s').")
+    solint: str = Field(
+        default="inf", description="Solution interval ('int', 'inf', or e.g. '60s')."
+    )
     combine: str = Field(default="", description="Data axes to combine (e.g. 'scan').")
     refant: str = Field(default="", description="Reference antenna name.")
     minsnr: float = Field(default=3.0, description="Minimum SNR for a valid solution.", gt=0.0)
@@ -766,7 +768,9 @@ class GaincalInput(BaseModel):
 class BandpassInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to the Measurement Set.", min_length=1)
-    field: str = Field(..., description="CASA field selection for the bandpass calibrator.", min_length=1)
+    field: str = Field(
+        ..., description="CASA field selection for the bandpass calibrator.", min_length=1
+    )
     spw: str = Field(default="", description="CASA SpW selection (empty = all).")
     caltable: str = Field(..., description="Output caltable path.", min_length=1)
     workdir: str = Field(..., description="Existing directory for script output.", min_length=1)
@@ -802,8 +806,12 @@ class FluxscaleInput(BaseModel):
         description="Input gain table containing solutions for all calibrators.",
         min_length=1,
     )
-    fluxtable: str = Field(..., description="Output path for the flux-scaled gain table.", min_length=1)
-    reference: str = Field(..., description="Field name of the primary flux calibrator.", min_length=1)
+    fluxtable: str = Field(
+        ..., description="Output path for the flux-scaled gain table.", min_length=1
+    )
+    reference: str = Field(
+        ..., description="Field name of the primary flux calibrator.", min_length=1
+    )
     transfer: list[str] = Field(
         ...,
         description="List of field names whose flux densities are to be derived.",
@@ -826,7 +834,9 @@ class FluxscaleInput(BaseModel):
 class ApplycalInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to the Measurement Set.", min_length=1)
-    field: str = Field(..., description="CASA field selection to apply calibration to.", min_length=1)
+    field: str = Field(
+        ..., description="CASA field selection to apply calibration to.", min_length=1
+    )
     gaintable: list[str] = Field(..., description="Ordered list of caltable paths to apply.")
     workdir: str = Field(..., description="Existing directory for script output.", min_length=1)
     gainfield: list[str] = Field(
