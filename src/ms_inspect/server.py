@@ -43,6 +43,7 @@ from ms_inspect.tools import (
     scans,
     shadowing,
     spectral,
+    verify_import,
 )
 
 # ---------------------------------------------------------------------------
@@ -170,6 +171,16 @@ class OnlineFlagStatsInput(BaseModel):
     flag_file: str = Field(
         ...,
         description="Path to the .flagonline.txt file produced by importasdm.",
+        min_length=1,
+    )
+
+
+class VerifyImportInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Expected path to the output MS directory.", min_length=1)
+    online_flag_file: str = Field(
+        ...,
+        description="Expected path to the .flagonline.txt file.",
         min_length=1,
     )
 
@@ -985,6 +996,35 @@ async def ms_calsol_plot(params: CalsolPlotInput) -> str:
         JSON with npz_path, html_path, table_type, and axis dimensions.
     """
     return _run_tool(calsol_plot.run, params.caltable_path, params.output_dir)
+
+
+@mcp.tool(
+    name="ms_verify_import",
+    annotations={
+        "title": "Verify ASDM Import",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_verify_import(params: VerifyImportInput) -> str:
+    """
+    Verify that ms_import_asdm completed successfully.
+
+    Checks that the output MS exists and contains a table.info file,
+    and that the online flag file exists and is non-empty.
+    No CASA dependency — pure filesystem checks.
+
+    Args:
+        params.ms_path:          Expected path to the output MS directory.
+        params.online_flag_file: Expected path to the .flagonline.txt file.
+
+    Returns:
+        JSON with ms_exists, ms_valid, flag_file_exists,
+        flag_file_n_commands, and ready_for_preflag.
+    """
+    return _run_tool(verify_import.run, params.ms_path, params.online_flag_file)
 
 
 # ---------------------------------------------------------------------------
