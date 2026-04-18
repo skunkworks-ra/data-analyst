@@ -26,7 +26,7 @@ from ms_inspect.util.formatting import response_envelope
 TOOL_NAME = "ms_flag_summary"
 
 
-def run(ms_path: str, field: str = "", spw: str = "") -> dict:
+def run(ms_path: str, field: str = "", spw: str = "", include_per_scan: bool = False) -> dict:
     """
     Return a complete flag statistics summary for the MS.
 
@@ -34,9 +34,13 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
     per-scan, per-SpW, per-antenna, and total flag fractions.
 
     Args:
-        ms_path: Path to the Measurement Set.
-        field:   CASA field selection (empty = all).
-        spw:     CASA SpW selection (empty = all).
+        ms_path:          Path to the Measurement Set.
+        field:            CASA field selection (empty = all).
+        spw:              CASA SpW selection (empty = all).
+        include_per_scan: If True, return the full per-scan list. Default False
+                          returns a compact scan summary (min/max/mean flag fraction
+                          + list of fully-flagged scan IDs only). Use True only
+                          when diagnosing a specific scan-level problem.
 
     This is read-only. No data is modified.
     """
@@ -130,22 +134,48 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
         )
 
     # ------------------------------------------------------------------
-    # Per-scan breakdown (abbreviated — scan count can be large)
+    # Per-scan breakdown
+    # Full list only when include_per_scan=True; otherwise compact summary.
+    # Compact form avoids 16K+ token responses for long observations.
     # ------------------------------------------------------------------
-    per_scan = []
+    raw_scan_fracs: list[float] = []
+    fully_flagged_scans: list[int] = []
+    per_scan_full: list[dict] = []
+
     for scan_str, scan_data in summary.get("scan", {}).items():
         n_flagged = int(scan_data.get("flagged", 0))
         n_total = int(scan_data.get("total", 0))
         frac = n_flagged / n_total if n_total > 0 else 0.0
-        per_scan.append(
-            {
-                "scan": int(scan_str),
-                "flag_fraction": round(frac, 4),
-                "n_flagged": n_flagged,
-                "n_total": n_total,
-            }
-        )
-    per_scan.sort(key=lambda x: x["scan"])
+        raw_scan_fracs.append(frac)
+        if frac >= 1.0:
+            fully_flagged_scans.append(int(scan_str))
+        if include_per_scan:
+            per_scan_full.append(
+                {
+                    "scan": int(scan_str),
+                    "flag_fraction": round(frac, 4),
+                    "n_flagged": n_flagged,
+                    "n_total": n_total,
+                }
+            )
+
+    if include_per_scan:
+        per_scan_full.sort(key=lambda x: x["scan"])
+
+    fully_flagged_scans.sort()
+
+    scan_summary = fmt_field(
+        {
+            "n_scans": len(raw_scan_fracs),
+            "min_flag_fraction": round(min(raw_scan_fracs), 4) if raw_scan_fracs else None,
+            "max_flag_fraction": round(max(raw_scan_fracs), 4) if raw_scan_fracs else None,
+            "mean_flag_fraction": (
+                round(sum(raw_scan_fracs) / len(raw_scan_fracs), 4) if raw_scan_fracs else None
+            ),
+            "n_fully_flagged": len(fully_flagged_scans),
+            "fully_flagged_scan_ids": fully_flagged_scans,
+        }
+    )
 
     # Warn on any fully-flagged entities
     for ent in per_antenna:
@@ -154,17 +184,24 @@ def run(ms_path: str, field: str = "", spw: str = "") -> dict:
     for ent in per_spw:
         if ent["flag_fraction"]["value"] >= 1.0:
             warnings.append(f"SpW {ent['spw_id']} is 100% flagged.")
+    if fully_flagged_scans:
+        warnings.append(
+            f"{len(fully_flagged_scans)} scan(s) are 100% flagged: {fully_flagged_scans}"
+        )
 
-    data = {
+    data: dict = {
         "total_flag_fraction": fmt_field(round(total_frac, 6)),
         "total_flagged": total_flagged,
         "total_visibilities": total_count,
         "per_field": per_field,
         "per_spw": per_spw,
         "per_antenna": per_antenna,
-        "per_scan": per_scan,
+        "scan_summary": scan_summary,
         "flagdata_version": summary.get("flagversion", fmt_field(None, "UNAVAILABLE")),
     }
+
+    if include_per_scan:
+        data["per_scan"] = per_scan_full
 
     return response_envelope(
         tool_name=TOOL_NAME,

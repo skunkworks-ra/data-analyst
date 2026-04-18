@@ -196,7 +196,8 @@ Environment variable reference:
 | `ms_elevation_vs_time` | `tools/geometry.py` | astropy AltAz (not CASA measures) |
 | `ms_parallactic_angle_vs_time` | `tools/geometry.py` | astropy LST + atan2 |
 | `ms_shadowing_report` | `tools/shadowing.py` | `msmd.shadowedAntennas()` |
-| `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` parallel reads |
+| `ms_flag_preflight` | `tools/flags.py` | Fast probe: row count, FLAG shape, data volume, runtime estimate, recommended workers |
+| `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` adaptive parallel reads; accepts `n_workers` override |
 
 ### Calibration inspection (2 tools)
 

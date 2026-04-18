@@ -22,6 +22,7 @@ ms_online_flag_stats(flag_file)          → assess online flags before applying
 ms_apply_preflag(execute=False, ...)     → generate preflag.py + preflag_cmds.txt
   → run preflag.py as background job; wait for completion however long it takes
 ms_flag_summary(calibrators.ms)          → establish baseline flag fraction
+                                           (do NOT run in parallel with ms_antenna_flag_fraction)
 
 ms_generate_priorcals(execute=False)     → generate priorcals.py
   → run priorcals.py as background job; wait for completion however long it takes

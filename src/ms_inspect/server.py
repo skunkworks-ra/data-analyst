@@ -164,6 +164,29 @@ class FlagSummaryInput(BaseModel):
     ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
     field: str = Field(default="", description="CASA field selection (empty = all).")
     spw: str = Field(default="", description="CASA SpW selection (empty = all).")
+    include_per_scan: bool = Field(
+        default=False,
+        description=(
+            "If True, include the full per-scan flag list. Default False returns a "
+            "compact scan summary (min/max/mean + fully-flagged scan IDs only). "
+            "Use True only when diagnosing a specific scan-level problem."
+        ),
+    )
+
+
+class AntennaFlagFractionInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
+    n_workers: int | None = Field(
+        default=None,
+        description=(
+            "Worker count for parallel FLAG reads. If omitted, computed adaptively "
+            "from row count (call ms_flag_preflight first to get the recommendation). "
+            "Pass 1 to force single-process."
+        ),
+        ge=1,
+        le=8,
+    )
 
 
 class OnlineFlagStatsInput(BaseModel):
@@ -614,6 +637,38 @@ async def ms_shadowing_report(params: ShadowingInput) -> str:
 
 
 @mcp.tool(
+    name="ms_flag_preflight",
+    annotations={
+        "title": "Flag Column Preflight Probe",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_flag_preflight(params: MSPathInput) -> str:
+    """
+    Fast pre-flight probe for the FLAG column — no data read, completes in seconds.
+
+    Call this BEFORE ms_antenna_flag_fraction to:
+    - Estimate wall-clock runtime and data volume
+    - Get the recommended worker count to pass as n_workers
+    - Decide whether to warn the user before committing to a long read
+
+    A warning is added to the response if estimated_runtime_min > 10.
+
+    Args:
+        params.ms_path: Path to the Measurement Set.
+
+    Returns:
+        JSON with n_rows, flag_col_shape, n_spw, data_volume_gb,
+        estimated_runtime_s, estimated_runtime_min, recommended_workers,
+        will_parallelize.
+    """
+    return _run_tool(flags.run_preflight, params.ms_path)
+
+
+@mcp.tool(
     name="ms_antenna_flag_fraction",
     annotations={
         "title": "Antenna Flag Fraction",
@@ -623,27 +678,28 @@ async def ms_shadowing_report(params: ShadowingInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_antenna_flag_fraction(params: MSPathInput) -> str:
+async def ms_antenna_flag_fraction(params: AntennaFlagFractionInput) -> str:
     """
     Layer 2, Tool 6: Compute pre-existing flag fractions per antenna.
 
-    Reads the FLAG column using parallel multiprocessing (N workers, default 4,
-    configurable via RADIO_MCP_WORKERS env var). Autocorrelations excluded.
+    Reads the FLAG column using adaptive multiprocessing. Worker count is
+    computed from row count (collapses to 1 for small MSs where fork overhead
+    dominates) or overridden via n_workers. Call ms_flag_preflight first to
+    get the recommended worker count and runtime estimate.
 
-    Also reports online flag command counts from FLAG_CMD subtable.
-
-    Note: This tool can be slow for large MSs (> 50 GB). Progress is reported
-    via MCP context if available.
+    Autocorrelations excluded. Also reports online flag command counts from
+    FLAG_CMD subtable.
 
     Args:
-        params.ms_path: Path to the Measurement Set.
+        params.ms_path:   Path to the Measurement Set.
+        params.n_workers: Worker count override (1–8). If omitted, adaptive.
 
     Returns:
         JSON with overall_flag_fraction, autocorrelations_excluded, n_workers_used,
         and per_antenna array of {antenna_id, name, flag_fraction, n_flagged_elements,
         n_total_elements, n_flag_commands_online}.
     """
-    return _run_tool(flags.run, params.ms_path)
+    return _run_tool(flags.run, params.ms_path, n_workers=params.n_workers)
 
 
 # ---------------------------------------------------------------------------
@@ -789,7 +845,7 @@ async def ms_flag_summary(params: FlagSummaryInput) -> str:
     Returns:
         JSON with total_flag_fraction, per_field, per_spw, per_antenna, per_scan.
     """
-    return _run_tool(flag_summary.run, params.ms_path, params.field, params.spw)
+    return _run_tool(flag_summary.run, params.ms_path, params.field, params.spw, params.include_per_scan)
 
 
 # ---------------------------------------------------------------------------

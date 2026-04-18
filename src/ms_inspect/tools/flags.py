@@ -31,10 +31,16 @@ from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.formatting import field, response_envelope
 
 TOOL_NAME = "ms_antenna_flag_fraction"
+PREFLIGHT_TOOL_NAME = "ms_flag_preflight"
 
 # Worker count: read from env, cap at 8
 _DEFAULT_WORKERS = 4
 _MAX_WORKERS = 8
+# Minimum rows per worker — below this threshold single-process is faster
+_MIN_ROWS_PER_WORKER = 100_000
+# Empirical throughput estimate for FLAG column reads (rows/second, single process)
+# Calibrated on a 2-SPW, 64-channel, 4-corr VLA dataset. Adjust if needed.
+_ROWS_PER_SECOND = 50_000
 
 
 def _get_n_workers() -> int:
@@ -43,6 +49,18 @@ def _get_n_workers() -> int:
         return max(1, min(n, _MAX_WORKERS))
     except (ValueError, TypeError):
         return _DEFAULT_WORKERS
+
+
+def _recommended_workers(n_rows: int) -> int:
+    """
+    Return the recommended worker count for a given row count.
+
+    Collapses to 1 for small MSs where fork overhead exceeds read time.
+    Caps at the env-configured maximum.
+    """
+    env_cap = _get_n_workers()
+    ideal = max(1, n_rows // _MIN_ROWS_PER_WORKER)
+    return min(ideal, env_cap)
 
 
 # ---------------------------------------------------------------------------
@@ -104,11 +122,101 @@ def _flag_chunk_worker(args: tuple) -> tuple[np.ndarray, np.ndarray]:
 
 
 # ---------------------------------------------------------------------------
+# Preflight probe — fast, no FLAG column read
+# ---------------------------------------------------------------------------
+
+
+def run_preflight(ms_path: str) -> dict:
+    """
+    Fast pre-flight probe: return data volume and worker recommendation
+    WITHOUT reading the FLAG column.
+
+    Use this before ms_antenna_flag_fraction to:
+    - Estimate wall-clock runtime (warn user if > threshold)
+    - Determine the optimal worker count to pass as n_workers
+
+    Args:
+        ms_path: Path to Measurement Set.
+    """
+    p = validate_ms_path(ms_path)
+    ms_str = str(p)
+    casa_calls: list[str] = []
+    warnings: list[str] = []
+
+    # Row count
+    with open_table(ms_str) as tb:
+        casa_calls.append("tb.open(MS MAIN) → nrows()")
+        n_rows = tb.nrows()
+
+    # FLAG column shape: (n_corr, n_chan) per row
+    # getcolshapestring returns e.g. "[4, 64]" — parse it
+    n_corr, n_chan = 0, 0
+    try:
+        with open_table(ms_str) as tb:
+            casa_calls.append("tb.open(MS MAIN) → getcolshapestring(FLAG)")
+            shape_str = tb.getcolshapestring("FLAG")
+            # shape_str is a list of identical strings like ["[4, 64]", ...]
+            sample = shape_str[0] if shape_str else "[]"
+            parts = [int(x) for x in sample.strip("[]").split(",")]
+            n_corr = parts[0] if len(parts) > 0 else 0
+            n_chan = parts[1] if len(parts) > 1 else 0
+    except Exception as e:
+        warnings.append(f"Could not read FLAG column shape: {e}")
+
+    # SpW count from SPECTRAL_WINDOW subtable
+    n_spw = 0
+    try:
+        with open_table(ms_str + "/SPECTRAL_WINDOW") as tb:
+            casa_calls.append("tb.open(SPECTRAL_WINDOW) → nrows()")
+            n_spw = tb.nrows()
+    except Exception as e:
+        warnings.append(f"Could not read SPECTRAL_WINDOW: {e}")
+
+    # Data volume: FLAG column is 1 byte/element (bool stored as uchar)
+    n_elements = n_rows * n_corr * n_chan
+    data_volume_gb = round(n_elements / 1e9, 3)
+
+    # Runtime estimate — single-process baseline, parallel scales approximately linearly
+    recommended = _recommended_workers(n_rows)
+    effective_workers = max(1, recommended)
+    estimated_s = int(n_rows / (_ROWS_PER_SECOND * effective_workers)) if n_rows > 0 else 0
+    estimated_min = round(estimated_s / 60, 1)
+
+    will_parallelize = recommended > 1
+
+    data = {
+        "n_rows": field(n_rows),
+        "flag_col_shape": field({"n_corr": n_corr, "n_chan": n_chan}),
+        "n_spw": field(n_spw),
+        "data_volume_gb": field(data_volume_gb),
+        "estimated_runtime_s": field(estimated_s),
+        "estimated_runtime_min": field(estimated_min),
+        "recommended_workers": field(recommended),
+        "will_parallelize": field(will_parallelize),
+    }
+
+    if estimated_min > 10:
+        warnings.append(
+            f"FLAG column read estimated at {estimated_min} min "
+            f"({data_volume_gb} GB, {recommended} worker(s)). "
+            "Warn the user before proceeding."
+        )
+
+    return response_envelope(
+        tool_name=PREFLIGHT_TOOL_NAME,
+        ms_path=ms_path,
+        data=data,
+        warnings=warnings,
+        casa_calls=casa_calls,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main tool function
 # ---------------------------------------------------------------------------
 
 
-def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
+def run(ms_path: str, exclude_autocorr: bool = True, n_workers: int | None = None) -> dict:
     """
     Compute per-antenna pre-existing flag fractions.
 
@@ -119,6 +227,9 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
         ms_path:          Path to Measurement Set.
         exclude_autocorr: If True (default), exclude autocorrelation rows
                           (ANTENNA1 == ANTENNA2) from flag statistics.
+        n_workers:        Worker count override. If None (default), computed
+                          adaptively from row count via ms_flag_preflight
+                          recommendation. Pass 1 to force single-process.
     """
     p = validate_ms_path(ms_path)
     ms_str = str(p)
@@ -150,7 +261,10 @@ def run(ms_path: str, exclude_autocorr: bool = True) -> dict:
             casa_calls=casa_calls,
         )
 
-    n_workers = _get_n_workers()
+    if n_workers is not None:
+        n_workers = max(1, min(n_workers, _MAX_WORKERS))
+    else:
+        n_workers = _recommended_workers(n_total_rows)
     chunk_size = max(1, n_total_rows // n_workers)
 
     chunks: list[tuple] = []

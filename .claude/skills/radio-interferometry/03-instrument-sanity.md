@@ -114,6 +114,26 @@ that the feed-frame values are pending validation.
 
 ## Flag fraction interpretation
 
+### Preflight before reading FLAG data
+
+Always call `ms_flag_preflight` before `ms_antenna_flag_fraction`. The probe completes in
+seconds and returns:
+
+| Field | How to use |
+|-------|-----------|
+| `estimated_runtime_min` | If > 10 min, warn the user before proceeding |
+| `recommended_workers` | Pass as `n_workers` to `ms_antenna_flag_fraction` |
+| `will_parallelize` | False means single-process is optimal (small MS or few rows) |
+| `data_volume_gb` | Include in the runtime warning message to the user |
+
+Example warning text when `estimated_runtime_min > 10`:
+> "Reading the FLAG column on this MS will take approximately {estimated_runtime_min} min
+> ({data_volume_gb} GB). Proceeding."
+
+Do not call `ms_antenna_flag_fraction` and `ms_flag_summary` in parallel — both open
+the MS and `flagdata(mode='summary')` acquires a write-lock even in read-only mode.
+Run them sequentially.
+
 ### System-level perspective
 
 Overall flag fraction of a full observation:
