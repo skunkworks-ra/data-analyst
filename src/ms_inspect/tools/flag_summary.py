@@ -78,7 +78,9 @@ def run(ms_path: str, field: str = "", spw: str = "", include_per_scan: bool = F
     # flagdata summary returns 'total' as a nested dict {"flagged": N, "total": N}.
     top = summary.get("total", {})
     total_count = int(top.get("total", 0)) if isinstance(top, dict) else int(top)
-    total_flagged = int(top.get("flagged", 0)) if isinstance(top, dict) else int(summary.get("flagged", 0))
+    total_flagged = (
+        int(top.get("flagged", 0)) if isinstance(top, dict) else int(summary.get("flagged", 0))
+    )
     total_frac = total_flagged / total_count if total_count > 0 else 0.0
 
     # ------------------------------------------------------------------
