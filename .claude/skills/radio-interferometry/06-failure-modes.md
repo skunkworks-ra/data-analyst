@@ -103,8 +103,8 @@ Symptom: Tool takes > 5 minutes or returns partial results
 Cause: Large MS (> 50 GB) with multiprocessing spawn overhead, or
 casatools cannot be imported in worker processes.
 Action:
-- Reduce worker count: `export RADIO_MCP_WORKERS=1`
-- Single-process mode runs automatically on worker failure (see tool warnings).
+- Always start with `n_workers=1` (serial). Only increase with explicit user approval.
+- Single-process mode is the default; parallelisation is opt-in, not opt-out.
 - For very large MSs (> 200 GB), consider running on the HPC node where
   the data lives using HTTP transport: `RADIO_MCP_TRANSPORT=http`.
 

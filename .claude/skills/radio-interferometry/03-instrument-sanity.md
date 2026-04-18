@@ -122,13 +122,17 @@ seconds and returns:
 | Field | How to use |
 |-------|-----------|
 | `estimated_runtime_min` | If > 10 min, warn the user before proceeding |
-| `recommended_workers` | Pass as `n_workers` to `ms_antenna_flag_fraction` |
+| `recommended_workers` | Reference only — do not pass directly |
 | `will_parallelize` | False means single-process is optimal (small MS or few rows) |
 | `data_volume_gb` | Include in the runtime warning message to the user |
 
+**Always call `ms_antenna_flag_fraction` with `n_workers=1` first.** Parallelisation
+introduces fork overhead and casatools import issues in worker processes. Only escalate
+to `recommended_workers` if the user explicitly approves after seeing the serial runtime.
+
 Example warning text when `estimated_runtime_min > 10`:
 > "Reading the FLAG column on this MS will take approximately {estimated_runtime_min} min
-> ({data_volume_gb} GB). Proceeding."
+> ({data_volume_gb} GB). Proceeding with n_workers=1."
 
 Do not call `ms_antenna_flag_fraction` and `ms_flag_summary` in parallel — both open
 the MS and `flagdata(mode='summary')` acquires a write-lock even in read-only mode.
