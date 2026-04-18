@@ -845,7 +845,9 @@ async def ms_flag_summary(params: FlagSummaryInput) -> str:
     Returns:
         JSON with total_flag_fraction, per_field, per_spw, per_antenna, per_scan.
     """
-    return _run_tool(flag_summary.run, params.ms_path, params.field, params.spw, params.include_per_scan)
+    return _run_tool(
+        flag_summary.run, params.ms_path, params.field, params.spw, params.include_per_scan
+    )
 
 
 # ---------------------------------------------------------------------------
