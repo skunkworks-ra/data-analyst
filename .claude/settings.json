@@ -1,3 +1,14 @@
 {
-  "enableAllProjectMcpServers": true
+  "enableAllProjectMcpServers": true,
+  "permissions": {
+    "allow": [
+      "Bash(pixi run check)",
+      "Bash(pixi run test)",
+      "Bash(pixi run test-unit)",
+      "Bash(pixi run test-int)",
+      "Bash(pixi install *)",
+      "Bash(mkdir *)",
+      "Bash(tar *)"
+    ]
+  }
 }

@@ -50,15 +50,36 @@ ms-inspect/
 ├── pixi.toml                      ← environment (conda-forge + casatools via PyPI)
 ├── pyproject.toml                 ← build metadata and tooling config
 ├── README.md
+├── bin/
+│   ├── serve.sh                   ← MCP plugin entry point (ms-inspect)
+│   ├── serve-modify.sh            ← MCP plugin entry point (ms-modify)
+│   └── serve-create.sh            ← MCP plugin entry point (ms-create)
 ├── src/
+│   ├── ms_create/
+│   │   ├── __init__.py            ← version string
+│   │   ├── server.py              ← FastMCP entry point (ingestion utilities, port 8002)
+│   │   ├── exceptions.py          ← ASDMNotFoundError, ImportFailedError
+│   │   └── import_asdm.py         ← ms_import_asdm tool
 │   ├── ms_modify/
 │   │   ├── __init__.py            ← version string
-│   │   ├── server.py              ← FastMCP entry point (write utilities)
+│   │   ├── server.py              ← FastMCP entry point (write utilities, port 8001)
 │   │   ├── exceptions.py          ← ms_modify error types
-│   │   └── intents.py             ← set_intents utility function
+│   │   ├── intents.py             ← set_intents utility function
+│   │   ├── preflag.py             ← ms_apply_preflag
+│   │   ├── priorcals.py           ← ms_generate_priorcals
+│   │   ├── setjy.py               ← ms_setjy
+│   │   ├── setjy_polcal.py        ← ms_setjy_polcal
+│   │   ├── initial_bandpass.py    ← ms_initial_bandpass
+│   │   ├── initial_rflag.py       ← ms_apply_initial_rflag
+│   │   ├── rflag.py               ← ms_apply_rflag
+│   │   ├── gaincal.py             ← ms_gaincal
+│   │   ├── bandpass.py            ← ms_bandpass
+│   │   ├── fluxscale.py           ← ms_fluxscale
+│   │   ├── applycal.py            ← ms_applycal
+│   │   └── slurm.py               ← SLURM batch submission utility (not an MCP tool)
 │   └── ms_inspect/
 │       ├── __init__.py            ← version string
-│       ├── server.py              ← FastMCP entry point, all 12 tools registered
+│       ├── server.py              ← FastMCP entry point (read-only, port 8000)
 │       ├── exceptions.py          ← centralised error taxonomy
 │       ├── tools/
 │       │   ├── observation.py     ← ms_observation_info
@@ -68,7 +89,18 @@ ms-inspect/
 │       │   ├── antennas.py        ← ms_antenna_list, ms_baseline_lengths
 │       │   ├── geometry.py        ← ms_elevation_vs_time, ms_parallactic_angle_vs_time
 │       │   ├── shadowing.py       ← ms_shadowing_report
-│       │   └── flags.py           ← ms_antenna_flag_fraction
+│       │   ├── flags.py           ← ms_antenna_flag_fraction
+│       │   ├── flag_summary.py    ← ms_flag_summary
+│       │   ├── online_flags.py    ← ms_online_flag_stats
+│       │   ├── verify_import.py   ← ms_verify_import
+│       │   ├── priorcals_check.py ← ms_verify_priorcals
+│       │   ├── caltables.py       ← ms_verify_caltables
+│       │   ├── calsol_stats.py    ← ms_calsol_stats
+│       │   ├── calsol_plot.py     ← ms_calsol_plot
+│       │   ├── refant.py          ← ms_refant
+│       │   ├── residual_stats.py  ← ms_residual_stats
+│       │   ├── rfi.py             ← ms_rfi_channel_stats
+│       │   └── pol_cal_feasibility.py ← ms_pol_cal_feasibility
 │       └── util/
 │           ├── casa_context.py    ← context managers: open_msmd, open_table, open_ms
 │           ├── calibrators.py     ← bundled calibrator catalogue + resolved-source logic
@@ -79,8 +111,11 @@ ms-inspect/
 │   │   ├── test_conversions.py
 │   │   ├── test_calibrators.py
 │   │   ├── test_formatting.py
-│   │   └── test_set_intents.py
-│   └── integration/               ← requires RADIO_MCP_TEST_MS + casatools
+│   │   ├── test_set_intents.py
+│   │   ├── test_import_asdm.py
+│   │   └── test_verify_import.py
+│   └── integration/               ← requires casatools; auto-uses 3C391 tarball if present
+│       ├── conftest.py            ← 3C391 tarball extraction fixture
 │       ├── test_tools.py
 │       └── test_set_intents.py
 └── skill/
@@ -107,11 +142,16 @@ pixi run serve-http
 pixi run serve-modify
 pixi run serve-modify-http
 
+# Start the ms-create server (stdio / HTTP)
+pixi run serve-create
+pixi run serve-create-http
+
 # Run unit tests (no CASA, no MS required)
 pixi run test-unit
 
-# Run integration tests (requires a real MS)
-RADIO_MCP_TEST_MS=/path/to/your.ms pixi run test-int
+# Run integration tests — auto-uses 3C391 tarball if present, or set manually:
+# RADIO_MCP_TEST_MS_TGZ=/path/to/3c391.ms.tgz pixi run test-int
+# RADIO_MCP_TEST_MS=/path/to/your.ms pixi run test-int
 
 # Lint + format check (CI gate)
 pixi run check
@@ -127,9 +167,10 @@ Environment variable reference:
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `RADIO_MCP_TRANSPORT` | `stdio` | `stdio` for Claude Desktop; `http` for remote |
-| `RADIO_MCP_PORT` | `8000` | HTTP port (only used when transport=http) |
+| `RADIO_MCP_PORT` | `8000` | HTTP port (ms-inspect); ms-modify uses 8001, ms-create uses 8002 |
 | `RADIO_MCP_WORKERS` | `4` | Parallel worker count for FLAG column reads (cap 8) |
-| `RADIO_MCP_TEST_MS` | — | Path to MS for integration tests |
+| `RADIO_MCP_TEST_MS` | — | Path to pre-extracted MS for integration tests |
+| `RADIO_MCP_TEST_MS_TGZ` | — | Path to `.ms.tgz` tarball; auto-extracted by conftest.py |
 
 ---
 
@@ -164,18 +205,63 @@ Environment variable reference:
 | `ms_calsol_stats` | `tools/calsol_stats.py` | Per-(antenna, SPW, field) stats from G/B/K caltables — flagged fraction, SNR, amplitude/phase arrays, delays |
 | `ms_calsol_plot` | `tools/calsol_plot.py` | Bokeh HTML dashboard + NPZ from a caltable; calls `ms_calsol_stats` internally |
 
+### Pre-calibration inspection (5 tools)
+
+| Tool | Module | What it does |
+|------|--------|-------------|
+| `ms_verify_import` | `tools/verify_import.py` | Filesystem check: MS exists + table.info valid + .flagonline.txt non-empty |
+| `ms_online_flag_stats` | `tools/online_flags.py` | Parse .flagonline.txt — n_commands, antennas flagged, reason breakdown, time range |
+| `ms_flag_summary` | `tools/flag_summary.py` | Per-field/SPW flag fractions from flagdata summary mode |
+| `ms_verify_priorcals` | `tools/priorcals_check.py` | Check prior caltables (gc, opac, rq, ap) exist and are non-empty |
+| `ms_verify_caltables` | `tools/caltables.py` | Check init_gain.g + BP0.b from initial bandpass exist and have rows |
+
+### Instrument and RFI inspection (3 tools)
+
+| Tool | Module | What it does |
+|------|--------|-------------|
+| `ms_refant` | `tools/refant.py` | Ranked reference antenna list by geometry + flag fraction heuristics |
+| `ms_rfi_channel_stats` | `tools/rfi.py` | Per-channel flag fractions; identifies persistent RFI bands |
+| `ms_pol_cal_feasibility` | `tools/pol_cal_feasibility.py` | Parallactic angle spread + D-term feasibility gate |
+| `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
+
+---
+
+## Ingestion utilities (ms_create)
+
+The `ms_create` package converts raw ASDM data to Measurement Sets.
+It has its own FastMCP server entry point (`ms_create.server`, port 8002).
+
+| Tool | Module | What it does |
+|------|--------|-------------|
+| `ms_import_asdm` | `ms_create/import_asdm.py` | Convert ASDM → MS; `ocorr_mode='co'`, `savecmds=True`, `applyflags=False`; writes `import_asdm.py` + `.flagonline.txt` |
+
+Fixed parameters (not exposed): `ocorr_mode='co'` (cross-correlations only),
+`savecmds=True` (always write online flag file), `applyflags=False` (flagging
+deferred to `ms_apply_preflag`). `with_pointing_correction` defaults to `False`
+— expensive on large datasets; set `True` only when science requires it.
+
 ---
 
 ## Write utilities (ms_modify)
 
 The `ms_modify` package contains tools and utilities that **write** to the MS.
-It has its own FastMCP server entry point (`ms_modify.server`) separate from the
-read-only `ms_inspect` server. Functions are also callable directly by skills
-and scripts.
+It has its own FastMCP server entry point (`ms_modify.server`, port 8001).
+Functions are also callable directly by skills and scripts.
 
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_set_intents` | `ms_modify/intents.py` | Populate STATE subtable and STATE_ID from calibrator catalogue matching |
+| `ms_apply_preflag` | `ms_modify/preflag.py` | Deterministic pre-cal flagging (online + shadow + clip + tfcrop) + calibrator split |
+| `ms_generate_priorcals` | `ms_modify/priorcals.py` | Generate gc/opac/rq/ap prior caltables via gencal |
+| `ms_setjy` | `ms_modify/setjy.py` | Set Perley-Butler 2017 flux models for standard calibrators |
+| `ms_setjy_polcal` | `ms_modify/setjy_polcal.py` | Set polarisation angle models for pol calibrators |
+| `ms_initial_bandpass` | `ms_modify/initial_bandpass.py` | gaincal → bandpass → applycal; populates CORRECTED |
+| `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass |
+| `ms_apply_rflag` | `ms_modify/rflag.py` | General-purpose rflag pass |
+| `ms_gaincal` | `ms_modify/gaincal.py` | Phase/amplitude gain calibration |
+| `ms_bandpass` | `ms_modify/bandpass.py` | Bandpass calibration |
+| `ms_fluxscale` | `ms_modify/fluxscale.py` | Bootstrap flux scale from flux standard |
+| `ms_applycal` | `ms_modify/applycal.py` | Apply caltables; write CORRECTED_DATA |
 | *(utility)* | `ms_modify/slurm.py` | SLURM batch submission: wrap scripts in sbatch files, chain with afterok dependencies |
 
 `set_intents` logic:

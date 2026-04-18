@@ -14,6 +14,10 @@ pass of RFI removed, ready for the full calibration solve.
 ## Sequence overview
 
 ```
+ms_import_asdm(execute=False, ...)       → generate import_asdm.py
+  [run import_asdm.py]
+ms_verify_import(ms_path, flag_file)     → confirm MS valid + .flagonline.txt present
+
 ms_online_flag_stats(flag_file)          → assess online flags before applying
 ms_apply_preflag(execute=False, ...)     → generate preflag.py + preflag_cmds.txt
   [run preflag.py]
@@ -36,6 +40,32 @@ ms_apply_initial_rflag(execute=False)    → generate initial_rflag.py
   [run initial_rflag.py]
 ms_flag_summary(calibrators.ms)          → before/after flag delta
 ```
+
+---
+
+## Step 0 — ASDM ingestion
+
+Run `ms_import_asdm` before anything else if starting from raw ASDM data.
+
+**Always generate the script first (`execute=False`).** The script is short —
+review it to confirm the output paths are correct before running.
+
+Fixed parameters (not configurable):
+- `ocorr_mode='co'` — cross-correlations only; auto-correlations are dropped
+- `savecmds=True` — online flags written to `<ms_name>.flagonline.txt`
+- `applyflags=False` — flags are NOT applied during import; `ms_apply_preflag` owns flagging
+
+After running `import_asdm.py`, call `ms_verify_import` to confirm:
+
+| Check | Pass | Fail |
+|-------|------|------|
+| `ms_valid` | True | MS directory exists but no `table.info` — import failed mid-run |
+| `flag_file_exists` | True | `.flagonline.txt` absent — re-run with `savecmds=True` |
+| `flag_file_n_commands` | > 0 | Empty file — no online flags recorded (unusual for VLA; note it) |
+| `ready_for_preflag` | True | All three above must pass before proceeding |
+
+Pass `online_flag_file` from the `ms_import_asdm` response directly to
+`ms_apply_preflag` as its `online_flag_file` parameter.
 
 ---
 
