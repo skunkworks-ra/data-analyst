@@ -8,6 +8,15 @@ workflow (skill 10) has produced a clean calibrators.ms with CORRECTED populated
 Sequence: initial phase → delay → bandpass → gain (flux) → gain (phase, append)
 → fluxscale → quality gate → applycal per field type.
 
+## Execution protocol
+
+Every tool call with `execute=False` generates a CASA script. That script is
+then run as a background job. **Wait for it to finish, however long it takes.**
+Do not impose artificial timeouts or retry counters. CASA calibration jobs
+on real data are long-running by nature — patience and persistence are required.
+Monitor by checking for the expected output (caltable on disk, return code 0)
+after the job exits. Never kill a job because it appears slow.
+
 ---
 
 ## Placeholder reference

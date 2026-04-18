@@ -15,29 +15,29 @@ pass of RFI removed, ready for the full calibration solve.
 
 ```
 ms_import_asdm(execute=False, ...)       → generate import_asdm.py
-  [run import_asdm.py]
+  → run import_asdm.py as background job; wait for completion however long it takes
 ms_verify_import(ms_path, flag_file)     → confirm MS valid + .flagonline.txt present
 
 ms_online_flag_stats(flag_file)          → assess online flags before applying
 ms_apply_preflag(execute=False, ...)     → generate preflag.py + preflag_cmds.txt
-  [run preflag.py]
+  → run preflag.py as background job; wait for completion however long it takes
 ms_flag_summary(calibrators.ms)          → establish baseline flag fraction
 
 ms_generate_priorcals(execute=False)     → generate priorcals.py
-  [run priorcals.py]
+  → run priorcals.py as background job; wait for completion however long it takes
 ms_verify_priorcals(workdir)             → confirm all required tables exist
 
 ms_setjy(execute=False, ...)             → generate setjy.py
-  [run setjy.py]
+  → run setjy.py as background job; wait for completion however long it takes
 
 ms_refant(calibrators.ms, field=bp_field) → ranked reference antenna list
 ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
-  [run initial_bandpass.py]
+  → run initial_bandpass.py as background job; wait for completion however long it takes
 ms_verify_caltables(...)                  → confirm init_gain.g + BP0.b valid
 
 ms_residual_stats(field_id=bp_field_id)  → inspect amplitude distribution
 ms_apply_initial_rflag(execute=False)    → generate initial_rflag.py
-  [run initial_rflag.py]
+  → run initial_rflag.py as background job; wait for completion however long it takes
 ms_flag_summary(calibrators.ms)          → before/after flag delta
 ```
 
