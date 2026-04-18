@@ -50,6 +50,12 @@ serve-modify      = { cmd = "ms-modify", env = { RADIO_MCP_TRANSPORT = "stdio" }
 # Start the ms-modify server — HTTP transport
 serve-modify-http = { cmd = "ms-modify", env = { RADIO_MCP_TRANSPORT = "http", RADIO_MCP_PORT = "8001" } }
 
+# Start the ms-create server — stdio transport
+serve-create      = { cmd = "ms-create", env = { RADIO_MCP_TRANSPORT = "stdio" } }
+
+# Start the ms-create server — HTTP transport
+serve-create-http = { cmd = "ms-create", env = { RADIO_MCP_TRANSPORT = "http", RADIO_MCP_PORT = "8002" } }
+
 # Tests
 test        = { cmd = "pytest tests/ -v" }
 test-unit   = { cmd = "pytest tests/unit/ -v" }

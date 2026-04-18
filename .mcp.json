@@ -9,6 +9,11 @@
       "command": "bash",
       "args": ["${CLAUDE_PLUGIN_ROOT}/bin/serve-modify.sh"],
       "description": "Radio interferometric MS modification utilities (stdio transport)"
+    },
+    "ms-create": {
+      "command": "bash",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/serve-create.sh"],
+      "description": "Radio interferometric MS ingestion utilities — ASDM import (stdio transport)"
     }
   }
 }
