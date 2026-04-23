@@ -30,6 +30,7 @@ from ms_modify import (
     rflag,
     setjy,
     setjy_polcal,
+    tclean,
 )
 
 # ---------------------------------------------------------------------------
@@ -1099,6 +1100,176 @@ async def ms_applycal(params: ApplycalInput) -> str:
         params.applymode,
         params.parang,
         params.flagbackup,
+        params.execute,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Input model — Tclean
+# ---------------------------------------------------------------------------
+
+
+class TcleanInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the full Measurement Set.", min_length=1)
+    imagename: str = Field(
+        ...,
+        description=(
+            "Base path for all output image products (no suffix). "
+            "Example: '/data/images/3c391_spw0'. "
+            "tclean appends .image, .psf, .residual, etc."
+        ),
+        min_length=1,
+    )
+    field: str = Field(
+        ...,
+        description="CASA field selection for science target(s), e.g. '2~8' or '3C391_C1'.",
+        min_length=1,
+    )
+    workdir: str = Field(
+        ..., description="Existing directory for the generated script.", min_length=1
+    )
+    stokes: str = Field(
+        default="I",
+        description="Stokes products to image. Default 'I'. Also accepts 'IV', 'IQUV', 'RR', 'LL', etc.",
+    )
+    specmode: str = Field(
+        default="mfs",
+        description="'mfs' for continuum (default) or 'cube' for per-channel imaging.",
+    )
+    deconvolver: str = Field(
+        default="hogbom",
+        description="'hogbom' (default first-pass) or 'mtmfs' for wideband (fractional BW > 20%).",
+    )
+    nterms: int | None = Field(
+        default=None,
+        description="Taylor terms for mtmfs deconvolver (pass 2 for mtmfs; omit for hogbom).",
+        ge=1,
+    )
+    gridder: str = Field(
+        default="standard",
+        description="'standard', 'wproject' (W-term single pointing), or 'awp2' (mosaic, EVLA/ALMA).",
+    )
+    wprojplanes: int | None = Field(
+        default=None,
+        description=(
+            "Number of W-projection planes. Omit when W-terms are negligible "
+            "(Fresnel number >= 0.9). Valid for both 'wproject' and 'awp2' gridders."
+        ),
+        ge=1,
+    )
+    cell: str = Field(
+        default="1.0arcsec",
+        description="Cell size, e.g. '2.5arcsec'. Derive from 1/(max_baseline_lambda * 3).",
+    )
+    imsize: list[int] = Field(
+        default_factory=lambda: [512, 512],
+        description=(
+            "Image size in pixels [nx, ny]. Must be a composite number (2^a * 3^b * 5^c). "
+            "Derive from primary beam FWHM / cell, rounded up."
+        ),
+        min_length=2,
+        max_length=2,
+    )
+    weighting: str = Field(default="briggs", description="UV weighting scheme (default 'briggs').")
+    robust: float = Field(
+        default=0.5,
+        description="Briggs robust parameter. -2 = uniform, +2 = natural (default 0.5).",
+        ge=-2.0,
+        le=2.0,
+    )
+    niter: int = Field(
+        default=50000,
+        description="Maximum clean iterations (default 50000). Use 1000 for quick diagnostic runs.",
+        ge=0,
+    )
+    threshold: str = Field(
+        default="1.0mJy",
+        description="Clean stopping threshold, e.g. '0.5mJy'. Derive from 3 * radiometer RMS.",
+    )
+    savemodel: str = Field(
+        default="modelcolumn",
+        description="'modelcolumn' writes MODEL_DATA for self-cal (default). 'none' skips it.",
+    )
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write tclean script and return immediately. "
+            "If True, run tclean in-process (intended for test data only — "
+            "real mosaics can take hours)."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tool — Tclean
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="ms_tclean",
+    annotations={
+        "title": "First-Pass Imaging",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_tclean(params: TcleanInput) -> str:
+    """
+    Generate (and optionally execute) a first-pass tclean imaging script.
+
+    Validates that CORRECTED_DATA exists in the MS. All imaging parameters
+    are passed explicitly — use skill 11-imaging.md to derive them from
+    Phase 1–2 tool outputs before calling this tool.
+
+    pbcor=True is always set internally. The generated script cleans up
+    any existing image products for this imagename before running, making
+    it safely re-runnable.
+
+    Args:
+        params.ms_path:     Path to the full MS (not calibrators.ms).
+        params.imagename:   Base path for image output (no suffix).
+        params.field:       CASA field selection for science target(s).
+        params.workdir:     Existing directory for the generated script.
+        params.stokes:      Stokes products (default 'I').
+        params.specmode:    'mfs' or 'cube'.
+        params.deconvolver: 'hogbom' or 'mtmfs'.
+        params.nterms:      Taylor terms (pass 2 for mtmfs; omit for hogbom).
+        params.gridder:     'standard', 'wproject', or 'awp2'.
+        params.wprojplanes: W-projection planes (omit if Fresnel >= 0.9).
+        params.cell:        Cell size string.
+        params.imsize:      Image size [nx, ny].
+        params.weighting:   UV weighting (default 'briggs').
+        params.robust:      Briggs robust (default 0.5).
+        params.niter:       Max iterations (default 50000).
+        params.threshold:   Clean stopping threshold.
+        params.savemodel:   'modelcolumn' for self-cal readiness (default).
+        params.execute:     Generate script (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, imagename, and completed flag.
+    """
+    return _run_tool(
+        tclean.run,
+        params.ms_path,
+        params.imagename,
+        params.field,
+        params.workdir,
+        params.stokes,
+        params.specmode,
+        params.deconvolver,
+        params.nterms,
+        params.gridder,
+        params.wprojplanes,
+        params.cell,
+        params.imsize,
+        params.weighting,
+        params.robust,
+        params.niter,
+        params.threshold,
+        params.savemodel,
         params.execute,
     )
 

@@ -47,6 +47,12 @@ class ApplycalFailedError(RadioMSError):
     error_type = "APPLYCAL_FAILED"
 
 
+class TcleanFailedError(RadioMSError):
+    """Raised when tclean fails or does not produce the expected image."""
+
+    error_type = "TCLEAN_FAILED"
+
+
 class SlurmNotAvailableError(RadioMSError):
     """Raised when sbatch is not found on PATH."""
 
