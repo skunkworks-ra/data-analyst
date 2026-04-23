@@ -180,6 +180,51 @@ def open_table(table_path: str, *, read_only: bool = True) -> Generator[Any, Non
 
 
 @contextmanager
+def open_image(image_path: str) -> Generator[Any, None, None]:
+    """
+    Context manager for casatools.image (ia).
+
+    Opens a CASA native image directory and guarantees done() on exit.
+
+    Raises:
+        MSNotFoundError        — path does not exist
+        CASANotAvailableError  — casatools not installed
+        CASAOpenFailedError    — CASA raised on open
+
+    Usage:
+        with open_image("/path/to/target.image") as ia:
+            stats = ia.statistics()
+    """
+    p = Path(image_path).expanduser().resolve()
+    if not p.exists():
+        raise MSNotFoundError(
+            f"Image not found: {p}",
+            ms_path=image_path,
+        )
+
+    casatools = _require_casatools()
+    ia = casatools.image()
+    try:
+        opened = ia.open(str(p))
+        if not opened:
+            raise CASAOpenFailedError(
+                f"image.open() returned False for '{p}'. The image may be locked or corrupted.",
+                ms_path=image_path,
+            )
+        yield ia
+    except CASAOpenFailedError:
+        raise
+    except Exception as exc:
+        raise CASAOpenFailedError(
+            f"casatools.image raised an exception opening '{p}': {exc}",
+            ms_path=image_path,
+        ) from exc
+    finally:
+        with suppress(Exception):
+            ia.done()
+
+
+@contextmanager
 def open_ms(ms_path: str) -> Generator[Any, None, None]:
     """
     Context manager for casatools.ms.

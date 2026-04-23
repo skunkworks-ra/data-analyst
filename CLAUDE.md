@@ -76,6 +76,7 @@ ms-inspect/
 │   │   ├── bandpass.py            ← ms_bandpass
 │   │   ├── fluxscale.py           ← ms_fluxscale
 │   │   ├── applycal.py            ← ms_applycal
+│   │   ├── tclean.py              ← ms_tclean
 │   │   └── slurm.py               ← SLURM batch submission utility (not an MCP tool)
 │   └── ms_inspect/
 │       ├── __init__.py            ← version string
@@ -100,9 +101,10 @@ ms-inspect/
 │       │   ├── refant.py          ← ms_refant
 │       │   ├── residual_stats.py  ← ms_residual_stats
 │       │   ├── rfi.py             ← ms_rfi_channel_stats
-│       │   └── pol_cal_feasibility.py ← ms_pol_cal_feasibility
+│       │   ├── pol_cal_feasibility.py ← ms_pol_cal_feasibility
+│       │   └── image_stats.py     ← ms_image_stats
 │       └── util/
-│           ├── casa_context.py    ← context managers: open_msmd, open_table, open_ms
+│           ├── casa_context.py    ← context managers: open_msmd, open_table, open_ms, open_image
 │           ├── calibrators.py     ← bundled calibrator catalogue + resolved-source logic
 │           ├── conversions.py     ← MJD→UTC, Hz→GHz, ECEF→geodetic, corr codes, etc.
 │           └── formatting.py      ← response envelope, CompletionFlag, round_dict
@@ -225,6 +227,12 @@ Environment variable reference:
 | `ms_pol_cal_feasibility` | `tools/pol_cal_feasibility.py` | Parallactic angle spread + D-term feasibility gate |
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
 
+### Phase 3 — Imaging inspection (1 tool)
+
+| Tool | Module | What it does |
+|------|--------|-------------|
+| `ms_image_stats` | `tools/image_stats.py` | Robust RMS (MAD-based), peak flux, dynamic range, restoring beam from a CASA image |
+
 ---
 
 ## Ingestion utilities (ms_create)
@@ -263,6 +271,7 @@ Functions are also callable directly by skills and scripts.
 | `ms_bandpass` | `ms_modify/bandpass.py` | Bandpass calibration |
 | `ms_fluxscale` | `ms_modify/fluxscale.py` | Bootstrap flux scale from flux standard |
 | `ms_applycal` | `ms_modify/applycal.py` | Apply caltables; write CORRECTED_DATA |
+| `ms_tclean` | `ms_modify/tclean.py` | Generate (and optionally execute) a tclean imaging script; validates CORRECTED_DATA; pbcor=True hardcoded |
 | *(utility)* | `ms_modify/slurm.py` | SLURM batch submission: wrap scripts in sbatch files, chain with afterok dependencies |
 
 `set_intents` logic:

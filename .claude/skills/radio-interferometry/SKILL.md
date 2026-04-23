@@ -13,6 +13,7 @@ allowed-tools: ms_observation_info, ms_field_list, ms_scan_list, ms_scan_intent_
                ms_set_intents, ms_initial_bandpass, ms_apply_rflag, ms_apply_preflag,
                ms_generate_priorcals, ms_setjy, ms_setjy_polcal, ms_apply_initial_rflag,
                ms_gaincal, ms_bandpass, ms_fluxscale, ms_applycal,
+               ms_tclean, ms_image_stats,
                Bash, Read, Write, Edit
 ---
 

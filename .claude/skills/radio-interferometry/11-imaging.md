@@ -147,10 +147,11 @@ fresnel = {DISH_DIAMETER_M}**2 / ({MAX_BASELINE_M} * lambda_m)
 
 | Condition | `gridder` | `wprojplanes` |
 |---|---|---|
-| Mosaic AND telescope in `{EVLA, ALMA}` | `'awp2'` | not set (A+W handled internally) |
-| Mosaic AND telescope NOT in `{EVLA, ALMA}` | see note below | — |
+| Mosaic AND telescope in `{EVLA, ALMA}` AND W-terms required | `'awp2'` | from Step 5 |
+| Mosaic AND telescope in `{EVLA, ALMA}` AND W-terms not required | `'awp2'` | not set |
+| Mosaic AND telescope NOT in `{EVLA, ALMA}` | see note below | from Step 5 if required |
 | Single pointing AND W-terms required | `'wproject'` | from Step 5 |
-| Single pointing AND W-terms not required | `'standard'` | — |
+| Single pointing AND W-terms not required | `'standard'` | not set |
 
 **Unsupported mosaic telescope:** use `'wproject'` if W-terms required, else
 `'standard'`. Warn the user: primary beam mosaicing is not applied automatically

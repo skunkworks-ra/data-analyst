@@ -33,6 +33,7 @@ from ms_inspect.tools import (
     flag_summary,
     flags,
     geometry,
+    image_stats,
     observation,
     online_flags,
     pol_cal_feasibility,
@@ -274,6 +275,27 @@ class CalsolPlotInput(BaseModel):
         ...,
         description="Directory to write {name}_stats.npz and {name}_dashboard.html.",
         min_length=1,
+    )
+
+
+class ImageStatsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    image_path: str = Field(
+        ...,
+        description=(
+            "Path to the CASA image directory to analyse "
+            "(e.g. '/data/obs/target.image.pbcor'). "
+            "Must be a CASA native-format image (produced by tclean)."
+        ),
+        min_length=1,
+    )
+    psf_path: str | None = Field(
+        default=None,
+        description=(
+            "Optional path to the PSF image (e.g. 'target.psf'). "
+            "If provided, the restoring beam is also read from the PSF header "
+            "as a cross-check."
+        ),
     )
 
 
@@ -1083,6 +1105,38 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
         flag_file_n_commands, and ready_for_preflag.
     """
     return _run_tool(verify_import.run, params.ms_path, params.online_flag_file)
+
+
+@mcp.tool(
+    name="ms_image_stats",
+    annotations={
+        "title": "Image Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_image_stats(params: ImageStatsInput) -> str:
+    """
+    Phase 3, Tool 1: Quality metrics for a CASA image produced by tclean.
+
+    Computes a robust RMS (MAD-based, insensitive to residual source flux),
+    peak pixel value, dynamic range, and restoring beam parameters.
+
+    Used by the imaging skill (11-imaging.md Step 9) to check whether the
+    first-pass image meets quality gates before proceeding to self-calibration.
+
+    Args:
+        params.image_path: Path to the CASA image (e.g. imagename.image.pbcor).
+        params.psf_path:   Optional path to the PSF image for beam cross-check.
+
+    Returns:
+        JSON envelope with rms_jy, peak_jy, dynamic_range,
+        beam_major_arcsec, beam_minor_arcsec, beam_pa_deg.
+        If psf_path provided, also psf_beam_major_arcsec etc.
+    """
+    return _run_tool(image_stats.run, params.image_path, params.psf_path)
 
 
 # ---------------------------------------------------------------------------
