@@ -39,6 +39,32 @@ To remove:
 claude plugin uninstall radio-analyst@radio-analyst
 ```
 
+### Local development
+
+Use this when actively working on the plugin itself. Registers the MCP servers
+directly against the local pixi environment — no plugin system involved.
+
+```bash
+git clone https://github.com/skunkworks-ra/radio-analyst.git
+cd radio-analyst
+pixi install
+pixi run pip install casatools casatasks   # first time only; ~500 MB
+pixi run install-mcp
+```
+
+`install-mcp` calls `bin/install-local.sh`, which registers `ms-inspect`,
+`ms-modify`, and `ms-create` via `claude mcp add --scope user` pointing
+directly at `.pixi/envs/default/bin/`. Re-run after any `pixi install` that
+rebuilds the environment. The script detects and removes a plugin-managed
+install automatically before registering.
+
+To switch back to the plugin install:
+
+```bash
+pixi run uninstall-mcp
+# then follow the Claude Code plugin instructions above
+```
+
 ### Claude Desktop and other MCP clients (HTTP transport)
 
 Clone the repo, install the environment, then start the servers in HTTP mode:

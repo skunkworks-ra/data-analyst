@@ -114,7 +114,7 @@ verify with `ms_verify_priorcals`:
 | Table | Required | If missing |
 |-------|----------|-----------|
 | `gain_curves.gc` | Yes — hard stop | Data cannot be calibrated without elevation gain curves |
-| `opacities.opac` | Yes — hard stop | Required for opacity correction at all bands |
+| `opacities.opac` | K-band and above | Empty table: hard stop at K-band and above; note and continue below K-band |
 | `requantizer.rq` | VLA post-2011 only | Safe to skip for pre-WIDAR data; note in summary |
 | `antpos.ap` | No | Skip silently if gencal returns empty; note if returned with rows |
 
@@ -206,6 +206,11 @@ narrowband RFI (GPS, GSM). Cross-check with `ms_rfi_channel_stats` annotations.
 `ms_apply_initial_rflag` runs rflag + tfcrop on the residual column in a single
 flagdata list-mode pass. `flagbackup=True` saves a versioned backup automatically.
 
+If the phase calibrator minimum elevation during its scans (from `ms_elevation_vs_time`
+Phase 2 output) is < 30°, use `timedevscale=7, freqdevscale=7` instead of the
+defaults (5, 5). Elevated system temperature at low elevations inflates scatter
+and causes false positives at tighter thresholds.
+
 Call `ms_flag_summary` before and after. Assess the flag delta:
 
 | Flag fraction increase (delta) | Assessment |
@@ -229,9 +234,16 @@ After Step 8, make a go/no-go decision:
 | Overall flag fraction < 30% AND no caltable failures | Proceed to calibration solve |
 | Overall flag fraction 30–50% | Proceed with explicit note in summary |
 | Overall flag fraction > 50% | Escalate — dataset may not calibrate well |
-| `gain_curves.gc` or `opacities.opac` missing | Hard stop — do not proceed |
+| Per-calibrator flag fraction ≥ 50% on the gain calibrator | Relax rflag thresholds and re-run Step 8 — do not proceed |
+| `gain_curves.gc` missing | Hard stop — do not proceed |
+| `opacities.opac` missing at K-band and above | Hard stop — do not proceed |
 | Initial bandpass caltables invalid | Hard stop — diagnose before proceeding |
 | Specific antenna > 80% flagged | Note and exclude from refant; proceed |
+
+**Refant check:** After Step 8, re-check the chosen refant's flag fraction in
+`calibrators.ms`. If it exceeds 50%, switch to the next antenna in the
+`refant_list` from `ms_refant` and re-run Step 6 (initial bandpass) before
+passing to the calibration solve.
 
 Pass the following forward to the calibration solve:
 - `refant`: top-ranked surviving antenna from `ms_refant`

@@ -327,7 +327,10 @@ gain solutions are interpolated correctly for each.
 - `gainfield`: selects which rows from `gain.fluxscaled` apply to each field
 - `interp`: `'nearest'` for calibrators; `'linear'` for target (interpolate between adjacent cal scans)
 - `calwt=False`: VLA data weights are not properly calibrated; calibrating them produces nonsensical results
-- `applymode='calflagstrict'`: flag data where any required solution is missing
+- `applymode`: calibrators use `'calflagstrict'`; science target uses `'calflagstrict'` if
+  per-calibrator flag fraction in `calibrators.ms` post-rflag is < 50%, otherwise `'calonly'`.
+  `calonly` leaves data without a matching gain solution uncalibrated but unflagged — prefer it
+  for the target when calibrator flagging was heavy.
 
 ### 7a — Flux calibrator
 
@@ -373,7 +376,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'],
     calwt      = False,
-    applymode  = 'calflagstrict',
+    applymode  = 'calonly',        # or 'calflagstrict' if calibrator flag fraction < 50%
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,

@@ -71,3 +71,7 @@ fmt-check   = { cmd = "ruff format --check src/ tests/" }
 
 # CI gate — lint + format check in one pass
 check       = { cmd = "ruff check src/ tests/ && ruff format --check src/ tests/" }
+
+# Local MCP install / uninstall (user scope, bypasses plugin system)
+install-mcp   = { cmd = "bash bin/install-local.sh" }
+uninstall-mcp = { cmd = "bash bin/uninstall-local.sh" }
