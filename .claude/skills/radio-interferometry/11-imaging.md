@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Guide the first-pass Stokes I continuum or spectral-cube imaging after
+Guide the first-pass continuum or spectral-cube imaging after
 `CORRECTED_DATA` has been written by applycal. This is Phase 3.
 
 Self-calibration is Phase 4 and is out of scope here.
@@ -16,8 +16,9 @@ All placeholders are populated from Phase 1–2 tool outputs before calling `ms_
 | Placeholder | Source tool | What to extract |
 |---|---|---|
 | `{VIS}` | provided | full MS path (not calibrators.ms) |
-| `{TARGET_FIELD}` | `ms_field_list` | CASA field selection for science target(s) |
-| `{IS_MOSAIC}` | `ms_scan_intent_summary` | True if > 1 pointing with `OBSERVE_TARGET` intent |
+| `{TARGET_FIELD}` | user confirmed (see Step 0) | CASA field selection string, e.g. `'2~8'` or `'3C391_C1'` |
+| `{IS_MOSAIC}` | user confirmed (see Step 0) | True if imaging multiple pointings together |
+| `{STOKES}` | user confirmed | default `'I'`; `'IQUV'` etc. accepted |
 | `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing (mosaic only) |
 | `{MAX_BASELINE_M}` | `ms_baseline_lengths` | `max_baseline_m` |
 | `{CENTER_FREQ_HZ}` | `ms_observation_info` | centre frequency in Hz |
@@ -27,6 +28,28 @@ All placeholders are populated from Phase 1–2 tool outputs before calling `ms_
 | `{N_ANT}` | `ms_antenna_list` | number of unflagged antennas |
 | `{T_ON_SOURCE_S}` | `ms_scan_list` | total integration time on science target in seconds |
 | `{WORKDIR}` | provided | directory for image output |
+
+---
+
+## Step 0 — Confirm field selection and Stokes
+
+Before deriving any parameter, confirm with the user what to image.
+Do not assume — field selection has direct consequences for gridder choice,
+image size, and whether a mosaic is needed.
+
+Ask explicitly if not stated:
+
+1. **Which fields?** Show the target fields from `ms_field_list` and ask:
+   - Image all target fields together as a mosaic?
+   - Image a single field only — which one?
+   - Image a specific subset — which fields?
+
+2. **Stokes?** Default is `'I'`. Ask only if the observation has full-polarisation
+   data (RR/RL/LR/LL or XX/XY/YX/YY) and the user has not stated a preference.
+   Valid values: `'I'`, `'IV'`, `'IQUV'`, `'RR'`, `'LL'`, `'XX'`, `'YY'`.
+   If calibration was Stokes I only (no polcal), do not offer `'IQUV'`.
+
+Record confirmed values as `{TARGET_FIELD}`, `{IS_MOSAIC}`, and `{STOKES}`.
 
 ---
 
@@ -167,6 +190,7 @@ ms_tclean(
     ms_path      = {VIS},
     imagename    = {WORKDIR}/{imagename},
     field        = {TARGET_FIELD},
+    stokes       = {STOKES},
     specmode     = {specmode},
     deconvolver  = {deconvolver},
     nterms       = 2,              # only when deconvolver='mtmfs'
@@ -178,14 +202,13 @@ ms_tclean(
     robust       = 0.5,
     niter        = 50000,
     threshold    = {threshold},
-    pbcor        = False,
+    pbcor        = True,
     savemodel    = 'modelcolumn',
     workdir      = {WORKDIR},
     execute      = False,
 )
 ```
 
-`pbcor=False`: primary beam correction is a separate step after tclean.
 `savemodel='modelcolumn'`: writes MODEL_DATA into the MS, required for self-cal (Phase 4).
 
 Generate the script first (`execute=False`), review it, then run it as a
@@ -194,26 +217,7 @@ real mosaic can run for hours.
 
 ---
 
-## Step 9 — Primary beam correction
-
-After tclean completes, run `impbcor` to divide the image by the primary beam:
-
-```python
-from casatasks import impbcor
-impbcor(
-    imagename = '{WORKDIR}/{imagename}.image',
-    pbimage   = '{WORKDIR}/{imagename}.pb',
-    outfile   = '{WORKDIR}/{imagename}.image.pbcor',
-)
-```
-
-Use `{imagename}.image.pbcor` for all science measurements. The uncorrected
-`.image` is useful for visual inspection only (the pb rolloff makes faint
-extended emission easier to see).
-
----
-
-## Step 10 — Quality assessment
+## Step 9 — Quality assessment
 
 Call `ms_image_stats` on the pbcor image:
 
