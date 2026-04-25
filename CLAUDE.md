@@ -430,12 +430,20 @@ The skill is split into focused files to stay under the 200-line context limit:
 
 | File | Content |
 |------|---------|
-| `01-workflow.md` | Step-by-step Phase 1 + Phase 2 analysis protocol |
+| `00-playbook.md` | Stage-to-action lookup table; load-on-demand index for all skill files |
+| `01-workflow.md` | Phase 1 orientation protocol (6 tools) |
+| `01b-workflow-phase2.md` | Phase 2 instrument sanity protocol (6 tools) |
 | `02-orientation.md` | Band tables, intent vocabulary, mosaic handling |
 | `03-instrument-sanity.md` | Array configs, elevation/PA/flag thresholds |
 | `04-diagnostic-reasoning.md` | Report structure, consistency checks, go/no-go |
 | `05-calibrator-science.md` | Flux standards, resolved sources, polarisation calibrators |
 | `06-failure-modes.md` | Known failure modes and recovery procedures |
+| `07-calibration-execution.md` | Full calibration solve sequence (initial phase → delay → BP → gain → fluxscale → applycal) |
+| `08-pband-specifics.md` | VLA P-band specifics (flux scale, ionosphere, RFI, bandpass ripples) |
+| `09-polcal-execution.md` | Polarisation calibration (Kcross → D-terms → Xf → applycal with parang) |
+| `10-precal-workflow.md` | Pre-calibration pipeline (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
+| `11-imaging.md` | First-pass continuum/cube imaging with derived tclean parameters and ms_image_stats gate |
+| `12-selfcal.md` | Single-pass phase selfcal with before/after DR comparison and stop-and-recommend gate |
 
 ### MS simulator
 
