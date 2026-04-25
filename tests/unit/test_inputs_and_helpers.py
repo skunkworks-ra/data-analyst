@@ -14,8 +14,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from ms_inspect.server import FlagSummaryInput, AntennaFlagFractionInput, ImageStatsInput
-from ms_inspect.tools.flags import _recommended_workers, _get_n_workers
+from ms_inspect.server import AntennaFlagFractionInput, FlagSummaryInput, ImageStatsInput
+from ms_inspect.tools.flags import _get_n_workers, _recommended_workers
 
 
 class TestFlagSummaryInput:
@@ -212,8 +212,8 @@ class TestRunPreflight:
 
     def test_missing_ms_raises(self):
         """Missing MS raises MSNotFoundError."""
-        from ms_inspect.tools.flags import run_preflight
         from ms_inspect.exceptions import MSNotFoundError
+        from ms_inspect.tools.flags import run_preflight
 
         with pytest.raises(MSNotFoundError):
             run_preflight("/nonexistent/path.ms")
