@@ -122,6 +122,7 @@ ms_calsol_stats(caltable_path = {WORKDIR}/initial_phase.G0)
 | `phase_rms_deg[ant, spw=0, field=0]` | all antennas | < 60° | > 60° on most antennas → suspect source model or data column; do not proceed |
 | `overall_flagged_frac` | scalar | < 0.15 | > 0.15 → check refant and CENTER_CHANNELS selection |
 | `antennas_lost` | list | empty or 1 | > 1 → note antenna names; re-examine flagging |
+| `outliers.low_snr` | list | empty | non-empty → inspect named antennas; low SNR on G0 is a warning, not a hard stop |
 
 A single integration with a phase jump on one antenna is acceptable — do not re-solve.
 
@@ -162,6 +163,7 @@ ms_calsol_stats(caltable_path = {WORKDIR}/delay.K)
 | `delay_ns[ant, spw, field=0, corr]` | all antennas | abs value < 30 ns | > 50 ns on one antenna → hardware or cabling problem; note in summary |
 | `delay_rms_ns[spw, field=0]` | all SPWs | < 10 ns | > 10 ns → delay solve may have failed on that SPW |
 | `overall_flagged_frac` | scalar | < 0.10 | > 0.10 → check WIDE_CHANNELS selection |
+| `outliers.low_snr` | list | empty | non-empty → inspect named antennas; a delay SNR outlier often signals a hardware problem worth noting |
 
 VLA typically shows delays within ±5 ns after a recent configuration change.
 Delays of ±200+ ns on any antenna may indicate a polarization feed swap — escalate.
@@ -206,6 +208,8 @@ ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B)
 | `n_antennas_lost` | scalar | ≤ 1 | 2–3 → check refant and bp_field; > 3 → hard stop |
 | `phase_rms_deg[ant, spw, field=bp_field_idx]` | all antennas | < 10° | 10–30° → warn; > 30° → delay solve likely failed; re-run Step 2 |
 | `amp_array[ant, spw, field=bp_field_idx, :]` | all antennas | smooth, ~1.0 | Large mid-band excursions → suspect antenna; edge roll-off is normal |
+| `outliers.low_snr` | list | empty | non-empty → inspect named antennas; SNR < 3 on BP is a hard concern |
+| `outliers.amp_outliers` | list | empty | non-empty → antenna has anomalous amplitude shape; check against `amp_array` for that antenna |
 
 Both polarizations on a given antenna should show the same amplitude shape within ~10%.
 
@@ -253,6 +257,11 @@ moving to inspection. If any of the four failure modes below are detected, use
 the corresponding recovery tree to diagnose and retry with modified parameters.
 
 ### Source classification (pre-flight)
+
+**Assigning `{PHASE_FIELD}`:** If multiple phase calibrators are present, use
+`ms_field_list` and read `nearest_phase_cal.name` + `nearest_phase_cal.separation_deg`
+for each target field. Assign the nearest phase calibrator to each target. If two targets
+share the same nearest cal, use that cal for both.
 
 Before the gaincal call, classify each field in `{FLUX_FIELD},{PHASE_FIELD}` into
 one of four types. Use `ms_field_list` output and domain knowledge to decide.
@@ -314,10 +323,10 @@ Look for:
 ```
 # From ms_calsol_stats output, inspect:
 overall_snr_mean                 # Should be > 3.0, ideally > 5.0
-snr_per_antenna[all]             # All antennas > 2.0; > 3.0 preferred
+outliers.low_snr                 # List of {antenna, spw, field, snr} entries below snr_min
 ```
 - If `snr_mean < 3.0` → **Recovery 2: Low SNR**
-- If > 20% of antennas have SNR < 2.0 → **Recovery 2: Low SNR** (refant retry)
+- If `outliers.low_snr` is non-empty and covers > 20% of antennas → **Recovery 2: Low SNR** (refant retry)
 
 **Check 3: Flag state comparison (delta check)**
 ```
@@ -334,12 +343,11 @@ flag_delta = flag_after - flag_before
 
 **Check 4: Solution distribution (outlier check)**
 ```
-# From ms_calsol_stats, inspect per-antenna amplitude distribution:
-amp_mean[antenna, spw=0, field=flux_idx] for all antennas
-# Flag if any single antenna accounts for > 90% of total amplitude correction
+# From ms_calsol_stats, inspect:
+outliers.amp_outliers            # List of {antenna, spw, field, amp, n_sigma} entries
 ```
-- Expected: antenna-to-antenna variation ~20–30% (normal range)
-- Red flag: one antenna > 90% of others → **Recovery 1: Caltable Not Produced**
+- Expected: `outliers.amp_outliers` is empty; antenna-to-antenna amplitude variation ~20–30% is normal
+- Red flag: one antenna appears in `amp_outliers` across multiple SPWs → **Recovery 1: Caltable Not Produced**
   (refant dependency issue) OR **Recovery 4: Low Coverage**
 
 ### Recovery Tree 1: Caltable Not Produced
@@ -575,6 +583,8 @@ The `gain.G` table contains solutions for both flux and phase calibrators. Use
 | `phase_rms_deg[ant, spw, field=flux_idx]` | flux cal | < 20° | > 45° → ionospheric or bad data |
 | `amp_mean[ant, spw, field=flux_idx]` | flux cal | close to 1.0 | Large deviation → setjy model may be wrong |
 | `amp_mean[ant, spw, field=phase_idx]` | phase cal | systematically higher than flux cal | Expected — fluxscale will correct this |
+| `outliers.low_snr` | list | empty | non-empty → inspect named antennas; use Recovery Tree 2 if > 20% of antennas listed |
+| `outliers.amp_outliers` | list | empty | non-empty → inspect named antennas; an amplitude outlier on the flux cal is a hard flag before applycal |
 
 ---
 
