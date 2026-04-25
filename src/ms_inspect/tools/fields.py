@@ -187,7 +187,9 @@ def run(ms_path: str) -> dict:
         role_field = rec.get("calibrator_role", {})
         role_val = role_field.get("value") if isinstance(role_field, dict) else role_field
         intents_field = rec.get("intents", {})
-        intents_val = intents_field.get("value") if isinstance(intents_field, dict) else intents_field
+        intents_val = (
+            intents_field.get("value") if isinstance(intents_field, dict) else intents_field
+        )
         intents_val = intents_val or []
         is_phase = (
             (isinstance(role_val, list) and "phase" in role_val)
@@ -205,7 +207,9 @@ def run(ms_path: str) -> dict:
         role_field = rec.get("calibrator_role", {})
         role_val = role_field.get("value") if isinstance(role_field, dict) else role_field
         intents_field = rec.get("intents", {})
-        intents_val = intents_field.get("value") if isinstance(intents_field, dict) else intents_field
+        intents_val = (
+            intents_field.get("value") if isinstance(intents_field, dict) else intents_field
+        )
         intents_val = intents_val or []
         is_target = (
             role_val is None
@@ -321,8 +325,7 @@ def _angular_sep_deg(ra1_deg: float, dec1_deg: float, ra2_deg: float, dec2_deg: 
     r2 = np.radians(ra2_deg)
     d1 = np.radians(dec1_deg)
     d2 = np.radians(dec2_deg)
-    c = (np.sin(d1) * np.sin(d2)
-         + np.cos(d1) * np.cos(d2) * np.cos(r1 - r2))
+    c = np.sin(d1) * np.sin(d2) + np.cos(d1) * np.cos(d2) * np.cos(r1 - r2)
     return float(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
 
 

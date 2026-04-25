@@ -219,12 +219,14 @@ def _compute_outliers(
         for flat_idx, val in enumerate(flat):
             if np.isfinite(val) and val < snr_min:
                 idx = np.unravel_index(flat_idx, shape)
-                low_snr.append({
-                    "antenna": ant_names[idx[0]],
-                    "spw": spw_ids[idx[1]] if len(shape) > 1 else 0,
-                    "field": field_names[idx[2]] if len(shape) > 2 else "",
-                    "snr": round(float(val), 3),
-                })
+                low_snr.append(
+                    {
+                        "antenna": ant_names[idx[0]],
+                        "spw": spw_ids[idx[1]] if len(shape) > 1 else 0,
+                        "field": field_names[idx[2]] if len(shape) > 2 else "",
+                        "snr": round(float(val), 3),
+                    }
+                )
 
     amp_outliers: list[dict] = []
     if amp_mean_arr is not None:
@@ -239,13 +241,15 @@ def _compute_outliers(
                     n_sigma = abs(val - median) / sigma
                     if n_sigma > amp_sigma_thresh:
                         idx = np.unravel_index(flat_idx, shape)
-                        amp_outliers.append({
-                            "antenna": ant_names[idx[0]],
-                            "spw": spw_ids[idx[1]] if len(shape) > 1 else 0,
-                            "field": field_names[idx[2]] if len(shape) > 2 else "",
-                            "amp": round(float(val), 4),
-                            "n_sigma": round(float(n_sigma), 2),
-                        })
+                        amp_outliers.append(
+                            {
+                                "antenna": ant_names[idx[0]],
+                                "spw": spw_ids[idx[1]] if len(shape) > 1 else 0,
+                                "field": field_names[idx[2]] if len(shape) > 2 else "",
+                                "amp": round(float(val), 4),
+                                "n_sigma": round(float(n_sigma), 2),
+                            }
+                        )
     return {
         "low_snr": low_snr,
         "amp_outliers": amp_outliers,
@@ -256,7 +260,9 @@ def _compute_outliers(
     }
 
 
-def run(caltable_path: str, snr_min: float = 3.0, amp_sigma: float = 5.0, verbosity: str = "full") -> dict:
+def run(
+    caltable_path: str, snr_min: float = 3.0, amp_sigma: float = 5.0, verbosity: str = "full"
+) -> dict:
     """
     Inspect a CASA calibration table and return per-(antenna, SPW, field) stats.
 

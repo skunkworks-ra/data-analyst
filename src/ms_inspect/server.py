@@ -179,8 +179,10 @@ class FlagSummaryInput(BaseModel):
 class AntennaFlagFractionInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
-    verbosity: str = Field(default="full",
-        description="'full' (default) or 'compact'. Compact strips field() wrappers on per-antenna records.")
+    verbosity: str = Field(
+        default="full",
+        description="'full' (default) or 'compact'. Compact strips field() wrappers on per-antenna records.",
+    )
     n_workers: int | None = Field(
         default=None,
         description=(
@@ -267,17 +269,20 @@ class WorkflowStatusInput(BaseModel):
 class GaincalSnrPredictInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., min_length=1)
-    field: str = Field(..., min_length=1,
-        description="Calibrator field name, e.g. '3C147'.")
-    flux_jy: float | None = Field(default=None, gt=0.0,
+    field: str = Field(..., min_length=1, description="Calibrator field name, e.g. '3C147'.")
+    flux_jy: float | None = Field(
+        default=None,
+        gt=0.0,
         description=(
             "Stokes I flux density in Jy at the observation band. "
             "If None, the tool returns UNAVAILABLE — the bundled catalogue does "
             "not store numeric flux. Read flux_jy from ms_setjy output or a band-"
             "appropriate Perley-Butler lookup before calling this tool."
-        ))
-    solint_seconds: float = Field(default=-1.0,
-        description="Solution interval in seconds. -1 = use scan length.")
+        ),
+    )
+    solint_seconds: float = Field(
+        default=-1.0, description="Solution interval in seconds. -1 = use scan length."
+    )
     snr_threshold: float = Field(default=3.0, ge=0.0)
 
 
@@ -288,12 +293,16 @@ class CalsolStatsInput(BaseModel):
         description="Path to CASA calibration table directory (e.g. gain.g, BP0.b, delay.k)",
         min_length=1,
     )
-    snr_min: float = Field(default=3.0, ge=0.0,
-        description="SNR threshold for low_snr outliers (default 3.0).")
-    amp_sigma: float = Field(default=5.0, ge=0.0,
-        description="Amplitude outlier threshold in sigma (default 5.0).")
-    verbosity: str = Field(default="full",
-        description="'full' (default) or 'compact'. Compact strips field() wrappers.")
+    snr_min: float = Field(
+        default=3.0, ge=0.0, description="SNR threshold for low_snr outliers (default 3.0)."
+    )
+    amp_sigma: float = Field(
+        default=5.0, ge=0.0, description="Amplitude outlier threshold in sigma (default 5.0)."
+    )
+    verbosity: str = Field(
+        default="full",
+        description="'full' (default) or 'compact'. Compact strips field() wrappers.",
+    )
 
 
 class CalsolPlotInput(BaseModel):
@@ -808,7 +817,9 @@ async def ms_antenna_flag_fraction(params: AntennaFlagFractionInput) -> str:
         and per_antenna array of {antenna_id, name, flag_fraction, n_flagged_elements,
         n_total_elements, n_flag_commands_online}.
     """
-    return _run_tool(flags.run, params.ms_path, n_workers=params.n_workers, verbosity=params.verbosity)
+    return _run_tool(
+        flags.run, params.ms_path, n_workers=params.n_workers, verbosity=params.verbosity
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1282,6 +1293,7 @@ async def ms_workflow_status(params: WorkflowStatusInput) -> str:
 async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> str:
     """Predictive SNR for gaincal solint selection."""
     from ms_inspect.tools import gaincal_snr_predict
+
     return _run_tool(
         gaincal_snr_predict.run,
         params.ms_path,

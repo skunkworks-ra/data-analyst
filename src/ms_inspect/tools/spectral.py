@@ -191,7 +191,11 @@ def run_spectral_window_list(ms_path: str) -> dict:
     wide_parts: list[str] = []
     for spw_rec in spws_out:
         sid = spw_rec["spw_id"]
-        n_chan = spw_rec["n_channels"]["value"] if isinstance(spw_rec["n_channels"], dict) else spw_rec["n_channels"]
+        n_chan = (
+            spw_rec["n_channels"]["value"]
+            if isinstance(spw_rec["n_channels"], dict)
+            else spw_rec["n_channels"]
+        )
         if n_chan < 7:
             center_parts.append(f"{sid}:0~{n_chan - 1}")
         else:

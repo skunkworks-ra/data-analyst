@@ -8,6 +8,7 @@ Predictive SNR for gaincal(solint='inf'). Per-(antenna, SpW) SNR formula:
 
 No new CASA table writes. Read-only.
 """
+
 from __future__ import annotations
 
 import math
@@ -24,9 +25,9 @@ TOOL_NAME = "ms_gaincal_snr_predict"
 
 # SEFD table — verbatim from 11-imaging.md §Step 7
 SEFD_JY: dict[str, dict[str, float]] = {
-    "EVLA":    {"P": 2600, "L": 420, "S": 370, "C": 310, "X": 280},
+    "EVLA": {"P": 2600, "L": 420, "S": 370, "C": 310, "X": 280},
     "MeerKAT": {"L": 400, "S": 380, "C": 420},
-    "uGMRT":   {"P": 1800, "L": 600, "S": 560},
+    "uGMRT": {"P": 1800, "L": 600, "S": 560},
 }
 
 # Telescope name normalisation — OBSERVATION.TELESCOPE_NAME values
@@ -83,8 +84,7 @@ def run(
     telescope = _normalise_telescope(telescope_raw)
     if telescope is None:
         warnings.append(
-            f"Telescope '{telescope_raw}' not in SEFD table. "
-            "SNR prediction unavailable."
+            f"Telescope '{telescope_raw}' not in SEFD table. SNR prediction unavailable."
         )
 
     # 2. Flux density — must be supplied by caller.
@@ -106,8 +106,9 @@ def run(
             "telescope": telescope_raw,
             "calibrator": field_name,
             "calibrator_flux_jy": fmt_field(
-                None, flag="UNAVAILABLE",
-                note="flux_jy not provided; required for numeric SNR prediction"
+                None,
+                flag="UNAVAILABLE",
+                note="flux_jy not provided; required for numeric SNR prediction",
             ),
             "solint_seconds": fmt_field(None, flag="UNAVAILABLE"),
             "snr_threshold": snr_threshold,
@@ -140,12 +141,14 @@ def run(
             centre_hz = float(chan_freqs.mean())
             bw_hz = float(chan_widths.sum())
             band = freq_to_band_name(centre_hz, telescope_raw) if telescope else None
-            spw_info.append({
-                "spw_id": spw_id,
-                "centre_hz": centre_hz,
-                "bw_hz": bw_hz,
-                "band": band,
-            })
+            spw_info.append(
+                {
+                    "spw_id": spw_id,
+                    "centre_hz": centre_hz,
+                    "bw_hz": bw_hz,
+                    "band": band,
+                }
+            )
 
         # 4. Resolve solint
         t_solint: float | None = None
@@ -183,22 +186,26 @@ def run(
             sefd_jy = SEFD_JY.get(telescope, {}).get(band)
 
         if sefd_jy is None or t_solint is None or t_solint <= 0:
-            per_spw.append({
-                "spw_id": spw["spw_id"],
-                "band": band,
-                "sefd_jy": None,
-                "predicted_snr": None,
-            })
+            per_spw.append(
+                {
+                    "spw_id": spw["spw_id"],
+                    "band": band,
+                    "sefd_jy": None,
+                    "predicted_snr": None,
+                }
+            )
             continue
 
         bw_hz = spw["bw_hz"]
         snr = flux_jy / (sefd_jy / math.sqrt(2.0 * bw_hz * t_solint * n_baselines_per_ant))
-        per_spw.append({
-            "spw_id": spw["spw_id"],
-            "band": band,
-            "sefd_jy": sefd_jy,
-            "predicted_snr": round(snr, 2),
-        })
+        per_spw.append(
+            {
+                "spw_id": spw["spw_id"],
+                "band": band,
+                "sefd_jy": sefd_jy,
+                "predicted_snr": round(snr, 2),
+            }
+        )
         if snr < snr_threshold:
             n_below += 1
 
@@ -216,7 +223,8 @@ def run(
         "telescope": telescope_raw,
         "calibrator": field_name,
         "calibrator_flux_jy": fmt_field(
-            flux_jy, flag="COMPLETE",
+            flux_jy,
+            flag="COMPLETE",
             note=cal_note,
         ),
         "solint_seconds": fmt_field(round(t_solint, 1) if t_solint else None),

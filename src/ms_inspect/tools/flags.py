@@ -216,7 +216,12 @@ def run_preflight(ms_path: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def run(ms_path: str, exclude_autocorr: bool = True, n_workers: int | None = None, verbosity: str = "full") -> dict:
+def run(
+    ms_path: str,
+    exclude_autocorr: bool = True,
+    n_workers: int | None = None,
+    verbosity: str = "full",
+) -> dict:
     """
     Compute per-antenna pre-existing flag fractions.
 
@@ -411,11 +416,13 @@ def run(ms_path: str, exclude_autocorr: bool = True, n_workers: int | None = Non
             for k, v in rec.items():
                 if isinstance(v, dict) and "value" in v and "flag" in v:
                     if v["flag"] != "COMPLETE":
-                        incomplete_fields.append({
-                            "path": f"per_antenna[{rec['antenna_id']}].{k}",
-                            "flag": v["flag"],
-                            "note": v.get("note"),
-                        })
+                        incomplete_fields.append(
+                            {
+                                "path": f"per_antenna[{rec['antenna_id']}].{k}",
+                                "flag": v["flag"],
+                                "note": v.get("note"),
+                            }
+                        )
                     compact_rec[k] = v["value"]
                 else:
                     compact_rec[k] = v

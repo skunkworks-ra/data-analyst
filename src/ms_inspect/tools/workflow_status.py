@@ -5,6 +5,7 @@ Rolls up the state of an MS + workdir into a single next-step label.
 Composer over filesystem + existing tool logic. No new CASA calls beyond
 what verify_import / priorcals_check / caltables do.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -65,8 +66,9 @@ def run(ms_path: str, workdir: str) -> dict:
     final_caltables_present = [t for t in final_tables if (wd / t).exists()]
 
     # 9. First image present (heuristic)
-    first_image_present = len(list(wd.glob("*.image.pbcor"))) > 0 or \
-                          len(list(wd.glob("*.image"))) > 0
+    first_image_present = (
+        len(list(wd.glob("*.image.pbcor"))) > 0 or len(list(wd.glob("*.image"))) > 0
+    )
 
     # Derive next_recommended_step
     if not ms_valid:
