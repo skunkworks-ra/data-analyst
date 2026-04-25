@@ -71,6 +71,32 @@ does not cover P-band.
 For VLA P-band, the ionosphere varies on timescales of seconds — see 08-pband-specifics.md
 for P-band-specific solint overrides.
 
+### solint SNR check — run before Step 4
+
+Before committing to `solint='inf'` for the gain solve, verify the predicted SNR
+is adequate. Use the flux density from `ms_setjy` output (`{FLUX_JY}`).
+
+```
+ms_gaincal_snr_predict(
+    ms_path        = {VIS},
+    field_name     = {FLUX_FIELD},
+    solint_seconds = -1,          # -1 = use full scan length (equivalent to solint='inf')
+    snr_threshold  = 3.0,
+    flux_jy        = {FLUX_JY},   # Stokes I flux density from ms_setjy
+)
+```
+
+Read `predicted_snr_per_spw[antenna, spw]` from the output:
+
+| Result | Action |
+|--------|--------|
+| All SPWs > 5.0 | Proceed with `solint='inf'` as planned |
+| Any SPW 3.0–5.0 | Proceed; note the low-SNR SPWs in the run log |
+| Any SPW < 3.0 | Try `solint_seconds` equal to your scan length / 2 in the tool; if still < 3.0, use `combine='scan'` in the gaincal call |
+
+If `flux_jy` is UNAVAILABLE (setjy was not run or the source is not in the catalogue),
+the tool returns UNAVAILABLE for all SNR fields. Skip the check and proceed; note it.
+
 ---
 
 ## Calibration table naming convention
@@ -616,6 +642,46 @@ prior caltables or the flux calibrator model.
 After fluxscale, gain amplitudes for both calibrators should be similar in
 magnitude — the phase calibrator corrections should no longer be systematically
 higher or lower than the flux calibrator.
+
+---
+
+## Step 6b — Visual inspection: plot all caltables
+
+After fluxscale completes, plot the full calibration library in one call.
+This is a mandatory step — do not skip it to save time. The dashboards are
+the primary record of calibration quality for the science archive.
+
+```
+ms_plot_caltable_library(
+    caltable_paths = [
+        {WORKDIR}/initial_phase.G0,
+        {WORKDIR}/delay.K,
+        {WORKDIR}/bandpass.B,
+        {WORKDIR}/gain.G,
+        {WORKDIR}/gain.fluxscaled,
+    ],
+    output_dir = {WORKDIR}/plots,
+)
+```
+
+Check the returned `n_error` count first. If any table failed to plot, read
+the `error` field for that entry — a missing table at this stage means a
+prior solve step silently produced no output, which must be resolved before
+applycal.
+
+For each successfully plotted table, open the HTML dashboard and verify:
+
+| Table | What to look for |
+|-------|-----------------|
+| `initial_phase.G0` | Phase RMS < 60° across all antennas; no single antenna wildly outlying |
+| `delay.K` | Delays within ±30 ns; both polarizations consistent; heatmap mostly unflagged |
+| `bandpass.B` | Smooth amplitude vs channel per SPW; edge roll-off expected; no mid-band spikes |
+| `gain.G` | Flux cal amplitudes close to 1.0; phase cal amplitudes systematically higher (correct); phase RMS < 20° |
+| `gain.fluxscaled` | Flux and phase cal amplitudes now comparable in scale |
+
+If any dashboard shows a hard anomaly (antenna completely missing, half the
+SPWs flagged in the heatmap, wildly non-smooth bandpass), stop and diagnose
+before proceeding to applycal.
 
 ---
 

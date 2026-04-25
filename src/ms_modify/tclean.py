@@ -17,7 +17,7 @@ from pathlib import Path
 
 from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
-from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.formatting import normalize_field_sel, response_envelope
 from ms_modify.exceptions import TcleanFailedError
 
 TOOL_NAME = "ms_tclean"
@@ -148,6 +148,7 @@ def run(
         Standard response envelope with script_path always present.
         When execute=True, also includes imagename and completed flag.
     """
+    field = normalize_field_sel(field)
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     warnings: list[str] = []
@@ -166,21 +167,23 @@ def run(
         )
 
     # Verify CORRECTED_DATA column exists.
+    # Open failure (casatools not installed, table locked) is non-fatal — add a warning.
+    # Missing column is always fatal — tclean on uncalibrated data is a silent science error.
+    col_names: list[str] = []
     try:
         with open_table(ms_str) as tb:
-            col_names = tb.colnames()
+            col_names = list(tb.colnames())
         casa_calls.append("tb.open(MS) → colnames() [CORRECTED_DATA check]")
-        if "CORRECTED_DATA" not in col_names:
-            from ms_inspect.exceptions import InsufficientMetadataError
-
-            raise InsufficientMetadataError(
-                "CORRECTED_DATA column not found in MS. Run ms_applycal before imaging.",
-                ms_path=ms_path,
-            )
-    except (ImportError, Exception) as exc:
-        if "CORRECTED_DATA" in str(exc) or "applycal" in str(exc):
-            raise
+    except Exception as exc:
         warnings.append(f"Could not verify CORRECTED_DATA column: {exc}")
+
+    if col_names and "CORRECTED_DATA" not in col_names:
+        from ms_inspect.exceptions import InsufficientMetadataError
+
+        raise InsufficientMetadataError(
+            "CORRECTED_DATA column not found in MS. Run ms_applycal before imaging.",
+            ms_path=ms_path,
+        )
 
     script_file = _script_path(workdir_path, imagename)
     script_content = _build_script(

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from ms_inspect.util.casa_context import validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
-from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.formatting import normalize_field_sel, response_envelope
 from ms_modify.exceptions import PolcalFailedError
 
 TOOL_NAME = "ms_polcal"
@@ -110,6 +110,7 @@ def run(
         Standard response envelope with script_path always present.
         When execute=True, also includes caltable path.
     """
+    field = normalize_field_sel(field)
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     casa_calls: list[str] = []

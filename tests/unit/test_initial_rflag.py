@@ -39,11 +39,10 @@ class TestBuildCmdsContent:
         assert "2.0" in content
         assert "2.5" in content
 
-    def test_action_apply_in_both_lines(self):
+    def test_no_action_key_in_lines(self):
+        # flagdata list-mode does not accept the 'action' key; it must be absent
         content = _build_cmds_content(5.0, 5.0, 4.0, 4.0)
-        lines = [ln for ln in content.splitlines() if ln.strip()]
-        for line in lines:
-            assert "action='apply'" in line
+        assert "action=" not in content
 
     def test_exactly_two_command_lines(self):
         content = _build_cmds_content(5.0, 5.0, 4.0, 4.0)

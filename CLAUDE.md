@@ -201,12 +201,14 @@ Environment variable reference:
 | `ms_flag_preflight` | `tools/flags.py` | Fast probe: row count, FLAG shape, data volume, runtime estimate, recommended workers |
 | `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` adaptive parallel reads; accepts `n_workers` override |
 
-### Calibration inspection (2 tools)
+### Calibration inspection (4 tools)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_calsol_stats` | `tools/calsol_stats.py` | Per-(antenna, SPW, field) stats from G/B/K caltables — flagged fraction, SNR, amplitude/phase arrays, delays |
-| `ms_calsol_plot` | `tools/calsol_plot.py` | Bokeh HTML dashboard + NPZ from a caltable; calls `ms_calsol_stats` internally |
+| `ms_calsol_plot` | `tools/calsol_plot.py` | Bokeh HTML dashboard + NPZ from a single caltable; calls `ms_calsol_stats` internally |
+| `ms_plot_caltable_library` | `tools/calsol_plot_library.py` | Batch plot an explicit list of caltables in one call; partial-success — a bad table records an error entry rather than aborting |
+| `ms_gaincal_snr_predict` | `tools/gaincal_snr_predict.py` | Predict per-(antenna, SPW) SNR for a candidate solint; uses SEFD table + MS metadata; requires `flux_jy` from `ms_setjy` |
 
 ### Pre-calibration inspection (5 tools)
 

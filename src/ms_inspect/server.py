@@ -27,6 +27,7 @@ from ms_inspect.exceptions import RadioMSError
 from ms_inspect.tools import (
     antennas,
     calsol_plot,
+    calsol_plot_library,
     calsol_stats,
     caltables,
     fields,
@@ -315,6 +316,23 @@ class CalsolPlotInput(BaseModel):
     output_dir: str = Field(
         ...,
         description="Directory to write {name}_stats.npz and {name}_dashboard.html.",
+        min_length=1,
+    )
+
+
+class CalsolPlotLibraryInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    caltable_paths: list[str] = Field(
+        ...,
+        description=(
+            "Ordered list of caltable paths to plot "
+            "(e.g. [gain_curves.gc, delay.K, bandpass.B, gain.G, gain.fluxscaled])."
+        ),
+        min_length=1,
+    )
+    output_dir: str = Field(
+        ...,
+        description="Directory to write all dashboard HTML and NPZ files.",
         min_length=1,
     )
 
@@ -1220,6 +1238,43 @@ async def ms_calsol_plot(params: CalsolPlotInput) -> str:
         JSON with npz_path, html_path, table_type, and axis dimensions.
     """
     return _run_tool(calsol_plot.run, params.caltable_path, params.output_dir)
+
+
+@mcp.tool(
+    name="ms_plot_caltable_library",
+    description=(
+        "Plot an explicit list of CASA calibration tables in one call. "
+        "Produces a Bokeh HTML dashboard and NPZ per table. "
+        "Partial success: a bad table records an error entry rather than aborting the batch."
+    ),
+    annotations={
+        "title": "Plot Calibration Table Library",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_plot_caltable_library(params: CalsolPlotLibraryInput) -> str:
+    """
+    Generate Bokeh HTML dashboards for an explicit list of caltables.
+
+    Each table is plotted independently — a bad table (not found, wrong type,
+    CASA error) records an error entry without aborting the rest of the batch.
+
+    Args:
+        params.caltable_paths: Ordered list of caltable paths to plot.
+        params.output_dir:     Directory to write all HTML and NPZ files.
+
+    Returns:
+        JSON with a per-table plots list (status, html_path, npz_path,
+        table_type, error), plus n_ok and n_error counts.
+    """
+    return _run_tool(
+        calsol_plot_library.run,
+        params.caltable_paths,
+        params.output_dir,
+    )
 
 
 @mcp.tool(

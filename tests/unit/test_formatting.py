@@ -11,6 +11,8 @@ from ms_inspect.util.formatting import (
     _collect_flags,
     error_envelope,
     field,
+    normalize_field_sel,
+    normalize_spw_sel,
     response_envelope,
     round_dict,
     truncate_list,
@@ -242,3 +244,79 @@ class TestTruncateList:
         items, truncated = truncate_list([], max_items=5)
         assert items == []
         assert truncated is False
+
+
+# ---------------------------------------------------------------------------
+# normalize_field_sel
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeFieldSel:
+    def test_passthrough_comma_string(self):
+        assert normalize_field_sel("0,1") == "0,1"
+
+    def test_passthrough_name_string(self):
+        assert normalize_field_sel("J1331+3030") == "J1331+3030"
+
+    def test_passthrough_empty(self):
+        assert normalize_field_sel("") == ""
+
+    def test_int_list_repr(self):
+        assert normalize_field_sel("[0, 1]") == "0,1"
+
+    def test_str_list_repr(self):
+        assert normalize_field_sel("['J1331+3030', 'J1822-0938']") == "J1331+3030,J1822-0938"
+
+    def test_single_element_list(self):
+        assert normalize_field_sel("[0]") == "0"
+
+    def test_tuple_repr(self):
+        assert normalize_field_sel("(0, 1)") == "0,1"
+
+    def test_range_string_passthrough(self):
+        assert normalize_field_sel("2~8") == "2~8"
+
+
+# ---------------------------------------------------------------------------
+# normalize_spw_sel
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeSpwSel:
+    # --- list/tuple repr (shared with normalize_field_sel) ---
+    def test_int_list_repr(self):
+        assert normalize_spw_sel("[0, 1]") == "0,1"
+
+    def test_single_element_list(self):
+        assert normalize_spw_sel("[0]") == "0"
+
+    def test_str_list_with_channel_ranges(self):
+        assert normalize_spw_sel("['0:5~58', '1:10~20']") == "0:5~58,1:10~20"
+
+    # --- bare semicolon-separated SPW list ---
+    def test_bare_semicolons_no_colon(self):
+        assert normalize_spw_sel("0;1;2") == "0,1,2"
+
+    def test_bare_semicolons_with_spaces(self):
+        assert normalize_spw_sel("0; 1; 2") == "0,1,2"
+
+    def test_single_spw_no_semicolon(self):
+        assert normalize_spw_sel("0") == "0"
+
+    # --- channel-range specs: semicolons must be preserved ---
+    def test_channel_range_semicolon_preserved(self):
+        # "0:5~10;20~30" — colon present, semicolon is a channel-range separator
+        assert normalize_spw_sel("0:5~10;20~30") == "0:5~10;20~30"
+
+    def test_channel_range_with_comma_spw(self):
+        assert normalize_spw_sel("0:5~58,1") == "0:5~58,1"
+
+    # --- passthrough cases ---
+    def test_passthrough_empty(self):
+        assert normalize_spw_sel("") == ""
+
+    def test_passthrough_comma_separated(self):
+        assert normalize_spw_sel("0,1,2") == "0,1,2"
+
+    def test_passthrough_single_channel_range(self):
+        assert normalize_spw_sel("0:27~35") == "0:27~35"

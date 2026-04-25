@@ -102,27 +102,39 @@ skip_reasons = {{}}
 print("Generating gain curves...")
 if os.path.exists(gc_table):
     shutil.rmtree(gc_table)
-gencal(vis=ms_path, caltable=gc_table, caltype="gc")
-if _table_nrows(gc_table) > 0:
-    priorcals.append(gc_table)
-    print(f"  gc: {{gc_table}}")
-else:
+try:
+    gencal(vis=ms_path, caltable=gc_table, caltype="gc")
+except Exception as _exc:
+    print(f"  gc: gencal raised {{_exc!r}} — skipped")
     skipped.append("gain_curves.gc")
-    skip_reasons["gain_curves.gc"] = "gencal returned 0-row table"
-    print("  gc: empty — skipped")
+    skip_reasons["gain_curves.gc"] = str(_exc)
+if "gain_curves.gc" not in skip_reasons:
+    if _table_nrows(gc_table) > 0:
+        priorcals.append(gc_table)
+        print(f"  gc: {{gc_table}}")
+    else:
+        skipped.append("gain_curves.gc")
+        skip_reasons["gain_curves.gc"] = "gencal returned 0-row table"
+        print("  gc: empty — skipped")
 
 # 2 — Opacities
 print("Generating opacities...")
 if os.path.exists(opac_table):
     shutil.rmtree(opac_table)
-gencal(vis=ms_path, caltable=opac_table, caltype="opac")
-if _table_nrows(opac_table) > 0:
-    priorcals.append(opac_table)
-    print(f"  opac: {{opac_table}}")
-else:
+try:
+    gencal(vis=ms_path, caltable=opac_table, caltype="opac")
+except Exception as _exc:
+    print(f"  opac: gencal raised {{_exc!r}} — skipped")
     skipped.append("opacities.opac")
-    skip_reasons["opacities.opac"] = "gencal returned 0-row table"
-    print("  opac: empty — skipped")
+    skip_reasons["opacities.opac"] = str(_exc)
+if "opacities.opac" not in skip_reasons:
+    if _table_nrows(opac_table) > 0:
+        priorcals.append(opac_table)
+        print(f"  opac: {{opac_table}}")
+    else:
+        skipped.append("opacities.opac")
+        skip_reasons["opacities.opac"] = "gencal returned 0-row table"
+        print("  opac: empty — skipped")
 
 # 3 — Requantizer (VLA post-2011 only)
 obs_mjd = _get_obs_mjd(ms_path)
@@ -130,14 +142,20 @@ if obs_mjd is None or obs_mjd >= {rq_mjd_threshold}:
     print("Generating requantizer corrections...")
     if os.path.exists(rq_table):
         shutil.rmtree(rq_table)
-    gencal(vis=ms_path, caltable=rq_table, caltype="rq")
-    if _table_nrows(rq_table) > 0:
-        priorcals.append(rq_table)
-        print(f"  rq: {{rq_table}}")
-    else:
+    try:
+        gencal(vis=ms_path, caltable=rq_table, caltype="rq")
+    except Exception as _exc:
+        print(f"  rq: gencal raised {{_exc!r}} — skipped")
         skipped.append("requantizer.rq")
-        skip_reasons["requantizer.rq"] = "gencal returned 0-row table"
-        print("  rq: empty — skipped")
+        skip_reasons["requantizer.rq"] = str(_exc)
+    if "requantizer.rq" not in skip_reasons:
+        if _table_nrows(rq_table) > 0:
+            priorcals.append(rq_table)
+            print(f"  rq: {{rq_table}}")
+        else:
+            skipped.append("requantizer.rq")
+            skip_reasons["requantizer.rq"] = "gencal returned 0-row table"
+            print("  rq: empty — skipped")
 else:
     skipped.append("requantizer.rq")
     skip_reasons["requantizer.rq"] = f"MJD {{obs_mjd:.1f}} < {rq_mjd_threshold} (pre-WIDAR)"
@@ -147,14 +165,20 @@ else:
 print("Generating antenna position corrections...")
 if os.path.exists(antpos_table):
     shutil.rmtree(antpos_table)
-gencal(vis=ms_path, caltable=antpos_table, caltype="antpos")
-if _table_nrows(antpos_table) > 0:
-    priorcals.append(antpos_table)
-    print(f"  antpos: {{antpos_table}}")
-else:
+try:
+    gencal(vis=ms_path, caltable=antpos_table, caltype="antpos")
+except Exception as _exc:
+    print(f"  antpos: gencal raised {{_exc!r}} — skipped")
     skipped.append("antpos.ap")
-    skip_reasons["antpos.ap"] = "gencal returned 0-row table"
-    print("  antpos: empty — skipped (no corrections needed)")
+    skip_reasons["antpos.ap"] = str(_exc)
+if "antpos.ap" not in skip_reasons:
+    if _table_nrows(antpos_table) > 0:
+        priorcals.append(antpos_table)
+        print(f"  antpos: {{antpos_table}}")
+    else:
+        skipped.append("antpos.ap")
+        skip_reasons["antpos.ap"] = "gencal returned 0-row table"
+        print("  antpos: empty — skipped (no corrections needed)")
 
 print()
 print(f"priorcals = {{priorcals}}")

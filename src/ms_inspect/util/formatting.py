@@ -173,3 +173,74 @@ def truncate_list(items: list, max_items: int = 50) -> tuple[list, bool]:
     if len(items) <= max_items:
         return items, False
     return items[:max_items], True
+
+
+# ---------------------------------------------------------------------------
+# CASA input normalization helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize_casa_sel(value: str) -> str:
+    """Convert Python list/tuple repr to CASA comma-separated selection string."""
+    if not value:
+        return value
+    import ast
+
+    try:
+        parsed = ast.literal_eval(value)
+        if isinstance(parsed, (list, tuple)):
+            return ",".join(str(x) for x in parsed)
+    except (ValueError, SyntaxError):
+        pass
+    return value
+
+
+def normalize_field_sel(value: str) -> str:
+    """
+    Normalize a CASA field selection string.
+
+    LLMs sometimes pass Python list syntax ("[0, 1]" or "['J1331', 'J1822']")
+    instead of CASA's comma-separated syntax ("0,1" or "J1331,J1822").
+    Passes already-valid strings through unchanged.
+
+    Examples:
+        "[0, 1]"                       → "0,1"
+        "['J1331+3030', 'J1822-0938']" → "J1331+3030,J1822-0938"
+        "0,1"                          → "0,1"
+        ""                             → ""
+    """
+    return _normalize_casa_sel(value)
+
+
+def normalize_spw_sel(value: str) -> str:
+    """
+    Normalize a CASA SPW selection string.
+
+    Two normalizations are applied in order:
+
+    1. Python list/tuple repr → comma-separated string.
+       "[0, 1]" or "['0:5~58', '1']" → "0,1" or "0:5~58,1"
+
+    2. Bare semicolon-separated SPW list → comma-separated.
+       "0;1;2" → "0,1,2"
+       Only applied when no ":" precedes a ";" — colon indicates a channel-range
+       spec ("0:5~10;20~30") where the semicolon must be preserved.
+
+    Channel-range and channel-selection syntax is passed through unchanged:
+        "0:5~58"        → "0:5~58"
+        "0:5~10;20~30"  → "0:5~10;20~30"
+        ""              → ""
+
+    Examples:
+        "[0]"          → "0"
+        "[0, 1]"       → "0,1"
+        "0;1;2"        → "0,1,2"
+        "0:5~10;20~30" → "0:5~10;20~30"  (channel ranges preserved)
+        "0:5~58,1"     → "0:5~58,1"
+    """
+    value = _normalize_casa_sel(value)
+    # Normalize bare semicolons that are SPW separators (no preceding colon)
+    if ";" in value and ":" not in value:
+        value = ",".join(part.strip() for part in value.split(";"))
+    return value
+

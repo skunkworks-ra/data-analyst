@@ -34,8 +34,8 @@ def _build_cmds_content(
 ) -> str:
     """Build the text content for initial_rflag_cmds.txt."""
     lines = [
-        f"mode='rflag' datacolumn='residual' timedevscale={timedevscale} freqdevscale={freqdevscale} action='apply'",
-        f"mode='tfcrop' datacolumn='residual' timecutoff={timecutoff} freqcutoff={freqcutoff} action='apply'",
+        f"mode='rflag' datacolumn='residual' timedevscale={timedevscale} freqdevscale={freqdevscale}",
+        f"mode='tfcrop' datacolumn='residual' timecutoff={timecutoff} freqcutoff={freqcutoff}",
     ]
     return "\n".join(lines) + "\n"
 

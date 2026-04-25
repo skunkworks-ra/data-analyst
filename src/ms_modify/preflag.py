@@ -22,7 +22,7 @@ from pathlib import Path
 
 from ms_inspect.util.casa_context import validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
-from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.formatting import normalize_field_sel, response_envelope
 
 TOOL_NAME = "ms_apply_preflag"
 
@@ -134,6 +134,7 @@ def run(
     casa_calls: list[str] = []
     warnings: list[str] = []
 
+    cal_fields = normalize_field_sel(cal_fields)
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
