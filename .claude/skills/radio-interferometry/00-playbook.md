@@ -14,7 +14,7 @@ Find your current state in the left column. Run the right-column tool
 | Pre-cal complete (rflag done, CORRECTED populated) | Run `/calibrate` or read `07-calibration-execution.md` |
 | Calibration solve done (G/B/K/fluxscale) | For pol: `/polcal` or read `09-polcal-execution.md`; else `/image` |
 | Polcal done | `/image` with stokes='IQUV' or read `11-imaging.md` |
-| First-pass image done | Assess via `ms_image_stats`; self-cal is Phase 3 (not yet built) |
+| First-pass image done | Read `12-selfcal.md` — one-pass phase selfcal with before/after assessment |
 
 ## Unknown state? Use ms_workflow_status(ms_path, workdir) — it returns a next_recommended_step label.
 
@@ -30,5 +30,6 @@ Find your current state in the left column. Run the right-column tool
 - 09-polcal-execution.md — polarization
 - 10-precal-workflow.md — pre-calibration pipeline
 - 11-imaging.md — first-pass imaging
+- 12-selfcal.md — single-pass phase selfcal with before/after DR comparison
 
 Read each file with the Read tool when you reach that stage — do not load everything up front.

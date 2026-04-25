@@ -37,6 +37,10 @@ ms_refant(calibrators.ms, field=bp_field) → ranked reference antenna list
 ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
   → run initial_bandpass.py as background job; wait for completion however long it takes
 ms_verify_caltables(...)                  → confirm init_gain.g + BP0.b valid
+ms_plot_caltable_library(               → plot both caltables; review before proceeding
+    caltables=[init_gain.g, BP0.b],
+    workdir=workdir,
+)
 
 ms_residual_stats(field_id=bp_field_id)  → inspect amplitude distribution
 ms_apply_initial_rflag(execute=False)    → generate initial_rflag.py
@@ -178,6 +182,27 @@ After the script completes, verify with `ms_verify_caltables`:
 | `init_gain.g` exists | Has rows | Missing or 0 rows → re-run with different `bp_scan` selection |
 | `BP0.b` exists | Has rows | Missing or 0 rows → check `bp_field` selection and `refant` |
 | `corrected_written` | True | False → applycal silently failed; check MS permissions |
+
+After verification passes, call `ms_plot_caltable_library` on both tables:
+
+```python
+ms_plot_caltable_library(
+    caltables=[f"{workdir}/init_gain.g", f"{workdir}/BP0.b"],
+    workdir=workdir,
+)
+```
+
+Inspect the HTML dashboard before proceeding. Key things to look for:
+
+| Plot | What to check | Action if bad |
+|------|--------------|---------------|
+| `init_gain.g` amplitude vs time | Should be smooth, all antennas tracking together | Outlier antenna → exclude from refant list |
+| `init_gain.g` phase vs time | Should be near-zero (pre-bandpass short solution) | Large phase jumps → check scan selection; try shorter solint |
+| `BP0.b` amplitude vs channel | Should be smooth per antenna; RFI shows as spikes | Persistent spike channels → note for `ms_rfi_channel_stats` after rflag |
+| `BP0.b` phase vs channel | Linear slope across band is acceptable; sharp discontinuities are not | Discontinuity → possible missed delay; verify `init_gain.g` passed |
+| Flagged fraction in plots | Any antenna with > 30% flagged solutions | If ≥ 1 antenna fully absent from plots → re-check refant choice |
+
+If `ms_plot_caltable_library` returns error entries (any table in the `errors` field), do not proceed — re-run the initial bandpass step.
 
 If either caltable is missing, do not proceed to rflag. Diagnose:
 1. Was `bp_field` correct? Cross-check against `ms_field_list` intents.

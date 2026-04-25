@@ -66,6 +66,14 @@ Follow the skills loaded into your context in order:
    - Initial phase → delay → bandpass → gain → fluxscale → quality gate →
      applycal (flux cal, phase cal, target)
 
+3. **Skill 11 — First-pass imaging** (`11-imaging.md`)
+   - Confirm field selection → derive tclean parameters → run ms_tclean →
+     quality gate with `ms_image_stats` → go/no-go on the calibrated dataset
+
+4. **Skill 12 — Single-pass phase selfcal** (`12-selfcal.md`)
+   - Assess whether selfcal is warranted → phase-only gaincal against MODEL_DATA →
+     applycal → re-image → compare DR and RMS before/after → report and recommend
+
 ---
 
 ## Execution rules
@@ -95,18 +103,20 @@ Key numbers returned: ...
 Decision made: ...
 ```
 
-In addition, whenever you wanted to do something that the tool boundary
-prevented — a direct CASA call, a web lookup, an operation with no MCP
-equivalent — log it explicitly:
+**MANDATORY: At the end of every workflow stage, you MUST write a constraint
+note entry — even if no constraint was encountered.** Use the form:
 
 ```
-### [CONSTRAINT NOTE] — [timestamp]
+### [CONSTRAINT NOTE] — [Step name] — [timestamp]
 Wanted to: ...
 Was constrained to: ...
 Impact on result: ...
 ```
 
-These constraint notes are scientifically valuable. Record them honestly.
+If no constraint was hit, write: `Wanted to: N/A — no tool boundary reached this stage.`
+
+Do not skip this. These entries are the primary scientific output of the run
+for evaluating tool coverage. A run log with no constraint notes is incomplete.
 
 ---
 
@@ -121,6 +131,7 @@ At the end of the run, report the following quality metrics:
 | Gain flagged fraction | `ms_calsol_stats` | < 8% |
 | Post-applycal flag fraction | `ms_flag_summary` | < 30% overall |
 | Derived phase cal flux density | `ms_fluxscale` response | Within 20% of known value |
+| Caltable plots generated | `ms_plot_caltable_library` | HTML dashboard written for all caltables; no error entries |
 
 Summarise the full run: steps taken, decisions made, anomalies encountered,
 constraint notes logged, and a clear go/no-go assessment of the calibrated
