@@ -173,10 +173,19 @@ def run_antenna_list(ms_path: str) -> dict:
             }
         )
 
+    # Recommended minblperant heuristic
+    if n_ant >= 20:
+        recommended_minblperant = 4
+    elif n_ant >= 10:
+        recommended_minblperant = 3
+    else:
+        recommended_minblperant = max(2, n_ant - 3)
+
     data = {
         "n_antennas": n_ant,
         "n_antennas_in_main_table": len(main_ids - {a for a in main_ids if False}),
         "n_baselines_cross": n_ant * (n_ant - 1) // 2,
+        "recommended_minblperant": recommended_minblperant,
         "orphaned_antenna_ids": [],
         "antenna_table_completeness": "COMPLETE",
         "array_centre_lat_deg": round(lat, 6),

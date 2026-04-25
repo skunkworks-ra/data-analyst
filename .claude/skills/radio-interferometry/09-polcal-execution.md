@@ -43,6 +43,20 @@ PA coverage. Document the reduced coverage in the output summary.
 
 ---
 
+## Tool API reference
+
+The following table maps each polcal step to the exact MCP tool and key parameters:
+
+| Step | Tool | Key parameters | Note |
+|------|------|----------------|------|
+| Angle model setup | `ms_setjy_polcal` | `field`, `reffreq_ghz`, `polindex_deg=3`, `polangle_deg=4` | Run once per angle cal; populates MODEL for Df/Xf solves |
+| Cross-hand delay | `ms_gaincal` | `gaintype='KCROSS'`, `smodel=[1,0,1,0]`, `combine='scan,spw'` | Must run before D-terms; wideband combine recommended |
+| D-term leakage | `ms_polcal` | `poltype='Df'` or `'Df+QU'`, `solint='inf'`, `combine='scan'` | Df: source pol known; Df+QU: solves Q,U simultaneously (preferred) |
+| Position angle | `ms_polcal` | `poltype='Xf'`, `solint='inf'`, `combine='scan'` | Only when verdict is FULL or DEGRADED; requires D-terms in gaintable |
+| Apply all tables | `ms_applycal` | Pass all 7 tables: priorcals → K → B → G → Kcross → D → X | Table order is required by RIME; `parang=True` mandatory |
+
+---
+
 ## Step 1 — Set the polarisation calibrator model
 
 Before any polcal solve, populate the MODEL column for the angle calibrator:
@@ -233,7 +247,7 @@ These are written alongside `delay.K`, `bandpass.B`, `gain.G` in `/data/jobs/{WO
 | `{ANGLE_CAL_FIELD}` | `ms_pol_cal_feasibility` → angle calibrator field name |
 | `{LEAKAGE_CAL_FIELD}` | `ms_pol_cal_feasibility` → leakage calibrator field name (often same as angle cal) |
 | `{REFANT}` | `ms_refant` — same reference antenna used throughout |
-| `{PRIORCALS}` | `ms_generate_priorcals` → list of prior caltables |
+| `{PRIORCALS}` | from `ms_verify_priorcals.priorcals_list` |
 | `{ALL_FIELDS}` | `ms_field_list` → all field IDs, comma-separated |
 
 ---

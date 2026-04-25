@@ -267,7 +267,8 @@ Functions are also callable directly by skills and scripts.
 | `ms_initial_bandpass` | `ms_modify/initial_bandpass.py` | gaincal → bandpass → applycal; populates CORRECTED |
 | `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass |
 | `ms_apply_rflag` | `ms_modify/rflag.py` | General-purpose rflag pass |
-| `ms_gaincal` | `ms_modify/gaincal.py` | Phase/amplitude gain calibration |
+| `ms_gaincal` | `ms_modify/gaincal.py` | Phase/amplitude/cross-hand delay gain calibration (supports gaintype='KCROSS' with smodel) |
+| `ms_polcal` | `ms_modify/polcal.py` | Polarisation calibration: D-term leakage (Df/Df+QU) or position angle (Xf) |
 | `ms_bandpass` | `ms_modify/bandpass.py` | Bandpass calibration |
 | `ms_fluxscale` | `ms_modify/fluxscale.py` | Bootstrap flux scale from flux standard |
 | `ms_applycal` | `ms_modify/applycal.py` | Apply caltables; write CORRECTED_DATA |

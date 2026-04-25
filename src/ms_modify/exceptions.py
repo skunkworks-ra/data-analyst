@@ -53,6 +53,12 @@ class TcleanFailedError(RadioMSError):
     error_type = "TCLEAN_FAILED"
 
 
+class PolcalFailedError(RadioMSError):
+    """Raised when polcal fails to produce the expected caltable."""
+
+    error_type = "POLCAL_FAILED"
+
+
 class SlurmNotAvailableError(RadioMSError):
     """Raised when sbatch is not found on PATH."""
 

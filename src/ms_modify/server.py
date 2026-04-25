@@ -25,6 +25,7 @@ from ms_modify import (
     initial_bandpass,
     initial_rflag,
     intents,
+    polcal,
     preflag,
     priorcals,
     rflag,
@@ -189,6 +190,11 @@ def _run_tool(tool_fn, *args, **kwargs) -> str:
 
 @mcp.tool(
     name="ms_set_intents",
+    description=(
+        "Populate STATE subtable and STATE_ID for an MS lacking scan intents. "
+        "Cross-matches field names against VLA calibrator catalogue. "
+        "Hard-fails if ≥50% of fields already have intents."
+    ),
     annotations={
         "title": "Set Intents",
         "readOnlyHint": False,
@@ -233,6 +239,10 @@ async def ms_set_intents(params: SetIntentsInput) -> str:
 
 @mcp.tool(
     name="ms_initial_bandpass",
+    description=(
+        "Three-step initial bandpass: phase gaincal → bandpass solve → applycal. "
+        "Populates CORRECTED for subsequent RFI flagging. Writes init_gain.g + BP0.b."
+    ),
     annotations={
         "title": "Initial Bandpass Calibration",
         "readOnlyHint": False,
@@ -285,6 +295,11 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
 
 @mcp.tool(
     name="ms_apply_rflag",
+    description=(
+        "General-purpose rflag pass on CORRECTED or DATA column. "
+        "For the residual (CORRECTED − MODEL) pass after initial bandpass use "
+        "ms_apply_initial_rflag instead."
+    ),
     annotations={
         "title": "Apply rflag RFI Flagging",
         "readOnlyHint": False,
@@ -461,6 +476,35 @@ class SetjyPolcalInput(BaseModel):
     )
 
 
+class PolcalInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the Measurement Set.", min_length=1)
+    field: str = Field(
+        ...,
+        description="CASA field selection for calibrator.",
+        min_length=1,
+    )
+    caltable: str = Field(..., description="Output caltable path.", min_length=1)
+    workdir: str = Field(..., description="Existing directory for script output.", min_length=1)
+    poltype: str = Field(
+        ...,
+        description="'Df' (D-terms), 'Df+QU' (D-terms + source pol), or 'Xf' (position angle).",
+    )
+    solint: str = Field(default="inf", description="Solution interval (default 'inf').")
+    combine: str = Field(default="scan", description="Data axes to combine (default 'scan').")
+    refant: str = Field(default="", description="Reference antenna name.")
+    gaintable: list[str] = Field(default_factory=list, description="Prior caltables to apply.")
+    interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
+    parang: bool = Field(
+        default=True,
+        description="Apply parallactic angle correction (default True, critical for polcal).",
+    )
+    execute: bool = Field(
+        default=False,
+        description="If False (default), write script and return. If True, run in-process.",
+    )
+
+
 class ApplyInitialRflagInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(
@@ -505,6 +549,10 @@ class ApplyInitialRflagInput(BaseModel):
 
 @mcp.tool(
     name="ms_apply_preflag",
+    description=(
+        "Deterministic pre-cal flagging (online + shadow + clip + tfcrop + polarization) "
+        "in one flagdata(mode='list') pass, then split calibrators to calibrators.ms."
+    ),
     annotations={
         "title": "Apply Pre-Calibration Flags",
         "readOnlyHint": False,
@@ -548,6 +596,10 @@ async def ms_apply_preflag(params: ApplyPreflagInput) -> str:
 
 @mcp.tool(
     name="ms_generate_priorcals",
+    description=(
+        "Generate four gencal tables: gain_curves.gc, opacities.opac, requantizer.rq, "
+        "antpos.ap. Deterministic — no model required. Verify with ms_verify_priorcals."
+    ),
     annotations={
         "title": "Generate Prior Calibration Tables",
         "readOnlyHint": False,
@@ -586,6 +638,11 @@ async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> str:
 
 @mcp.tool(
     name="ms_setjy",
+    description=(
+        "Set Perley-Butler 2017 Stokes I flux model for standard VLA calibrators. "
+        "Warns on 3C84 (resolved), 3C138/3C48 (variable). "
+        "Use ms_setjy_polcal for full polarization models."
+    ),
     annotations={
         "title": "Set Flux Density Models",
         "readOnlyHint": False,
@@ -625,6 +682,10 @@ async def ms_setjy(params: SetjyInput) -> str:
 
 @mcp.tool(
     name="ms_setjy_polcal",
+    description=(
+        "Set full polarization model (I + polindex + polangle) for a pol angle calibrator "
+        "from Perley-Butler 2013 coefficients. Required before Df/Df+QU/Xf solves."
+    ),
     annotations={
         "title": "Set Polarization Calibrator Model",
         "readOnlyHint": False,
@@ -685,6 +746,10 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
 
 @mcp.tool(
     name="ms_apply_initial_rflag",
+    description=(
+        "Single-pass rflag + tfcrop on residual (CORRECTED − MODEL) for the "
+        "post-initial-bandpass RFI clean-up. Requires MODEL populated by setjy."
+    ),
     annotations={
         "title": "Apply Initial RFI Flagging on Residuals",
         "readOnlyHint": False,
@@ -743,7 +808,7 @@ class GaincalInput(BaseModel):
     workdir: str = Field(..., description="Existing directory for script output.", min_length=1)
     gaintype: str = Field(
         default="G",
-        description="'G' for complex gains, 'K' for delays.",
+        description="'G' for complex gains, 'K' for delays, 'KCROSS' for cross-hand delay.",
     )
     calmode: str = Field(
         default="ap",
@@ -757,6 +822,10 @@ class GaincalInput(BaseModel):
     minsnr: float = Field(default=3.0, description="Minimum SNR for a valid solution.", gt=0.0)
     minblperant: int = Field(default=4, description="Minimum baselines per antenna.", ge=1)
     solnorm: bool = Field(default=False, description="Normalise solutions to unit amplitude.")
+    smodel: list[float] | None = Field(
+        default=None,
+        description="Scratch model [I, Q, U, V] for gaintype='KCROSS' (default None).",
+    )
     gaintable: list[str] = Field(default_factory=list, description="Prior caltables to apply.")
     interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
@@ -888,6 +957,11 @@ class ApplycalInput(BaseModel):
 
 @mcp.tool(
     name="ms_gaincal",
+    description=(
+        "Solve antenna-based gains. gaintype: 'G' (complex gain), 'K' (delay), "
+        "'KCROSS' (cross-hand delay). calmode: 'p'/'a'/'ap'. Writes caltable; "
+        "use ms_fluxscale or ms_applycal next."
+    ),
     annotations={
         "title": "Gain Calibration",
         "readOnlyHint": False,
@@ -944,12 +1018,75 @@ async def ms_gaincal(params: GaincalInput) -> str:
         params.gaintable,
         params.interp,
         params.parang,
+        params.smodel,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_polcal",
+    description=(
+        "Polarization solve. poltype: 'Df' (leakage, known source pol), "
+        "'Df+QU' (leakage + source Q/U together), 'Xf' (absolute position angle). "
+        "Xf requires ms_setjy_polcal first."
+    ),
+    annotations={
+        "title": "Polarisation Calibration",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_polcal(params: PolcalInput) -> str:
+    """
+    Solve for polarisation calibration solutions.
+
+    Supports three poltype modes:
+      poltype='Df'    → D-term leakage calibration
+      poltype='Df+QU' → D-term leakage + source Q,U (both unknowns solved together)
+      poltype='Xf'    → Position angle calibration
+
+    Args:
+        params.ms_path:      Path to the Measurement Set.
+        params.field:        CASA field selection for calibrator.
+        params.caltable:     Output caltable path.
+        params.workdir:      Existing directory for script output.
+        params.poltype:      'Df', 'Df+QU', or 'Xf'.
+        params.solint:       Solution interval (default 'inf').
+        params.combine:      Data axes to combine (default 'scan').
+        params.refant:       Reference antenna.
+        params.gaintable:    Prior caltables to apply on-the-fly.
+        params.interp:       Interpolation mode per gaintable.
+        params.parang:       Apply parallactic angle correction (critical for polcal).
+        params.execute:      Generate script only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, caltable, poltype, field, solint, combine, refant.
+    """
+    return _run_tool(
+        polcal.run,
+        params.ms_path,
+        params.field,
+        params.caltable,
+        params.workdir,
+        params.poltype,
+        params.solint,
+        params.combine,
+        params.refant,
+        params.gaintable or None,
+        params.interp or None,
+        params.parang,
         params.execute,
     )
 
 
 @mcp.tool(
     name="ms_bandpass",
+    description=(
+        "Final bandpass solve after RFI flagging is complete. "
+        "Distinct from ms_initial_bandpass. Applies priors (K + G0) on-the-fly via gaintable."
+    ),
     annotations={
         "title": "Bandpass Calibration",
         "readOnlyHint": False,
@@ -1007,6 +1144,10 @@ async def ms_bandpass(params: BandpassInput) -> str:
 
 @mcp.tool(
     name="ms_fluxscale",
+    description=(
+        "Bootstrap flux scale from primary to secondary calibrators. "
+        "Produces fluxtable for ms_applycal. Do not pass the input gain table to applycal."
+    ),
     annotations={
         "title": "Flux Scale Bootstrap",
         "readOnlyHint": False,
@@ -1052,6 +1193,11 @@ async def ms_fluxscale(params: FluxscaleInput) -> str:
 
 @mcp.tool(
     name="ms_applycal",
+    description=(
+        "Apply calibration tables to a field and populate CORRECTED_DATA. "
+        "Default applymode='calflagstrict' flags data with missing solutions. "
+        "calwt=False is correct for VLA."
+    ),
     annotations={
         "title": "Apply Calibration",
         "readOnlyHint": False,
@@ -1208,6 +1354,11 @@ class TcleanInput(BaseModel):
 
 @mcp.tool(
     name="ms_tclean",
+    description=(
+        "First-pass imaging: generate (or execute) a tclean script. "
+        "pbcor=True always. savemodel='modelcolumn' for self-cal readiness. "
+        "Validates CORRECTED_DATA exists in the MS."
+    ),
     annotations={
         "title": "First-Pass Imaging",
         "readOnlyHint": False,

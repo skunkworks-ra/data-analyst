@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from ms_inspect.util.calibrators import infer_intents_from_role
 from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, validate_ms_path
@@ -177,6 +179,67 @@ def run(ms_path: str) -> dict:
         fields_out.append(record)
 
     # ------------------------------------------------------------------
+    # nearest_phase_cal enrichment for target fields
+    # ------------------------------------------------------------------
+    # Classify fields into phase_cals and targets
+    phase_cal_records = []
+    for rec in fields_out:
+        role_field = rec.get("calibrator_role", {})
+        role_val = role_field.get("value") if isinstance(role_field, dict) else role_field
+        intents_field = rec.get("intents", {})
+        intents_val = intents_field.get("value") if isinstance(intents_field, dict) else intents_field
+        intents_val = intents_val or []
+        is_phase = (
+            (isinstance(role_val, list) and "phase" in role_val)
+            or (isinstance(role_val, str) and "phase" in role_val)
+            or any("PHASE" in str(i).upper() for i in intents_val)
+        )
+        if is_phase:
+            ra_f = rec.get("ra_j2000_deg", {})
+            dec_f = rec.get("dec_j2000_deg", {})
+            ra = ra_f.get("value") if isinstance(ra_f, dict) else ra_f
+            dec = dec_f.get("value") if isinstance(dec_f, dict) else dec_f
+            phase_cal_records.append({"name": rec["name"], "ra": ra, "dec": dec})
+
+    for rec in fields_out:
+        role_field = rec.get("calibrator_role", {})
+        role_val = role_field.get("value") if isinstance(role_field, dict) else role_field
+        intents_field = rec.get("intents", {})
+        intents_val = intents_field.get("value") if isinstance(intents_field, dict) else intents_field
+        intents_val = intents_val or []
+        is_target = (
+            role_val is None
+            or (isinstance(role_val, list) and not role_val)
+            or any("TARGET" in str(i).upper() for i in intents_val)
+        )
+        if not is_target:
+            continue
+        ra_f = rec.get("ra_j2000_deg", {})
+        dec_f = rec.get("dec_j2000_deg", {})
+        tgt_ra = ra_f.get("value") if isinstance(ra_f, dict) else ra_f
+        tgt_dec = dec_f.get("value") if isinstance(dec_f, dict) else dec_f
+        if not phase_cal_records:
+            rec["nearest_phase_cal"] = None
+            rec["separation_deg"] = None
+            if "no phase calibrator found" not in " ".join(warnings):
+                warnings.append("no phase calibrator found — cannot compute separation")
+        elif tgt_ra is None or tgt_dec is None:
+            rec["nearest_phase_cal"] = None
+            rec["separation_deg"] = None
+        else:
+            best_name = None
+            best_sep = float("inf")
+            for pc in phase_cal_records:
+                if pc["ra"] is None or pc["dec"] is None:
+                    continue
+                sep = _angular_sep_deg(tgt_ra, tgt_dec, pc["ra"], pc["dec"])
+                if sep < best_sep:
+                    best_sep = sep
+                    best_name = pc["name"]
+            rec["nearest_phase_cal"] = best_name
+            rec["separation_deg"] = round(best_sep, 2) if best_name is not None else None
+
+    # ------------------------------------------------------------------
     # Mosaic detection: multiple fields same source_id → group them
     # ------------------------------------------------------------------
     mosaic_groups: dict[int, list[int]] = {}
@@ -250,6 +313,17 @@ def _extract_coords(
         )
 
     return ra_rad, dec_rad, "COMPLETE", None
+
+
+def _angular_sep_deg(ra1_deg: float, dec1_deg: float, ra2_deg: float, dec2_deg: float) -> float:
+    """Haversine angular separation on the sphere in degrees."""
+    r1 = np.radians(ra1_deg)
+    r2 = np.radians(ra2_deg)
+    d1 = np.radians(dec1_deg)
+    d2 = np.radians(dec2_deg)
+    c = (np.sin(d1) * np.sin(d2)
+         + np.cos(d1) * np.cos(d2) * np.cos(r1 - r2))
+    return float(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
 
 
 def _vla_positional_match(

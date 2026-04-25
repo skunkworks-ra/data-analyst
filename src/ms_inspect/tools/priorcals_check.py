@@ -112,12 +112,15 @@ def run(
             f"{n_missing} table(s) not found on disk. Run priorcals.py first, then re-verify."
         )
 
+    priorcals_list = [r["path"] for r in results if r["valid"]]
+
     data = {
         "all_valid": fmt_field(all_valid),
         "n_checked": fmt_field(len(results)),
         "n_valid": fmt_field(n_valid),
         "n_missing": fmt_field(n_missing),
         "tables": [fmt_field(r) for r in results],
+        "priorcals_list": priorcals_list,
     }
 
     return response_envelope(

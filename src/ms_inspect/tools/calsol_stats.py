@@ -202,7 +202,61 @@ def _process_slice(
 # ---------------------------------------------------------------------------
 
 
-def run(caltable_path: str) -> dict:
+def _compute_outliers(
+    snr_mean_arr: np.ndarray | None,
+    amp_mean_arr: np.ndarray | None,
+    ant_names: list[str],
+    spw_ids: list[int],
+    field_names: list[str],
+    snr_min: float,
+    amp_sigma_thresh: float,
+) -> dict:
+    """Compute low_snr and amp_outliers lists from solution arrays."""
+    low_snr: list[dict] = []
+    if snr_mean_arr is not None:
+        flat = snr_mean_arr.reshape(-1)
+        shape = snr_mean_arr.shape
+        for flat_idx, val in enumerate(flat):
+            if np.isfinite(val) and val < snr_min:
+                idx = np.unravel_index(flat_idx, shape)
+                low_snr.append({
+                    "antenna": ant_names[idx[0]],
+                    "spw": spw_ids[idx[1]] if len(shape) > 1 else 0,
+                    "field": field_names[idx[2]] if len(shape) > 2 else "",
+                    "snr": round(float(val), 3),
+                })
+
+    amp_outliers: list[dict] = []
+    if amp_mean_arr is not None:
+        median = float(np.nanmedian(amp_mean_arr))
+        mad = float(np.nanmedian(np.abs(amp_mean_arr - median)))
+        sigma = 1.4826 * mad if mad > 0 else 0.0
+        if sigma > 0:
+            flat = amp_mean_arr.reshape(-1)
+            shape = amp_mean_arr.shape
+            for flat_idx, val in enumerate(flat):
+                if np.isfinite(val):
+                    n_sigma = abs(val - median) / sigma
+                    if n_sigma > amp_sigma_thresh:
+                        idx = np.unravel_index(flat_idx, shape)
+                        amp_outliers.append({
+                            "antenna": ant_names[idx[0]],
+                            "spw": spw_ids[idx[1]] if len(shape) > 1 else 0,
+                            "field": field_names[idx[2]] if len(shape) > 2 else "",
+                            "amp": round(float(val), 4),
+                            "n_sigma": round(float(n_sigma), 2),
+                        })
+    return {
+        "low_snr": low_snr,
+        "amp_outliers": amp_outliers,
+        "thresholds": {
+            "snr_min": snr_min,
+            "amp_sigma": amp_sigma_thresh,
+        },
+    }
+
+
+def run(caltable_path: str, snr_min: float = 3.0, amp_sigma: float = 5.0, verbosity: str = "full") -> dict:
     """
     Inspect a CASA calibration table and return per-(antenna, SPW, field) stats.
 
@@ -387,6 +441,34 @@ def run(caltable_path: str) -> dict:
         else:
             data["delay_ns"] = fmt_field(None, flag="UNAVAILABLE", note="No K solutions found.")
             data["delay_rms_ns"] = fmt_field(None, flag="UNAVAILABLE")
+
+    # --- outliers block (always present) ---
+    data["outliers"] = _compute_outliers(
+        snr_mean_arr,
+        amp_mean_arr if table_type in ("G", "B") else None,
+        ant_names,
+        spw_ids,
+        field_names,
+        snr_min,
+        amp_sigma,
+    )
+
+    # --- compact verbosity: strip field() wrappers, roll up incomplete ---
+    if verbosity == "compact":
+        incomplete_fields: list[dict] = []
+        compact_data: dict = {}
+        for k, v in data.items():
+            if k == "outliers":
+                compact_data[k] = v
+                continue
+            if isinstance(v, dict) and "value" in v and "flag" in v:
+                if v["flag"] != "COMPLETE":
+                    incomplete_fields.append({"path": k, "flag": v["flag"], "note": v.get("note")})
+                compact_data[k] = v["value"]
+            else:
+                compact_data[k] = v
+        compact_data["incomplete_fields"] = incomplete_fields
+        data = compact_data
 
     return response_envelope(
         tool_name=TOOL_NAME,

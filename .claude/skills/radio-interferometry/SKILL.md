@@ -29,20 +29,26 @@ instruments — they measure, you reason.
 **Tools return numbers. You supply the science.**
 
 Never ask a tool to interpret its own output. Call a tool, receive structured
-data with completeness flags, then apply the reasoning in this document to
-decide what the numbers mean and what to do next.
+data with completeness flags, then apply the reasoning in the supporting
+knowledge files to decide what the numbers mean and what to do next.
 
-## Supporting knowledge files
+## Start here
 
+@.claude/skills/radio-interferometry/00-playbook.md
 @.claude/skills/radio-interferometry/01-workflow.md
 @.claude/skills/radio-interferometry/01b-workflow-phase2.md
-@.claude/skills/radio-interferometry/02-orientation.md
-@.claude/skills/radio-interferometry/03-instrument-sanity.md
-@.claude/skills/radio-interferometry/04-diagnostic-reasoning.md
-@.claude/skills/radio-interferometry/05-calibrator-science.md
-@.claude/skills/radio-interferometry/06-failure-modes.md
-@.claude/skills/radio-interferometry/07-calibration-execution.md
-@.claude/skills/radio-interferometry/08-pband-specifics.md
-@.claude/skills/radio-interferometry/09-polcal-execution.md
-@.claude/skills/radio-interferometry/10-precal-workflow.md
-@.claude/skills/radio-interferometry/11-imaging.md
+
+## Read the following files on demand (do NOT load up front)
+
+Read each file with the Read tool only when you reach that stage:
+
+- `.claude/skills/radio-interferometry/02-orientation.md`
+- `.claude/skills/radio-interferometry/03-instrument-sanity.md`
+- `.claude/skills/radio-interferometry/04-diagnostic-reasoning.md`
+- `.claude/skills/radio-interferometry/05-calibrator-science.md`
+- `.claude/skills/radio-interferometry/06-failure-modes.md`
+- `.claude/skills/radio-interferometry/07-calibration-execution.md`
+- `.claude/skills/radio-interferometry/08-pband-specifics.md`
+- `.claude/skills/radio-interferometry/09-polcal-execution.md`
+- `.claude/skills/radio-interferometry/10-precal-workflow.md`
+- `.claude/skills/radio-interferometry/11-imaging.md`

@@ -45,6 +45,7 @@ from ms_inspect.tools import (
     shadowing,
     spectral,
     verify_import,
+    workflow_status,
 )
 
 # ---------------------------------------------------------------------------
@@ -178,6 +179,8 @@ class FlagSummaryInput(BaseModel):
 class AntennaFlagFractionInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
+    verbosity: str = Field(default="full",
+        description="'full' (default) or 'compact'. Compact strips field() wrappers on per-antenna records.")
     n_workers: int | None = Field(
         default=None,
         description=(
@@ -255,6 +258,29 @@ class BaselineLengthInput(BaseModel):
     )
 
 
+class WorkflowStatusInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the MS.", min_length=1)
+    workdir: str = Field(..., description="Workdir where caltables/images live.", min_length=1)
+
+
+class GaincalSnrPredictInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., min_length=1)
+    field: str = Field(..., min_length=1,
+        description="Calibrator field name, e.g. '3C147'.")
+    flux_jy: float | None = Field(default=None, gt=0.0,
+        description=(
+            "Stokes I flux density in Jy at the observation band. "
+            "If None, the tool returns UNAVAILABLE — the bundled catalogue does "
+            "not store numeric flux. Read flux_jy from ms_setjy output or a band-"
+            "appropriate Perley-Butler lookup before calling this tool."
+        ))
+    solint_seconds: float = Field(default=-1.0,
+        description="Solution interval in seconds. -1 = use scan length.")
+    snr_threshold: float = Field(default=3.0, ge=0.0)
+
+
 class CalsolStatsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     caltable_path: str = Field(
@@ -262,6 +288,12 @@ class CalsolStatsInput(BaseModel):
         description="Path to CASA calibration table directory (e.g. gain.g, BP0.b, delay.k)",
         min_length=1,
     )
+    snr_min: float = Field(default=3.0, ge=0.0,
+        description="SNR threshold for low_snr outliers (default 3.0).")
+    amp_sigma: float = Field(default=5.0, ge=0.0,
+        description="Amplitude outlier threshold in sigma (default 5.0).")
+    verbosity: str = Field(default="full",
+        description="'full' (default) or 'compact'. Compact strips field() wrappers.")
 
 
 class CalsolPlotInput(BaseModel):
@@ -324,6 +356,11 @@ def _run_tool(tool_fn, *args, **kwargs) -> str:
 
 @mcp.tool(
     name="ms_observation_info",
+    description=(
+        "Telescope identity, observer, project code, UTC time range, duration, "
+        "HISTORY count. First call in any orientation workflow. "
+        "Hard-fails INSUFFICIENT_METADATA if TELESCOPE_NAME is blank."
+    ),
     annotations={
         "title": "Observation Info",
         "readOnlyHint": True,
@@ -354,6 +391,11 @@ async def ms_observation_info(params: MSPathInput) -> str:
 
 @mcp.tool(
     name="ms_field_list",
+    description=(
+        "Field inventory with J2000 coords, intents, and calibrator roles. "
+        "Cross-matches against bundled VLA catalogue. Emits per-target "
+        "nearest_phase_cal and separation_deg."
+    ),
     annotations={
         "title": "Field List",
         "readOnlyHint": True,
@@ -384,6 +426,10 @@ async def ms_field_list(params: MSPathInput) -> str:
 
 @mcp.tool(
     name="ms_scan_list",
+    description=(
+        "Time-ordered scan records with field, intents, integration time, SpW IDs. "
+        "Use for temporal structure and scan-gap detection."
+    ),
     annotations={
         "title": "Scan List",
         "readOnlyHint": True,
@@ -412,6 +458,10 @@ async def ms_scan_list(params: MSPathInput) -> str:
 
 @mcp.tool(
     name="ms_scan_intent_summary",
+    description=(
+        "Observing-time fractions per intent (CALIBRATE_FLUX, CALIBRATE_PHASE, "
+        "OBSERVE_TARGET). Calibrator/target time-balance audit."
+    ),
     annotations={
         "title": "Scan Intent Summary",
         "readOnlyHint": True,
@@ -441,6 +491,10 @@ async def ms_scan_intent_summary(params: MSPathInput) -> str:
 
 @mcp.tool(
     name="ms_spectral_window_list",
+    description=(
+        "Per-SpW frequency, channel count, bandwidth, correlation products, band name. "
+        "Emits suggested.center_channels_string and wide_channels_string for gaincal/bandpass."
+    ),
     annotations={
         "title": "Spectral Window List",
         "readOnlyHint": True,
@@ -471,6 +525,10 @@ async def ms_spectral_window_list(params: MSPathInput) -> str:
 
 @mcp.tool(
     name="ms_correlator_config",
+    description=(
+        "Correlator dump time and polarization basis (circular/linear/stokes/mixed). "
+        "Emits corrstring_casa ('RR,LL' or 'XX,YY') ready for CASA selection strings."
+    ),
     annotations={
         "title": "Correlator Configuration",
         "readOnlyHint": True,
@@ -503,6 +561,11 @@ async def ms_correlator_config(params: MSPathInput) -> str:
 
 @mcp.tool(
     name="ms_antenna_list",
+    description=(
+        "Antenna inventory, ECEF positions, dish diameter, mount type. "
+        "Emits recommended_minblperant scaled to array size. "
+        "Hard-fails on numeric-only antenna names (broken UVFITS)."
+    ),
     annotations={
         "title": "Antenna List",
         "readOnlyHint": True,
@@ -533,6 +596,10 @@ async def ms_antenna_list(params: MSPathInput) -> str:
 
 @mcp.tool(
     name="ms_baseline_lengths",
+    description=(
+        "Physical baseline length statistics (min/max/median metres) plus per-SpW "
+        "expected synthesised beam and largest angular scale. Not UV coverage."
+    ),
     annotations={
         "title": "Baseline Lengths",
         "readOnlyHint": True,
@@ -564,6 +631,10 @@ async def ms_baseline_lengths(params: BaselineLengthInput) -> str:
 
 @mcp.tool(
     name="ms_elevation_vs_time",
+    description=(
+        "Per-scan elevation per field via astropy AltAz. "
+        "Flags scans below threshold_deg (default 20°) for low-elevation warnings."
+    ),
     annotations={
         "title": "Elevation vs Time",
         "readOnlyHint": True,
@@ -595,6 +666,10 @@ async def ms_elevation_vs_time(params: ElevationInput) -> str:
 
 @mcp.tool(
     name="ms_parallactic_angle_vs_time",
+    description=(
+        "Per-field parallactic angle range in sky-frame and feed-frame. "
+        "Feeds ms_pol_cal_feasibility. VALIDATION PENDING for feed-frame values."
+    ),
     annotations={
         "title": "Parallactic Angle vs Time",
         "readOnlyHint": True,
@@ -629,6 +704,10 @@ async def ms_parallactic_angle_vs_time(params: MSPathInput) -> str:
 
 @mcp.tool(
     name="ms_shadowing_report",
+    description=(
+        "Antenna shadowing events from msmd.shadowedAntennas plus FLAG_CMD subtable. "
+        "Structural check before pre-calibration flagging."
+    ),
     annotations={
         "title": "Shadowing Report",
         "readOnlyHint": True,
@@ -660,6 +739,10 @@ async def ms_shadowing_report(params: ShadowingInput) -> str:
 
 @mcp.tool(
     name="ms_flag_preflight",
+    description=(
+        "Fast FLAG-column probe: row count, shape, data volume, runtime estimate, "
+        "recommended n_workers. Call before ms_antenna_flag_fraction on any large MS."
+    ),
     annotations={
         "title": "Flag Column Preflight Probe",
         "readOnlyHint": True,
@@ -692,6 +775,10 @@ async def ms_flag_preflight(params: MSPathInput) -> str:
 
 @mcp.tool(
     name="ms_antenna_flag_fraction",
+    description=(
+        "Pre-existing flag fraction per antenna via parallel FLAG reads. "
+        "Autocorrelations excluded. Slow on large MS — call ms_flag_preflight first."
+    ),
     annotations={
         "title": "Antenna Flag Fraction",
         "readOnlyHint": True,
@@ -721,7 +808,7 @@ async def ms_antenna_flag_fraction(params: AntennaFlagFractionInput) -> str:
         and per_antenna array of {antenna_id, name, flag_fraction, n_flagged_elements,
         n_total_elements, n_flag_commands_online}.
     """
-    return _run_tool(flags.run, params.ms_path, n_workers=params.n_workers)
+    return _run_tool(flags.run, params.ms_path, n_workers=params.n_workers, verbosity=params.verbosity)
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +818,10 @@ async def ms_antenna_flag_fraction(params: AntennaFlagFractionInput) -> str:
 
 @mcp.tool(
     name="ms_refant",
+    description=(
+        "Ranked reference antenna list. Combines geometry (distance from array centre) "
+        "and flagging (unflagged fraction) heuristics. Returns top pick + full ranking."
+    ),
     annotations={
         "title": "Reference Antenna Selection",
         "readOnlyHint": True,
@@ -777,6 +868,10 @@ async def ms_refant(params: RefAntInput) -> str:
 
 @mcp.tool(
     name="ms_verify_caltables",
+    description=(
+        "Filesystem + CASA row-count check for init_gain.g and BP0.b produced by "
+        "ms_initial_bandpass. No CASA solve — quick structural gate."
+    ),
     annotations={
         "title": "Verify Calibration Tables",
         "readOnlyHint": True,
@@ -814,6 +909,10 @@ async def ms_verify_caltables(params: VerifyCaltablesInput) -> str:
 
 @mcp.tool(
     name="ms_rfi_channel_stats",
+    description=(
+        "Per-channel flag fractions across SpWs to find persistent RFI bands. "
+        "Annotated with known sources (GPS, GSM, Iridium, WiFi)."
+    ),
     annotations={
         "title": "RFI Channel Statistics",
         "readOnlyHint": True,
@@ -843,6 +942,10 @@ async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> str:
 
 @mcp.tool(
     name="ms_flag_summary",
+    description=(
+        "flagdata(mode='summary') wrapper: per-field/SpW/antenna/scan flag fractions. "
+        "Run before and after rflag to capture the delta."
+    ),
     annotations={
         "title": "Flag Summary",
         "readOnlyHint": True,
@@ -879,6 +982,10 @@ async def ms_flag_summary(params: FlagSummaryInput) -> str:
 
 @mcp.tool(
     name="ms_pol_cal_feasibility",
+    description=(
+        "Polarization-calibration go/no-go gate. Verdict: FULL, LEAKAGE_ONLY, "
+        "DEGRADED, or NOT_FEASIBLE based on pol-cal presence and PA-spread threshold."
+    ),
     annotations={
         "title": "Polarisation Calibration Feasibility",
         "readOnlyHint": True,
@@ -923,6 +1030,10 @@ async def ms_pol_cal_feasibility(params: PolCalFeasibilityInput) -> str:
 
 @mcp.tool(
     name="ms_online_flag_stats",
+    description=(
+        "Parse .flagonline.txt from importasdm: n_commands, antennas flagged, "
+        "reason breakdown, time range. No CASA dependency — pure text."
+    ),
     annotations={
         "title": "Online Flag File Statistics",
         "readOnlyHint": True,
@@ -951,6 +1062,10 @@ async def ms_online_flag_stats(params: OnlineFlagStatsInput) -> str:
 
 @mcp.tool(
     name="ms_verify_priorcals",
+    description=(
+        "Check prior caltables after ms_generate_priorcals. "
+        "Emits priorcals_list (paths) ready to pass into gaincal/bandpass/applycal."
+    ),
     annotations={
         "title": "Verify Prior Calibration Tables",
         "readOnlyHint": True,
@@ -985,6 +1100,10 @@ async def ms_verify_priorcals(params: VerifyPriorcalsInput) -> str:
 
 @mcp.tool(
     name="ms_residual_stats",
+    description=(
+        "CORRECTED − MODEL amplitude distribution per SpW. "
+        "RFI-threshold guide for ms_apply_initial_rflag. Requires CORRECTED + MODEL."
+    ),
     annotations={
         "title": "Residual Amplitude Statistics",
         "readOnlyHint": True,
@@ -1019,6 +1138,10 @@ async def ms_residual_stats(params: ResidualStatsInput) -> str:
 
 @mcp.tool(
     name="ms_calsol_stats",
+    description=(
+        "Caltable (G/B/K) per-(antenna, SpW, field) SNR, amplitude, phase, flagged fraction. "
+        "Emits outliers block (low_snr + amp_outliers) for go/no-go gates."
+    ),
     annotations={
         "title": "Calibration Solution Statistics",
         "readOnlyHint": True,
@@ -1046,11 +1169,21 @@ async def ms_calsol_stats(params: CalsolStatsInput) -> str:
         JSON with table_type, axis metadata, flagged_frac, snr_mean, amplitude/phase
         stats (G/B), delay_ns and delay_rms_ns (K), and scalar summaries.
     """
-    return _run_tool(calsol_stats.run, params.caltable_path)
+    return _run_tool(
+        calsol_stats.run,
+        params.caltable_path,
+        snr_min=params.snr_min,
+        amp_sigma=params.amp_sigma,
+        verbosity=params.verbosity,
+    )
 
 
 @mcp.tool(
     name="ms_calsol_plot",
+    description=(
+        "Bokeh HTML dashboard + NPZ export for a caltable. "
+        "For human visual inspection; not used for automated decisions."
+    ),
     annotations={
         "title": "Calibration Solution Dashboard",
         "readOnlyHint": True,
@@ -1080,6 +1213,10 @@ async def ms_calsol_plot(params: CalsolPlotInput) -> str:
 
 @mcp.tool(
     name="ms_verify_import",
+    description=(
+        "Post-importasdm filesystem check: MS has table.info and .flagonline.txt is "
+        "non-empty. Pure filesystem — no CASA. Gate before ms_apply_preflag."
+    ),
     annotations={
         "title": "Verify ASDM Import",
         "readOnlyHint": True,
@@ -1108,7 +1245,59 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
 
 
 @mcp.tool(
+    name="ms_workflow_status",
+    description=(
+        "State probe over MS + workdir. Returns ms_valid, intents_populated, "
+        "calibrators_ms_present, priorcals_present, initial_bandpass_present, "
+        "corrected_populated, final_caltables_present, first_image_present, and "
+        "next_recommended_step (categorical label)."
+    ),
+    annotations={
+        "title": "Workflow Status",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_workflow_status(params: WorkflowStatusInput) -> str:
+    """State probe over MS + workdir for pipeline resumption."""
+    return _run_tool(workflow_status.run, params.ms_path, params.workdir)
+
+
+@mcp.tool(
+    name="ms_gaincal_snr_predict",
+    description=(
+        "Predictive SNR for gaincal(solint='inf'). Per-SpW SNR using SEFD table "
+        "for VLA/MeerKAT/uGMRT. Returns n_spw_below_threshold and recommendation_hint."
+    ),
+    annotations={
+        "title": "Gaincal SNR Prediction",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> str:
+    """Predictive SNR for gaincal solint selection."""
+    from ms_inspect.tools import gaincal_snr_predict
+    return _run_tool(
+        gaincal_snr_predict.run,
+        params.ms_path,
+        params.field,
+        params.solint_seconds,
+        params.snr_threshold,
+        flux_jy=params.flux_jy,
+    )
+
+
+@mcp.tool(
     name="ms_image_stats",
+    description=(
+        "Image quality metrics from a CASA image: MAD-based robust RMS, peak, "
+        "dynamic range, restoring beam. Run after tclean to assess first-pass quality."
+    ),
     annotations={
         "title": "Image Statistics",
         "readOnlyHint": True,

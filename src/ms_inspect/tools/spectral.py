@@ -186,10 +186,39 @@ def run_spectral_window_list(ms_path: str) -> dict:
 
             spws_out.append(record)
 
+    # Build suggested channel selection strings
+    center_parts: list[str] = []
+    wide_parts: list[str] = []
+    for spw_rec in spws_out:
+        sid = spw_rec["spw_id"]
+        n_chan = spw_rec["n_channels"]["value"] if isinstance(spw_rec["n_channels"], dict) else spw_rec["n_channels"]
+        if n_chan < 7:
+            center_parts.append(f"{sid}:0~{n_chan - 1}")
+        else:
+            c0 = int(n_chan * 0.425)
+            c1 = max(c0 + 2, int(n_chan * 0.575) - 1)
+            center_parts.append(f"{sid}:{c0}~{c1}")
+        if n_chan < 10:
+            wide_parts.append(f"{sid}:0~{n_chan - 1}")
+        else:
+            w0 = max(1, int(n_chan * 0.05))
+            w1 = int(n_chan * 0.95) - 1
+            wide_parts.append(f"{sid}:{w0}~{w1}")
+
+    spw_id_list = [r["spw_id"] for r in spws_out]
+    all_spw_string = f"0~{max(spw_id_list)}" if spw_id_list else "0"
+
     data = {
         "n_spw": n_spw,
         "telescope": telescope or "UNKNOWN",
         "spectral_windows": spws_out,
+        "suggested": {
+            "center_channels_string": ",".join(center_parts),
+            "wide_channels_string": ",".join(wide_parts),
+            "all_spw_string": all_spw_string,
+            "inner_fraction_center": 0.15,
+            "inner_fraction_wide": 0.90,
+        },
     }
 
     return response_envelope(
@@ -257,12 +286,24 @@ def run_correlator_config(ms_path: str) -> dict:
             dump_note = f"Could not retrieve dump time: {e}"
             warnings.append(dump_note)
 
+    # Compute corrstring_casa
+    if "RR" in unique_labels and "LL" in unique_labels:
+        corrstring_casa = "RR,LL"
+    elif "XX" in unique_labels and "YY" in unique_labels:
+        corrstring_casa = "XX,YY"
+    else:
+        corrstring_casa = ""
+        warnings.append(
+            "Could not determine corrstring_casa: neither RR,LL nor XX,YY found in correlation products."
+        )
+
     data = {
         "dump_time_s": field(
             round(dump_time_s, 3) if dump_time_s else None, flag=dump_flag, note=dump_note
         ),
         "polarization_basis": field(pol_basis),
         "correlation_products": field(unique_labels),
+        "corrstring_casa": corrstring_casa,
         "full_stokes": field(
             full_stokes,
             note=(

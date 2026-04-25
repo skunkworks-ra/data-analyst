@@ -216,7 +216,7 @@ def run_preflight(ms_path: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def run(ms_path: str, exclude_autocorr: bool = True, n_workers: int | None = None) -> dict:
+def run(ms_path: str, exclude_autocorr: bool = True, n_workers: int | None = None, verbosity: str = "full") -> dict:
     """
     Compute per-antenna pre-existing flag fractions.
 
@@ -402,14 +402,43 @@ def run(ms_path: str, exclude_autocorr: bool = True, n_workers: int | None = Non
 
     overall_frac = global_flagged / global_total if global_total > 0 else 0.0
 
-    data = {
-        "overall_flag_fraction": field(round(overall_frac, 6)),
-        "autocorrelations_excluded": exclude_autocorr,
-        "n_workers_used": n_workers,
-        "n_total_rows": n_total_rows,
-        "flag_cmd_summary": flag_cmd_summary,
-        "per_antenna": per_antenna,
-    }
+    # Compact verbosity: strip field() wrappers, roll up non-COMPLETE fields
+    if verbosity == "compact":
+        compact_per_antenna: list[dict] = []
+        incomplete_fields: list[dict] = []
+        for rec in per_antenna:
+            compact_rec: dict = {}
+            for k, v in rec.items():
+                if isinstance(v, dict) and "value" in v and "flag" in v:
+                    if v["flag"] != "COMPLETE":
+                        incomplete_fields.append({
+                            "path": f"per_antenna[{rec['antenna_id']}].{k}",
+                            "flag": v["flag"],
+                            "note": v.get("note"),
+                        })
+                    compact_rec[k] = v["value"]
+                else:
+                    compact_rec[k] = v
+            compact_per_antenna.append(compact_rec)
+
+        data = {
+            "overall_flag_fraction": round(overall_frac, 6),
+            "autocorrelations_excluded": exclude_autocorr,
+            "n_workers_used": n_workers,
+            "n_total_rows": n_total_rows,
+            "flag_cmd_summary": flag_cmd_summary,
+            "per_antenna": compact_per_antenna,
+            "incomplete_fields": incomplete_fields,
+        }
+    else:
+        data = {
+            "overall_flag_fraction": field(round(overall_frac, 6)),
+            "autocorrelations_excluded": exclude_autocorr,
+            "n_workers_used": n_workers,
+            "n_total_rows": n_total_rows,
+            "flag_cmd_summary": flag_cmd_summary,
+            "per_antenna": per_antenna,
+        }
 
     return response_envelope(
         tool_name=TOOL_NAME,

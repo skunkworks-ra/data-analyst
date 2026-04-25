@@ -1,5 +1,7 @@
 # 10 — Pre-Calibration Workflow
 
+Use `ms_workflow_status(ms_path, workdir)` to probe where you are before starting any step.
+
 ## Purpose
 
 This document guides decisions across the full pre-calibration sequence:
