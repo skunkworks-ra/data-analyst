@@ -243,4 +243,3 @@ def normalize_spw_sel(value: str) -> str:
     if ";" in value and ":" not in value:
         value = ",".join(part.strip() for part in value.split(";"))
     return value
-
