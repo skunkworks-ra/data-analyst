@@ -68,7 +68,6 @@ polcal(
     refant={refant!r},
     gaintable={gaintable!r},
     interp={interp!r},
-    parang={parang},
 )
 print("Done. Caltable written to: {caltable}")
 """
