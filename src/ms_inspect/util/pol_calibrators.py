@@ -77,33 +77,60 @@ POL_CATALOGUE: list[PolCalEntry] = [
         variability_note=None,
         aka=["1331+305", "1331+3030", "3c286", "j1331+305"],
         epochs={
+            # 17-node table from NRAO VLA Observing Guide Table 8.2.7 (January/February 2019).
+            # Frequencies are actual measurement frequencies, not band centres.
+            # Stokes I flux density not tabulated here — use calibrators.py / Perley-Butler 2017.
             "2019": [
                 PolFreqEntry(
-                    freq_ghz=0.35, flux_jy=26.46, frac_pol_pct=None, frac_pol_upper_limit=True, pol_angle_deg=None
+                    freq_ghz=1.02, frac_pol_pct=8.6, frac_pol_upper_limit=False, pol_angle_deg=33.0
                 ),
                 PolFreqEntry(
-                    freq_ghz=1.45, flux_jy=14.89, frac_pol_pct=9.8, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=1.47, frac_pol_pct=9.8, frac_pol_upper_limit=False, pol_angle_deg=33.0
                 ),
                 PolFreqEntry(
-                    freq_ghz=3.0, flux_jy=9.92, frac_pol_pct=11.0, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=1.87, frac_pol_pct=10.1, frac_pol_upper_limit=False, pol_angle_deg=33.0
                 ),
                 PolFreqEntry(
-                    freq_ghz=6.0, flux_jy=6.38, frac_pol_pct=11.3, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=2.57, frac_pol_pct=10.6, frac_pol_upper_limit=False, pol_angle_deg=33.0
                 ),
                 PolFreqEntry(
-                    freq_ghz=10.0, flux_jy=4.50, frac_pol_pct=11.7, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=3.57, frac_pol_pct=11.2, frac_pol_upper_limit=False, pol_angle_deg=33.0
                 ),
                 PolFreqEntry(
-                    freq_ghz=15.0, flux_jy=3.37, frac_pol_pct=11.9, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=4.89, frac_pol_pct=11.5, frac_pol_upper_limit=False, pol_angle_deg=33.0
                 ),
                 PolFreqEntry(
-                    freq_ghz=22.0, flux_jy=2.54, frac_pol_pct=12.1, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=6.68, frac_pol_pct=11.9, frac_pol_upper_limit=False, pol_angle_deg=33.0
                 ),
                 PolFreqEntry(
-                    freq_ghz=33.0, flux_jy=1.88, frac_pol_pct=12.0, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=8.43, frac_pol_pct=12.1, frac_pol_upper_limit=False, pol_angle_deg=33.0
                 ),
                 PolFreqEntry(
-                    freq_ghz=45.0, flux_jy=1.49, frac_pol_pct=11.4, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=11.3, frac_pol_pct=12.3, frac_pol_upper_limit=False, pol_angle_deg=34.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=14.1, frac_pol_pct=12.3, frac_pol_upper_limit=False, pol_angle_deg=34.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=16.6, frac_pol_pct=12.5, frac_pol_upper_limit=False, pol_angle_deg=35.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=19.1, frac_pol_pct=12.6, frac_pol_upper_limit=False, pol_angle_deg=35.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=25.6, frac_pol_pct=12.7, frac_pol_upper_limit=False, pol_angle_deg=36.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=32.1, frac_pol_pct=13.1, frac_pol_upper_limit=False, pol_angle_deg=36.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=37.1, frac_pol_pct=13.5, frac_pol_upper_limit=False, pol_angle_deg=36.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=42.1, frac_pol_pct=13.4, frac_pol_upper_limit=False, pol_angle_deg=37.0
+                ),
+                PolFreqEntry(
+                    freq_ghz=48.1, frac_pol_pct=14.6, frac_pol_upper_limit=False, pol_angle_deg=36.0
                 ),
             ],
         },

@@ -121,20 +121,21 @@ class TestPolPropertiesAtFreq:
         return entry
 
     def test_exact_node_lband(self):
+        """Table 8.2.7 L-band node is at 1.47 GHz, not the old band-centre 1.45 GHz."""
         entry = self._get_3c286()
-        props = pol_properties_at_freq(entry, 1.45)
+        props = pol_properties_at_freq(entry, 1.47)
         assert props is not None
         assert abs(props.frac_pol_pct - 9.8) < 0.01
         assert props.pol_angle_deg == pytest.approx(33.0, abs=0.1)
         assert props.frac_pol_upper_limit is False
 
     def test_interpolation_between_nodes(self):
-        """Interpolating between 1.45 and 3.0 GHz should give intermediate values."""
+        """Interpolating between 1.87 and 2.57 GHz nodes should give intermediate values."""
         entry = self._get_3c286()
-        # Midpoint at 2.225 GHz — expect frac_pol between 9.8 and 11.0
+        # Midpoint between Table 8.2.7 S-band nodes (1.87 → 10.1%, 2.57 → 10.6%)
         props = pol_properties_at_freq(entry, 2.225)
         assert props is not None
-        assert 9.8 < props.frac_pol_pct < 11.0
+        assert 10.1 < props.frac_pol_pct < 10.6
 
     def test_out_of_range_low(self):
         entry = self._get_3c286()
@@ -152,14 +153,15 @@ class TestPolPropertiesAtFreq:
         assert props is None
 
     def test_pa_stable_across_lband_to_qband(self):
-        """3C286 PA should be ~33° at every band."""
+        """3C286 PA is temporally stable but drifts slowly with frequency (33°–37° per Table 8.2.7)."""
         entry = self._get_3c286()
-        for freq_ghz in [1.45, 6.0, 15.0, 33.0]:
+        # Use actual Table 8.2.7 node frequencies; PA rises from 33° at L to 37° at Q.
+        for freq_ghz, expected_pa in [(1.47, 33.0), (6.68, 33.0), (14.1, 34.0), (32.1, 36.0)]:
             props = pol_properties_at_freq(entry, freq_ghz)
             assert props is not None, f"No props at {freq_ghz} GHz"
             assert props.pol_angle_deg is not None
-            assert abs(props.pol_angle_deg - 33.0) < 1.0, (
-                f"PA at {freq_ghz} GHz = {props.pol_angle_deg:.1f}°, expected ~33°"
+            assert props.pol_angle_deg == pytest.approx(expected_pa, abs=0.1), (
+                f"PA at {freq_ghz} GHz = {props.pol_angle_deg:.1f}°, expected {expected_pa}°"
             )
 
 
@@ -335,17 +337,38 @@ class Test3C48PerleyButler2013:
 
 
 # ---------------------------------------------------------------------------
-# flux_jy field — backward compatibility
+# flux_jy field
 # ---------------------------------------------------------------------------
 
 
 class TestFluxJyField:
-    def test_flux_jy_defaults_none_for_2019_entries(self):
-        """All 2019 PolFreqEntry instances should have flux_jy=None by default."""
+    def test_flux_jy_none_for_3c286_2019(self):
+        """3C286 2019 epoch uses Table 8.2.7 measurement frequencies; Stokes I not tabulated there."""
         entry = lookup_pol("3C286")
         assert entry is not None
         for row in entry.epochs.get("2019", []):
             assert row.flux_jy is None
+
+    def test_3c286_2019_has_17_nodes(self):
+        """Table 8.2.7 provides 17 measurement nodes for 3C286."""
+        entry = lookup_pol("3C286")
+        assert entry is not None
+        assert len(entry.epochs["2019"]) == 17
+
+    def test_3c286_2019_lband_pol(self):
+        """L-band pol fraction from Table 8.2.7: 9.8% at 1.47 GHz."""
+        entry = lookup_pol("3C286")
+        assert entry is not None
+        row = next(r for r in entry.epochs["2019"] if abs(r.freq_ghz - 1.47) < 0.01)
+        assert row.frac_pol_pct == pytest.approx(9.8, abs=0.1)
+        assert row.pol_angle_deg == pytest.approx(33.0, abs=0.5)
+
+    def test_3c286_2019_qband_pol(self):
+        """Q-band pol fraction from Table 8.2.7: 14.6% at 48.1 GHz."""
+        entry = lookup_pol("3C286")
+        assert entry is not None
+        row = next(r for r in entry.epochs["2019"] if abs(r.freq_ghz - 48.1) < 0.1)
+        assert row.frac_pol_pct == pytest.approx(14.6, abs=0.1)
 
     def test_flux_jy_populated_for_pb2013(self):
         entry = lookup_pol("3C48")
