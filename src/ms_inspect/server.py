@@ -52,6 +52,9 @@ from ms_inspect.tools import (
 # ---------------------------------------------------------------------------
 # Server initialisation
 # ---------------------------------------------------------------------------
+_mcp_host = os.environ.get("RADIO_MCP_HOST", "127.0.0.1")
+_mcp_port = int(os.environ.get("RADIO_MCP_PORT", "8000"))
+
 mcp = FastMCP(
     "radio_ms_mcp",
     instructions=(
@@ -60,6 +63,8 @@ mcp = FastMCP(
         "Consult the SKILL.md document for interferometrist reasoning guidance. "
         f"Version: {__version__}"
     ),
+    host=_mcp_host,
+    port=_mcp_port,
 )
 
 
@@ -1405,9 +1410,8 @@ def main() -> None:
     port = int(os.environ.get("RADIO_MCP_PORT", "8000"))
 
     if transport == "http":
-        mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
+        mcp.run(transport="streamable-http")
     else:
-        # stdio — default, for Claude Desktop and local use
         mcp.run(transport="stdio")
 
 
