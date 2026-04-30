@@ -39,6 +39,7 @@ class PolCalEntry:
     category: str  # "A", "B", "C", "D"
     role: list[str]  # ["angle"], ["leakage"], ["angle", "leakage"]
     stable_pa: bool  # True = PA reliable across bands (only 3C286)
+    single_scan_sufficient: bool  # True for Cat C — known low-pol, no PA coverage needed
     variability_note: str | None  # e.g. "in flare Jan 2025 at K/Ka/Q"
     epochs: dict[str, list[PolFreqEntry]]  # {"2010": [...], "2019": [...]}
     aka: list[str]  # alternative names for field matching
@@ -74,6 +75,7 @@ POL_CATALOGUE: list[PolCalEntry] = [
         category="A",
         role=["angle", "leakage"],
         stable_pa=True,
+        single_scan_sufficient=False,
         variability_note=None,
         aka=["1331+305", "1331+3030", "3c286", "j1331+305"],
         epochs={
@@ -141,6 +143,7 @@ POL_CATALOGUE: list[PolCalEntry] = [
         category="A",
         role=["angle"],
         stable_pa=False,
+        single_scan_sufficient=False,
         variability_note="In flare Jan 2025 at K/Ka/Q bands — avoid until cleared",
         aka=["0518+165", "0521+1638", "3c138", "j0518+165"],
         epochs={
@@ -181,6 +184,7 @@ POL_CATALOGUE: list[PolCalEntry] = [
         category="A",
         role=["angle"],
         stable_pa=False,
+        single_scan_sufficient=False,
         variability_note=None,
         aka=["0137+331", "0137+3309", "3c48", "j0137+331"],
         epochs={
@@ -357,6 +361,7 @@ POL_CATALOGUE: list[PolCalEntry] = [
         category="C",
         role=["leakage"],
         stable_pa=False,
+        single_scan_sufficient=True,
         variability_note=None,
         aka=["0538+498", "0542+4951", "3c147", "j0538+498"],
         epochs={
@@ -396,6 +401,7 @@ POL_CATALOGUE: list[PolCalEntry] = [
         category="C",
         role=["leakage"],
         stable_pa=False,
+        single_scan_sufficient=True,
         variability_note="Variable on month timescales — monitor before use at high freq",
         aka=["0316+413", "0319+4130", "3c84", "j0316+413", "ngc1275"],
         epochs={
@@ -416,11 +422,52 @@ POL_CATALOGUE: list[PolCalEntry] = [
         },
     ),
     PolCalEntry(
+        j2000_name="J1407+2827",
+        b1950_name="OQ208",
+        category="C",
+        role=["leakage"],
+        stable_pa=False,
+        single_scan_sufficient=True,
+        variability_note=None,
+        aka=["1404+286", "1407+2827", "oq208", "j1404+286"],
+        epochs={
+            "2019": [
+                PolFreqEntry(
+                    freq_ghz=1.45, frac_pol_pct=0.1, frac_pol_upper_limit=True, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=6.0, frac_pol_pct=0.3, frac_pol_upper_limit=True, pol_angle_deg=None
+                ),
+            ],
+        },
+    ),
+    PolCalEntry(
+        j2000_name="J0713+4349",
+        b1950_name="B0710+439",
+        category="C",
+        role=["leakage"],
+        stable_pa=False,
+        single_scan_sufficient=True,
+        variability_note="Weak at high frequency — use with care above 10 GHz",
+        aka=["0710+439", "0713+4349", "j0710+439"],
+        epochs={
+            "2019": [
+                PolFreqEntry(
+                    freq_ghz=1.45, frac_pol_pct=0.1, frac_pol_upper_limit=True, pol_angle_deg=None
+                ),
+                PolFreqEntry(
+                    freq_ghz=6.0, frac_pol_pct=0.1, frac_pol_upper_limit=True, pol_angle_deg=None
+                ),
+            ],
+        },
+    ),
+    PolCalEntry(
         j2000_name="J0359+5057",
         b1950_name="NRAO150",
         category="B",
-        role=["angle"],
+        role=["angle", "leakage"],  # B1: optimal Dec range for PA coverage
         stable_pa=False,
+        single_scan_sufficient=False,
         variability_note="Variable — use only when 3C286/3C138 unavailable; monitor before use",
         aka=["0359+509", "0359+5057", "nrao150", "j0359+509"],
         epochs={
@@ -438,8 +485,9 @@ POL_CATALOGUE: list[PolCalEntry] = [
         j2000_name="J2202+4216",
         b1950_name="BL Lac",
         category="B",
-        role=["angle"],
+        role=["angle", "leakage"],  # B1: optimal Dec range for PA coverage
         stable_pa=False,
+        single_scan_sufficient=False,
         variability_note="Variable — use only as secondary angle calibrator; monitor before use",
         aka=["2200+420", "2202+4216", "bllac", "bl lac", "j2200+420"],
         epochs={
@@ -459,6 +507,7 @@ POL_CATALOGUE: list[PolCalEntry] = [
         category="B",
         role=["angle"],
         stable_pa=False,
+        single_scan_sufficient=False,
         variability_note="Variable — use only as secondary angle calibrator; monitor before use",
         aka=["2251+158", "2253+1608", "3c454.3", "3c4543", "j2251+158"],
         epochs={

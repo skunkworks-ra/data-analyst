@@ -85,6 +85,20 @@ def run(ms_path: str) -> dict:
         except Exception:
             source_ids = list(range(n_fields))
 
+        # Scan sequence for pattern-based role inference (cheap; used only in heuristic mode)
+        scan_sequence: list[tuple[int, int, float]] = []  # (scan_num, field_id, duration_s)
+        try:
+            for snum in sorted(msmd.scannumbers()):
+                fids = list(msmd.fieldsforscan(snum))
+                if not fids:
+                    continue
+                times = msmd.timesforscans([snum])
+                dur = float(max(times) - min(times)) if len(times) > 1 else 0.0
+                scan_sequence.append((snum, int(fids[0]), dur))
+            casa_calls.append("msmd.scannumbers/fieldsforscan/timesforscans (scan pattern)")
+        except Exception:
+            scan_sequence = []
+
     # ------------------------------------------------------------------
     # Determine if we're in intent-inference mode
     # ------------------------------------------------------------------
@@ -150,6 +164,11 @@ def run(ms_path: str) -> dict:
                 flag="INFERRED",
                 note=f"Inferred from calibrator catalogue role: {cal_entry.role}",
             )
+        elif heuristic_mode and scan_sequence:
+            # Defer: will be filled by scan-pattern inference below
+            intent_field = field(
+                [], flag="UNAVAILABLE", note="No intents in MS and no catalogue match for inference"
+            )
         elif heuristic_mode:
             intent_field = field(
                 [], flag="UNAVAILABLE", note="No intents in MS and no catalogue match for inference"
@@ -177,6 +196,34 @@ def run(ms_path: str) -> dict:
             "vla_cal_match": vla_cal_match_field,
         }
         fields_out.append(record)
+
+    # ------------------------------------------------------------------
+    # Scan-pattern role inference for UNAVAILABLE fields (heuristic mode only)
+    # ------------------------------------------------------------------
+    if heuristic_mode and scan_sequence:
+        # Build per-field coord lookup (ra_deg, dec_deg)
+        coords: dict[int, tuple[float | None, float | None]] = {}
+        for rec in fields_out:
+            fid = rec["field_id"]
+            ra_f = rec.get("ra_j2000_deg", {})
+            dec_f = rec.get("dec_j2000_deg", {})
+            coords[fid] = (
+                ra_f.get("value") if isinstance(ra_f, dict) else ra_f,
+                dec_f.get("value") if isinstance(dec_f, dict) else dec_f,
+            )
+
+        inferred = _infer_roles_from_scan_pattern(scan_sequence, coords)
+
+        for rec in fields_out:
+            fid = rec["field_id"]
+            intent_f = rec.get("intents", {})
+            if isinstance(intent_f, dict) and intent_f.get("flag") == "UNAVAILABLE" and fid in inferred:
+                roles, reason = inferred[fid]
+                rec["intents"] = field(
+                    infer_intents_from_role(roles),
+                    flag="INFERRED",
+                    note=f"Scan-pattern inference: {reason}",
+                )
 
     # ------------------------------------------------------------------
     # nearest_phase_cal enrichment for target fields
@@ -327,6 +374,101 @@ def _angular_sep_deg(ra1_deg: float, dec1_deg: float, ra2_deg: float, dec2_deg: 
     d2 = np.radians(dec2_deg)
     c = np.sin(d1) * np.sin(d2) + np.cos(d1) * np.cos(d2) * np.cos(r1 - r2)
     return float(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
+
+
+def _infer_roles_from_scan_pattern(
+    scan_sequence: list[tuple[int, int, float]],
+    coords: dict[int, tuple[float | None, float | None]],
+    phase_cal_sep_deg: float = 20.0,
+) -> dict[int, tuple[list[str], str]]:
+    """
+    Infer calibration roles for fields that have no intent metadata and no
+    catalogue match, using only the scan interleave pattern.
+
+    Returns a dict of field_id → (role_list, one-line reason).
+    Only fields that can be confidently assigned a role are included.
+
+    Heuristic:
+    - The most-observed field (by scan count) is the science target.
+    - A field that alternates with the target (appears in scans adjacent to
+      target scans) and has shorter median duration is a phase calibrator
+      candidate.
+    - Angular separation from the target must be < phase_cal_sep_deg.
+    - If the candidate appears in ≥ 4 distinct scans spread across the
+      observation, note potential leakage cal suitability (PA check needed).
+    """
+    if not scan_sequence:
+        return {}
+
+    # Count scans per field
+    from collections import Counter
+    scan_count: Counter[int] = Counter(fid for _, fid, _ in scan_sequence)
+    if not scan_count:
+        return {}
+
+    # Most-observed field = target (if ≥ 2 fields present)
+    sorted_by_count = scan_count.most_common()
+    target_fid = sorted_by_count[0][0]
+
+    # Build adjacency: for each non-target field, count how many of its scans
+    # are immediately adjacent (±1 position) to a target scan
+    field_ids_in_order = [fid for _, fid, _ in scan_sequence]
+    target_positions = {i for i, fid in enumerate(field_ids_in_order) if fid == target_fid}
+
+    adjacency: Counter[int] = Counter()
+    for pos, fid in enumerate(field_ids_in_order):
+        if fid == target_fid:
+            continue
+        if (pos - 1) in target_positions or (pos + 1) in target_positions:
+            adjacency[fid] += 1
+
+    # Median scan duration per field
+    from statistics import median
+    durations: dict[int, list[float]] = {}
+    for _, fid, dur in scan_sequence:
+        durations.setdefault(fid, []).append(dur)
+    median_dur: dict[int, float] = {fid: median(dlist) for fid, dlist in durations.items()}
+    target_dur = median_dur.get(target_fid, 0.0)
+
+    target_ra, target_dec = coords.get(target_fid, (None, None))
+
+    result: dict[int, tuple[list[str], str]] = {}
+
+    for fid, adj_count in adjacency.items():
+        total = scan_count[fid]
+        if total < 2:
+            continue  # single scan — too ambiguous
+        if adj_count < max(1, total // 2):
+            continue  # doesn't reliably bracket target
+
+        # Duration check: phase cals are typically shorter than the target
+        fid_dur = median_dur.get(fid, 0.0)
+        if target_dur > 0 and fid_dur > target_dur * 1.5:
+            continue  # longer than target — unlikely phase cal
+
+        # Angular separation check
+        fid_ra, fid_dec = coords.get(fid, (None, None))
+        if target_ra is not None and target_dec is not None and fid_ra is not None and fid_dec is not None:
+            sep = _angular_sep_deg(target_ra, target_dec, fid_ra, fid_dec)
+            if sep > phase_cal_sep_deg:
+                continue
+            sep_str = f"{sep:.1f}° from target"
+        else:
+            sep_str = "separation unknown"
+
+        roles = ["phase"]
+        reason = (
+            f"alternates with field {target_fid} in {adj_count}/{total} scans, "
+            f"median duration {fid_dur:.0f}s vs target {target_dur:.0f}s, {sep_str}"
+        )
+
+        # Flag potential leakage cal if well-sampled across the observation
+        if total >= 4:
+            reason += "; ≥4 scans — check PA coverage with ms_parallactic_angle_vs_time for D-term/QU suitability"
+
+        result[fid] = (roles, reason)
+
+    return result
 
 
 def _vla_positional_match(

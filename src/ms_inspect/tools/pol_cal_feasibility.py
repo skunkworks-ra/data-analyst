@@ -190,9 +190,10 @@ def _compute_verdict(
 
     Verdicts:
       FULL         — angle cal + leakage cal meets PA threshold
+      ANGLE_ONLY   — angle cal present (Kcross+Xf feasible), no leakage cal with PA coverage
       LEAKAGE_ONLY — no usable angle cal, but leakage cal present
       DEGRADED     — angle cal present but variability warning
-      NOT_FEASIBLE — no pol cal sources or PA spread insufficient
+      NOT_FEASIBLE — no pol cal sources found at all
     """
     if has_angle_cal and not angle_cal_degraded and leakage_meets_threshold:
         return "FULL", None
@@ -210,10 +211,13 @@ def _compute_verdict(
         )
 
     if has_angle_cal and not leakage_meets_threshold:
-        return "NOT_FEASIBLE", (
-            "Pol angle calibrator present but PA spread is insufficient "
-            "for a reliable D-term solution. "
-            "Observe the calibrator at more hour angles."
+        return "ANGLE_ONLY", (
+            "Pol angle calibrator present — Kcross and Xf (R-L delay + angle) "
+            "calibration is feasible. "
+            "However no leakage calibrator with sufficient PA spread was found for D-term "
+            "calibration. The phase calibrator (if observed throughout the track) is the "
+            "natural leakage cal candidate — verify its PA coverage with "
+            "ms_parallactic_angle_vs_time."
         )
 
     if not has_angle_cal and not leakage_meets_threshold and not has_low_pol_source:
@@ -298,15 +302,11 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             leakage_cal_field_id = fid
             leakage_cal_name = fname
 
-    # 3C286 is both angle + leakage — if matched as angle, also use for leakage
-    if (
-        angle_cal_entry is not None
-        and "leakage" in angle_cal_entry.role
-        and leakage_cal_entry is None
-    ):
-        leakage_cal_entry = angle_cal_entry
-        leakage_cal_field_id = angle_cal_field_id
-        leakage_cal_name = angle_cal_name
+    # Do NOT auto-promote the angle cal to leakage cal even if its catalogue
+    # role includes "leakage". 3C286 and 3C138 are bookend-observed (1-2 scans)
+    # so their PA spread is almost always insufficient for D-terms. The leakage
+    # calibrator must be a separately identified source with adequate PA coverage
+    # (typically the phase cal observed throughout the track).
 
     # --- Pol properties at observed frequency ---
     angle_frac_field = field(None, flag="UNAVAILABLE")
@@ -374,7 +374,11 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             except Exception as e:
                 warnings.append(f"PA spread computation failed: {e}")
 
-        meets_threshold = pa_spread_val is not None and pa_spread_val >= pa_spread_threshold_deg
+        if leakage_source_entry and leakage_source_entry.single_scan_sufficient:
+            # Category C: known low-pol source, one scan is enough for D-terms
+            meets_threshold = n_cal_scans >= 1
+        else:
+            meets_threshold = pa_spread_val is not None and pa_spread_val >= pa_spread_threshold_deg
 
     # --- Leakage cal pol properties ---
     has_low_pol_source = False
@@ -417,11 +421,14 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
         "leakage_calibrator": {
             "available": leakage_cal_entry is not None,
             "source": leakage_source_name,
+            "category": leakage_source_entry.category if leakage_source_entry else None,
+            "single_scan_sufficient": leakage_source_entry.single_scan_sufficient if leakage_source_entry else False,
             "pa_spread_deg": pa_spread_field,
             "pa_spread_note": (
                 "Delta computed via astropy sky-frame PA; "
                 "CASA feed-frame differs by -90° for ALT-AZ mounts "
-                "but delta is identical in both conventions"
+                "but delta is identical in both conventions. "
+                "PA spread is irrelevant for Category C sources (single_scan_sufficient=true)."
             ),
             "n_calibrator_scans": n_cal_scans,
             "meets_threshold": meets_threshold,
