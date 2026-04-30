@@ -24,7 +24,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect import __version__
 from ms_inspect.exceptions import RadioMSError
-from ms_inspect.util import phase_cal_catalog as _pcc
 from ms_inspect.tools import (
     antennas,
     calsol_plot,
@@ -49,6 +48,7 @@ from ms_inspect.tools import (
     verify_import,
     workflow_status,
 )
+from ms_inspect.util import phase_cal_catalog as _pcc
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -1536,7 +1536,6 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
 
 def main() -> None:
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()
-    port = int(os.environ.get("RADIO_MCP_PORT", "8000"))
 
     if transport == "http":
         mcp.run(transport="streamable-http")

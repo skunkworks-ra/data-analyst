@@ -280,7 +280,6 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
 
     # --- Match fields against pol calibrator catalogue ---
     angle_cal_entry: PolCalEntry | None = None
-    angle_cal_field_id: int | None = None
     angle_cal_name: str | None = None
 
     leakage_cal_entry: PolCalEntry | None = None
@@ -295,7 +294,6 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             angle_cal_entry is None or entry.category < angle_cal_entry.category
         ):
             angle_cal_entry = entry
-            angle_cal_field_id = fid
             angle_cal_name = fname
         if "leakage" in entry.role and leakage_cal_entry is None:
             leakage_cal_entry = entry

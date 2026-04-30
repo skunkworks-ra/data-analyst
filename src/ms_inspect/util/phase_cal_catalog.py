@@ -23,7 +23,6 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 
-
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -294,9 +293,8 @@ def lookup_nearest(
         band_entry = entry.band(band_code) if band_code else None
 
         # If band/config filter requested, skip unusable sources
-        if band_code and array_config:
-            if band_entry is None or not band_entry.is_usable(array_config, min_quality):
-                continue
+        if band_code and array_config and (band_entry is None or not band_entry.is_usable(array_config, min_quality)):
+            continue
 
         best_sep = sep
         quality = band_entry.quality_for_config(array_config) if (band_entry and array_config) else None
