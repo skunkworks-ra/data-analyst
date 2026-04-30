@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect import __version__
 from ms_inspect.exceptions import RadioMSError
+from ms_inspect.util import phase_cal_catalog as _pcc
 from ms_inspect.tools import (
     antennas,
     calsol_plot,
@@ -1393,6 +1394,125 @@ async def ms_image_stats(params: ImageStatsInput) -> str:
         If psf_path provided, also psf_beam_major_arcsec etc.
     """
     return _run_tool(image_stats.run, params.image_path, params.psf_path)
+
+
+# ---------------------------------------------------------------------------
+# Phase calibrator catalog lookup
+# ---------------------------------------------------------------------------
+
+class PhaseCalLookupInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ra_deg: float = Field(..., description="Target RA in decimal degrees (J2000).")
+    dec_deg: float = Field(..., description="Target Dec in decimal degrees (J2000).")
+    band_code: str | None = Field(
+        None,
+        description="VLA band code: P, L, C, X, U, K, Q. Omit for position-only match.",
+    )
+    array_config: str | None = Field(
+        None,
+        description="Array configuration: A, B, C, or D. Omit to skip quality filter.",
+    )
+    max_sep_deg: float = Field(
+        0.5,
+        description="Search radius in degrees (default 0.5).",
+    )
+    min_quality: str = Field(
+        "W",
+        description="Minimum quality code: P (best), S, W, C, X (unusable). Default W.",
+    )
+
+
+@mcp.tool(
+    name="ms_phase_cal_lookup",
+    description=(
+        "Cross-match a sky position against the NRAO VLA phase calibrator catalog. "
+        "Returns the nearest qualifying source within max_sep_deg, with its position "
+        "accuracy, flux density, UV limits, and quality codes (P/S/W/C/X) per array "
+        "configuration at the requested band. "
+        "Use to assess whether an observed field is a known usable phase calibrator."
+    ),
+    annotations={
+        "title": "Phase Calibrator Lookup",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
+    """
+    Cross-match a J2000 sky position against the bundled VLA phase calibrator catalog.
+
+    Returns the nearest source within max_sep_deg that meets the band/config quality
+    filter (if specified).  The quality codes follow the NRAO convention:
+      P = <3% closure errors (best), S = 3-10%, W = 10%+ (phase-only),
+      C = confused, X = do not use.
+
+    Args:
+        params.ra_deg:       Target RA in decimal degrees.
+        params.dec_deg:      Target Dec in decimal degrees.
+        params.band_code:    VLA band code (L, C, X, …).  None = position match only.
+        params.array_config: Array config (A/B/C/D).  None = skip quality filter.
+        params.max_sep_deg:  Search radius in degrees (default 0.5).
+        params.min_quality:  Minimum quality code (default W).
+
+    Returns:
+        JSON envelope.  data contains: iau_name, alt_name, ra_deg, dec_deg,
+        separation_deg, pos_accuracy, band (if requested) with quality_A/B/C/D,
+        flux_jy, uvmin_kl, uvmax_kl.  status=NOT_FOUND if no match.
+    """
+    match = _pcc.lookup_nearest(
+        ra_deg=params.ra_deg,
+        dec_deg=params.dec_deg,
+        band_code=params.band_code,
+        array_config=params.array_config,
+        max_sep_deg=params.max_sep_deg,
+        min_quality=params.min_quality,
+    )
+
+    if match is None:
+        result = {
+            "status": "NOT_FOUND",
+            "data": None,
+            "warnings": [
+                f"No qualifying phase calibrator within {params.max_sep_deg}° "
+                f"of RA={params.ra_deg:.4f} Dec={params.dec_deg:.4f}"
+                + (f" at band {params.band_code}/{params.array_config}" if params.band_code else "")
+            ],
+        }
+        return json.dumps(result, indent=2)
+
+    e = match.entry
+    band_data: dict | None = None
+    if match.band:
+        b = match.band
+        band_data = {
+            "band_code": b.band_code,
+            "wavelength": b.wavelength,
+            "quality_A": b.quality_A,
+            "quality_B": b.quality_B,
+            "quality_C": b.quality_C,
+            "quality_D": b.quality_D,
+            "quality_at_config": match.quality,
+            "flux_jy": b.flux_jy,
+            "uvmin_kl": b.uvmin_kl,
+            "uvmax_kl": b.uvmax_kl,
+        }
+
+    result = {
+        "status": "OK",
+        "data": {
+            "iau_name": e.iau_name,
+            "alt_name": e.alt_name,
+            "ra_deg": e.ra_deg,
+            "dec_deg": e.dec_deg,
+            "separation_deg": round(match.separation_deg, 6),
+            "pos_accuracy": e.pos_accuracy,
+            "band": band_data,
+        },
+        "warnings": [],
+    }
+    return json.dumps(result, indent=2)
 
 
 # ---------------------------------------------------------------------------
