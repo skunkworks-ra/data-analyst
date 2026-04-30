@@ -306,6 +306,47 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
     # calibrator must be a separately identified source with adequate PA coverage
     # (typically the phase cal observed throughout the track).
 
+    # --- Fallback: use scan intents to identify pol cals not in the catalogue ---
+    # msmd.intentsforfield() returns the complete intent set for a field, populated
+    # even when per-scan STATE-ID linkage is broken. Use it to rescue pol cal
+    # identification when catalogue lookup finds nothing.
+    if angle_cal_entry is None or leakage_cal_field_id is None:
+        with open_msmd(ms_str) as msmd:
+            casa_calls.append("msmd.intentsforfield() (pol cal intent fallback)")
+            for fid, fname in zip(field_ids, field_names, strict=False):
+                try:
+                    intents = set(msmd.intentsforfield(fid))
+                except Exception:
+                    intents = set()
+                if not intents:
+                    continue
+                if angle_cal_entry is None and any(
+                    "POL_ANGLE" in i for i in intents
+                ):
+                    # Field has CALIBRATE_POL_ANGLE intent — treat as angle cal.
+                    # Look up in the pol catalogue using a substring match on the name.
+                    entry = lookup_pol(fname)
+                    if entry is not None and "angle" in entry.role:
+                        angle_cal_entry = entry
+                        angle_cal_name = fname
+                    else:
+                        warnings.append(
+                            f"Field '{fname}' has CALIBRATE_POL_ANGLE intent but is not in "
+                            "the pol calibrator catalogue — pol angle properties unavailable."
+                        )
+                if leakage_cal_field_id is None and any(
+                    "POL_LEAKAGE" in i for i in intents
+                ):
+                    # Field has CALIBRATE_POL_LEAKAGE intent — use as leakage cal.
+                    # leakage_cal_entry stays None (no catalogue properties), but
+                    # PA spread is still computed from scan times.
+                    leakage_cal_field_id = fid
+                    leakage_cal_name = fname
+                    warnings.append(
+                        f"Leakage calibrator '{fname}' identified from CALIBRATE_POL_LEAKAGE "
+                        "intent; not in catalogue — using PA spread from scan times only."
+                    )
+
     # --- Pol properties at observed frequency ---
     angle_frac_field = field(None, flag="UNAVAILABLE")
     angle_pa_field = field(None, flag="UNAVAILABLE")

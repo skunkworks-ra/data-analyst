@@ -563,11 +563,24 @@ def lookup_pol(field_name: str) -> PolCalEntry | None:
 
     Returns the matching PolCalEntry, or None if not found.
     Matching is case-insensitive and separator-normalised.
+    Handles CASA's '=' convention for appending common names (e.g. '0137+331=3C48').
     """
     key = _normalise(field_name)
     for normalised_alias, entry in _NORMALISED_POL_CATALOGUE:
         if key == normalised_alias:
             return entry
+    # CASA appends common names with '=' (e.g. '0137+331=3C48') — try each part.
+    if "=" in field_name:
+        for part in field_name.split("="):
+            part = part.strip()
+            if not part:
+                continue
+            part_key = _normalise(part)
+            if part_key == key:
+                continue  # already tried
+            for normalised_alias, entry in _NORMALISED_POL_CATALOGUE:
+                if part_key == normalised_alias:
+                    return entry
     return None
 
 

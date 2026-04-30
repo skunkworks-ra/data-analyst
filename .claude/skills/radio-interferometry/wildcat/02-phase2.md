@@ -55,9 +55,10 @@ Report per-field PA range, not array-average.
 
 | Finding | Action |
 |---------|--------|
+| `shadowing_detected: true` | Inspect `shadowed_antennas` — antennas with `shadow_flag_fraction > 0` |
 | Shadowing on flux/bandpass cal scans | Serious — excise shadowed antennas from those scans explicitly |
-| Shadowing at low elevation (D-config expected) | Note antennas and scans |
-| `method.flag == "INFERRED"` | Only FLAG_CMD entries reported — do not treat absence as no shadowing |
+| Shadowing at low elevation (D-config expected) | Note antennas and shadow fraction |
+| `method.flag == "INFERRED"` | `flagdata(mode='shadow')` failed — only FLAG_CMD entries reported; do not treat absence as no shadowing |
 
 ## 2.6 `ms_antenna_flag_fraction`
 

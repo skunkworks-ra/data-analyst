@@ -6,17 +6,16 @@ Layer 2, Tool 5.
 Detects antenna shadowing events — one antenna physically blocking another
 at low elevations. Shadowed data is corrupted and must be flagged.
 
-Primary method: msmd.shadowedAntennas() (CASA 6.x)
-Fallback: geometric computation from antenna positions + elevation/azimuth
-          (flagged as INFERRED)
+Primary method: casatasks.flagdata(mode='shadow', action='calculate')
+  Returns per-antenna shadow flag fractions without modifying the MS.
 
 Also checks FLAG_CMD subtable for pre-existing online shadow flags.
 """
 
 from __future__ import annotations
 
-from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
-from ms_inspect.util.conversions import mjd_seconds_to_utc, seconds_to_human
+from ms_inspect.util.casa_context import open_table, validate_ms_path
+from ms_inspect.util.conversions import mjd_seconds_to_utc
 from ms_inspect.util.formatting import field, response_envelope
 
 TOOL_NAME = "ms_shadowing_report"
@@ -24,56 +23,79 @@ TOOL_NAME = "ms_shadowing_report"
 
 def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
     """
-    Report antenna shadowing events in the MS.
+    Report antenna shadowing in the MS.
 
     Args:
         ms_path:      Path to the Measurement Set.
         tolerance_m:  Shadowing tolerance in metres (default 0.0 = strict).
-                      Positive values mean the antenna must be shadowed by
-                      more than tolerance_m before it is flagged.
 
     Returns:
-        Shadowing events list, total shadowed duration, and method used.
+        Shadow flag fraction, per-antenna breakdown, and FLAG_CMD shadow entries.
     """
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     casa_calls: list[str] = []
     warnings: list[str] = []
 
-    # ------------------------------------------------------------------
-    # Primary: msmd.shadowedAntennas()
-    # ------------------------------------------------------------------
-    shadow_events: list[dict] = []
+    n_shadow_flagged = 0
+    n_total = 0
+    shadowed_antennas: list[dict] = []
     method_flag = "COMPLETE"
-    method_value = "msmd.shadowedAntennas"
+    method_value = "flagdata(mode='shadow')"
 
-    with open_msmd(ms_str) as msmd:
-        casa_calls.append("msmd.open()")
+    # ------------------------------------------------------------------
+    # Primary: casatasks.flagdata(mode='shadow', action='calculate')
+    # Read-only — computes shadow geometry from antenna positions.
+    # ------------------------------------------------------------------
+    try:
+        from casatasks import flagdata as _flagdata  # type: ignore[import]
+    except ImportError:
+        _flagdata = None
+        warnings.append("casatasks not available — shadow detection unavailable.")
+        method_flag = "INFERRED"
+        method_value = "casatasks unavailable"
 
-        field_names = list(msmd.fieldnames())
-        scan_nums = sorted(msmd.scannumbers())
-
-        has_shadow_method = hasattr(msmd, "shadowedAntennas")
-
-        if has_shadow_method:
-            casa_calls.append("msmd.shadowedAntennas(tolerance)")
-            try:
-                shadow_events = _query_shadowed_antennas(msmd, scan_nums, field_names, tolerance_m)
-            except Exception as e:
-                warnings.append(
-                    f"msmd.shadowedAntennas() failed: {e}. "
-                    "Falling back to geometric shadow computation."
-                )
-                has_shadow_method = False
-
-        if not has_shadow_method:
-            method_flag = "INFERRED"
-            method_value = "geometric (msmd.shadowedAntennas unavailable)"
-            warnings.append(
-                "msmd.shadowedAntennas() is not available in this CASA version. "
-                "Geometric shadow detection is not yet implemented in Phase 1. "
-                "Shadow flags from FLAG_CMD subtable are still reported below."
+    if _flagdata is not None:
+        casa_calls.append("flagdata(vis=..., mode='shadow', action='calculate')")
+        try:
+            shadow_result = _flagdata(
+                vis=ms_str,
+                mode="shadow",
+                tolerance=tolerance_m,
+                action="calculate",
+                savepars=False,
+                flagbackup=False,
             )
+            # flagdata returns {'total': {'total': N, 'flagged': M}, 'antenna': {...}}
+            top = shadow_result.get("total", {})
+            if isinstance(top, dict):
+                n_total = int(top.get("total", 0))
+                n_shadow_flagged = int(top.get("flagged", 0))
+            else:
+                n_total = int(top or 0)
+                n_shadow_flagged = int(shadow_result.get("flagged", 0))
+
+            for ant_name, ant_data in shadow_result.get("antenna", {}).items():
+                if not isinstance(ant_data, dict):
+                    continue
+                n_ant_flagged = int(ant_data.get("flagged", 0))
+                n_ant_total = int(ant_data.get("total", 0))
+                if n_ant_flagged > 0:
+                    shadowed_antennas.append(
+                        {
+                            "antenna_name": ant_name,
+                            "shadow_flag_fraction": round(
+                                n_ant_flagged / max(n_ant_total, 1), 4
+                            ),
+                            "n_flagged": n_ant_flagged,
+                            "n_total": n_ant_total,
+                        }
+                    )
+
+        except Exception as e:
+            warnings.append(f"flagdata(mode='shadow') failed: {e}")
+            method_flag = "INFERRED"
+            method_value = "flagdata(mode='shadow') failed"
 
     # ------------------------------------------------------------------
     # FLAG_CMD subtable — pre-existing online shadow flags
@@ -113,17 +135,17 @@ def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
     # ------------------------------------------------------------------
     # Summarise
     # ------------------------------------------------------------------
-    total_shadowed_s = sum(e.get("duration_s", 0) for e in shadow_events)
-    shadowing_detected = len(shadow_events) > 0 or len(flag_cmd_shadows) > 0
+    shadow_fraction = n_shadow_flagged / max(n_total, 1) if n_total > 0 else 0.0
+    shadowing_detected = n_shadow_flagged > 0 or len(flag_cmd_shadows) > 0
 
     data = {
         "shadowing_detected": shadowing_detected,
-        "n_shadow_events": len(shadow_events),
-        "total_shadowed_seconds": field(round(total_shadowed_s, 2)),
-        "total_shadowed_human": seconds_to_human(total_shadowed_s),
+        "shadow_flag_fraction": field(round(shadow_fraction, 4)),
+        "n_shadow_flagged": n_shadow_flagged,
+        "n_total_rows": n_total,
         "tolerance_m": tolerance_m,
         "method": field(method_value, flag=method_flag),
-        "shadowed_events": shadow_events,
+        "shadowed_antennas": shadowed_antennas,
         "flag_cmd_shadow_entries": flag_cmd_shadows,
         "n_flag_cmd_shadow_entries": len(flag_cmd_shadows),
     }
@@ -135,69 +157,3 @@ def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
         warnings=warnings,
         casa_calls=casa_calls,
     )
-
-
-def _query_shadowed_antennas(
-    msmd: object,
-    scan_nums: list[int],
-    field_names: list[str],
-    tolerance_m: float,
-) -> list[dict]:
-    """
-    Query msmd.shadowedAntennas() for each scan and build event records.
-
-    Note: msmd.shadowedAntennas() API varies between CASA versions.
-    In CASA 6.5+, it accepts a tolerance parameter.
-    We call it per-scan to get time-resolved shadowing information.
-    """
-    events: list[dict] = []
-
-    for scan_num in scan_nums:
-        try:
-            # Get time range for this scan
-            times = msmd.timesforscans([scan_num])
-            t_start = float(min(times))
-            t_end = float(max(times))
-
-            # Get field for this scan
-            fids = list(msmd.fieldsforscan(scan_num))
-            fid = fids[0] if fids else 0
-            fname = field_names[fid] if 0 <= fid < len(field_names) else f"FIELD_{fid}"
-
-            # Query shadowed antennas — API: returns list of antenna IDs
-            # that are shadowed during this scan
-            try:
-                shadowed = msmd.shadowedAntennas(scan=scan_num, tolerance=tolerance_m)
-            except TypeError:
-                # Older API without tolerance parameter
-                shadowed = msmd.shadowedAntennas(scan=scan_num)
-
-            if shadowed is None:
-                continue
-
-            shadowed_ids = list(shadowed) if hasattr(shadowed, "__iter__") else []
-
-            for ant_id in shadowed_ids:
-                # msmd.shadowedAntennas doesn't return which antenna is doing
-                # the shadowing — that requires geometric computation.
-                events.append(
-                    {
-                        "antenna_id": int(ant_id),
-                        "shadowing_antenna_id": field(
-                            None,
-                            flag="UNAVAILABLE",
-                            note="Shadowing antenna ID requires geometric computation",
-                        ),
-                        "scan_number": scan_num,
-                        "field_name": fname,
-                        "start_utc": mjd_seconds_to_utc(t_start),
-                        "end_utc": mjd_seconds_to_utc(t_end),
-                        "duration_s": round(t_end - t_start, 2),
-                    }
-                )
-
-        except Exception:
-            # Per-scan failure — skip rather than abort entire report
-            continue
-
-    return events
