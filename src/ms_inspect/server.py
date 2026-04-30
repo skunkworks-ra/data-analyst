@@ -368,17 +368,26 @@ class ImageStatsInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _run_tool(tool_fn, *args, **kwargs) -> str:
-    """
-    Execute a tool function and return JSON-encoded result.
-    Catches RadioMSError and returns a well-formed error envelope.
-    Unexpected exceptions are re-raised (let FastMCP handle them).
-    """
+def _run_tool_sync(tool_fn, *args, **kwargs) -> str:
+    """Run tool_fn synchronously; called from a thread via _run_tool."""
     try:
         result = tool_fn(*args, **kwargs)
         return json.dumps(result, indent=2, default=str)
     except RadioMSError as e:
         return json.dumps(e.to_dict(), indent=2)
+
+
+async def _run_tool(tool_fn, *args, **kwargs) -> str:
+    """
+    Execute a tool function off the event loop thread and return JSON-encoded result.
+
+    Runs synchronous (potentially long-running) tool functions in a thread pool
+    via asyncio.to_thread so they never block the MCP server's event loop.
+    Catches RadioMSError and returns a well-formed error envelope.
+    Unexpected exceptions are re-raised (let FastMCP handle them).
+    """
+    import asyncio
+    return await asyncio.to_thread(_run_tool_sync, tool_fn, *args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +427,7 @@ async def ms_observation_info(params: MSPathInput) -> str:
         obs_start_utc, obs_end_utc, total_duration_s, total_duration_human,
         history_entries. Each field carries a completeness flag.
     """
-    return _run_tool(observation.run, params.ms_path)
+    return await _run_tool(observation.run, params.ms_path)
 
 
 @mcp.tool(
@@ -453,7 +462,7 @@ async def ms_field_list(params: MSPathInput) -> str:
         JSON array of field records: field_id, name, ra/dec in deg and HMS/DMS,
         intents, calibrator_match, calibrator_role, flux_standard, resolved_source.
     """
-    return _run_tool(fields.run, params.ms_path)
+    return await _run_tool(fields.run, params.ms_path)
 
 
 @mcp.tool(
@@ -485,7 +494,7 @@ async def ms_scan_list(params: MSPathInput) -> str:
     Returns:
         JSON with n_scans, n_fields, and ordered array of scan records.
     """
-    return _run_tool(scans.run_scan_list, params.ms_path)
+    return await _run_tool(scans.run_scan_list, params.ms_path)
 
 
 @mcp.tool(
@@ -518,7 +527,7 @@ async def ms_scan_intent_summary(params: MSPathInput) -> str:
         JSON with total_duration_s, total_duration_human, n_intents, intent_completeness,
         and by_intent array of {intent, total_s, fraction, human}.
     """
-    return _run_tool(scans.run_scan_intent_summary, params.ms_path)
+    return await _run_tool(scans.run_scan_intent_summary, params.ms_path)
 
 
 @mcp.tool(
@@ -552,7 +561,7 @@ async def ms_spectral_window_list(params: MSPathInput) -> str:
     Returns:
         JSON array of SpW records with completeness flags.
     """
-    return _run_tool(spectral.run_spectral_window_list, params.ms_path)
+    return await _run_tool(spectral.run_spectral_window_list, params.ms_path)
 
 
 @mcp.tool(
@@ -583,7 +592,7 @@ async def ms_correlator_config(params: MSPathInput) -> str:
         JSON with dump_time_s, polarization_basis, correlation_products, full_stokes,
         n_pol_setups, n_fields, n_scans, n_spw.
     """
-    return _run_tool(spectral.run_correlator_config, params.ms_path)
+    return await _run_tool(spectral.run_correlator_config, params.ms_path)
 
 
 # ---------------------------------------------------------------------------
@@ -623,7 +632,7 @@ async def ms_antenna_list(params: MSPathInput) -> str:
     Returns:
         JSON with n_antennas, n_baselines_cross, array_centre coords, and antenna array.
     """
-    return _run_tool(antennas.run_antenna_list, params.ms_path)
+    return await _run_tool(antennas.run_antenna_list, params.ms_path)
 
 
 @mcp.tool(
@@ -658,7 +667,7 @@ async def ms_baseline_lengths(params: BaselineLengthInput) -> str:
     Returns:
         JSON with baseline statistics and per_spw_derived array.
     """
-    return _run_tool(antennas.run_baseline_lengths, params.ms_path, params.spw_centre_freqs_hz)
+    return await _run_tool(antennas.run_baseline_lengths, params.ms_path, params.spw_centre_freqs_hz)
 
 
 @mcp.tool(
@@ -693,7 +702,7 @@ async def ms_elevation_vs_time(params: ElevationInput) -> str:
         JSON with per-field scan elevation records: el_start, el_mid, el_end,
         el_min, below_threshold flag.
     """
-    return _run_tool(geometry.run_elevation_vs_time, params.ms_path, params.threshold_deg)
+    return await _run_tool(geometry.run_elevation_vs_time, params.ms_path, params.threshold_deg)
 
 
 @mcp.tool(
@@ -731,7 +740,7 @@ async def ms_parallactic_angle_vs_time(params: MSPathInput) -> str:
         JSON with per-field pa_sky_start/end/range, pa_feed_start/end/range,
         convention_offset_deg, convention_note, validation_status.
     """
-    return _run_tool(geometry.run_parallactic_angle_vs_time, params.ms_path)
+    return await _run_tool(geometry.run_parallactic_angle_vs_time, params.ms_path)
 
 
 @mcp.tool(
@@ -766,7 +775,7 @@ async def ms_shadowing_report(params: ShadowingInput) -> str:
         method (with completeness flag), shadowed_events array, and
         flag_cmd_shadow_entries.
     """
-    return _run_tool(shadowing.run, params.ms_path, params.tolerance_m)
+    return await _run_tool(shadowing.run, params.ms_path, params.tolerance_m)
 
 
 @mcp.tool(
@@ -802,7 +811,7 @@ async def ms_flag_preflight(params: MSPathInput) -> str:
         estimated_runtime_s, estimated_runtime_min, recommended_workers,
         will_parallelize.
     """
-    return _run_tool(flags.run_preflight, params.ms_path)
+    return await _run_tool(flags.run_preflight, params.ms_path)
 
 
 @mcp.tool(
@@ -840,7 +849,7 @@ async def ms_antenna_flag_fraction(params: AntennaFlagFractionInput) -> str:
         and per_antenna array of {antenna_id, name, flag_fraction, n_flagged_elements,
         n_total_elements, n_flag_commands_online}.
     """
-    return _run_tool(
+    return await _run_tool(
         flags.run, params.ms_path, n_workers=params.n_workers, verbosity=params.verbosity
     )
 
@@ -886,7 +895,7 @@ async def ms_refant(params: RefAntInput) -> str:
         JSON with refant (top-ranked antenna name), refant_list (full ranked list),
         and ranked array with per-antenna geo_score, flag_score, combined_score.
     """
-    return _run_tool(
+    return await _run_tool(
         refant.run,
         params.ms_path,
         params.field,
@@ -933,7 +942,7 @@ async def ms_verify_caltables(params: VerifyCaltablesInput) -> str:
     Returns:
         JSON with caltables_valid, and per-table exists/n_rows/valid fields.
     """
-    return _run_tool(
+    return await _run_tool(
         caltables.run,
         params.ms_path,
         params.init_gain_table,
@@ -971,7 +980,7 @@ async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> str:
     Returns:
         JSON with per_spw array of bad channel ranges and RFI candidate annotations.
     """
-    return _run_tool(rfi.run, params.ms_path, params.flag_threshold, params.min_bad_chan_run)
+    return await _run_tool(rfi.run, params.ms_path, params.flag_threshold, params.min_bad_chan_run)
 
 
 @mcp.tool(
@@ -1004,7 +1013,7 @@ async def ms_flag_summary(params: FlagSummaryInput) -> str:
     Returns:
         JSON with total_flag_fraction, per_field, per_spw, per_antenna, per_scan.
     """
-    return _run_tool(
+    return await _run_tool(
         flag_summary.run, params.ms_path, params.field, params.spw, params.include_per_scan
     )
 
@@ -1050,7 +1059,7 @@ async def ms_pol_cal_feasibility(params: PolCalFeasibilityInput) -> str:
         JSON with band_centre_ghz, pol_angle_calibrator (source, frac_pol, PA, stable_pa),
         leakage_calibrator (pa_spread, n_scans, meets_threshold), verdict, and blocker.
     """
-    return _run_tool(
+    return await _run_tool(
         pol_cal_feasibility.run,
         params.ms_path,
         params.pa_spread_threshold_deg,
@@ -1091,7 +1100,7 @@ async def ms_online_flag_stats(params: OnlineFlagStatsInput) -> str:
         JSON with n_commands, n_antennas_flagged, antennas_flagged,
         reason_breakdown, and time_range (first and last seen).
     """
-    return _run_tool(online_flags.run, params.flag_file)
+    return await _run_tool(online_flags.run, params.flag_file)
 
 
 @mcp.tool(
@@ -1124,7 +1133,7 @@ async def ms_verify_priorcals(params: VerifyPriorcalsInput) -> str:
     Returns:
         JSON with all_valid, n_checked, n_valid, n_missing, and per-table check results.
     """
-    return _run_tool(
+    return await _run_tool(
         priorcals_check.run,
         params.ms_path,
         params.workdir,
@@ -1162,7 +1171,7 @@ async def ms_residual_stats(params: ResidualStatsInput) -> str:
     Returns:
         JSON with per-spw median_amp, std_amp, p95_amp, n_unflagged, n_flagged.
     """
-    return _run_tool(
+    return await _run_tool(
         residual_stats.run,
         params.ms_path,
         params.field_id,
@@ -1203,7 +1212,7 @@ async def ms_calsol_stats(params: CalsolStatsInput) -> str:
         JSON with table_type, axis metadata, flagged_frac, snr_mean, amplitude/phase
         stats (G/B), delay_ns and delay_rms_ns (K), and scalar summaries.
     """
-    return _run_tool(
+    return await _run_tool(
         calsol_stats.run,
         params.caltable_path,
         snr_min=params.snr_min,
@@ -1242,7 +1251,7 @@ async def ms_calsol_plot(params: CalsolPlotInput) -> str:
     Returns:
         JSON with npz_path, html_path, table_type, and axis dimensions.
     """
-    return _run_tool(calsol_plot.run, params.caltable_path, params.output_dir)
+    return await _run_tool(calsol_plot.run, params.caltable_path, params.output_dir)
 
 
 @mcp.tool(
@@ -1275,7 +1284,7 @@ async def ms_plot_caltable_library(params: CalsolPlotLibraryInput) -> str:
         JSON with a per-table plots list (status, html_path, npz_path,
         table_type, error), plus n_ok and n_error counts.
     """
-    return _run_tool(
+    return await _run_tool(
         calsol_plot_library.run,
         params.caltable_paths,
         params.output_dir,
@@ -1312,7 +1321,7 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
         JSON with ms_exists, ms_valid, flag_file_exists,
         flag_file_n_commands, and ready_for_preflag.
     """
-    return _run_tool(verify_import.run, params.ms_path, params.online_flag_file)
+    return await _run_tool(verify_import.run, params.ms_path, params.online_flag_file)
 
 
 @mcp.tool(
@@ -1333,7 +1342,7 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
 )
 async def ms_workflow_status(params: WorkflowStatusInput) -> str:
     """State probe over MS + workdir for pipeline resumption."""
-    return _run_tool(workflow_status.run, params.ms_path, params.workdir)
+    return await _run_tool(workflow_status.run, params.ms_path, params.workdir)
 
 
 @mcp.tool(
@@ -1354,7 +1363,7 @@ async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> str:
     """Predictive SNR for gaincal solint selection."""
     from ms_inspect.tools import gaincal_snr_predict
 
-    return _run_tool(
+    return await _run_tool(
         gaincal_snr_predict.run,
         params.ms_path,
         params.field,
@@ -1397,7 +1406,7 @@ async def ms_image_stats(params: ImageStatsInput) -> str:
         beam_major_arcsec, beam_minor_arcsec, beam_pa_deg.
         If psf_path provided, also psf_beam_major_arcsec etc.
     """
-    return _run_tool(image_stats.run, params.image_path, params.psf_path)
+    return await _run_tool(image_stats.run, params.image_path, params.psf_path)
 
 
 # ---------------------------------------------------------------------------

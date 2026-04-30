@@ -285,10 +285,10 @@ def run(
     )
 
     # ------------------------------------------------------------------
-    # Parallel reads — fork context (safe for casatools table access)
+    # Parallel reads — spawn context (avoids inheriting asyncio event loop state)
     # ------------------------------------------------------------------
     try:
-        ctx = mp.get_context("fork")
+        ctx = mp.get_context("spawn")
         with ctx.Pool(processes=n_workers) as pool:
             chunk_results = pool.map(_flag_chunk_worker, chunks)
     except Exception as e:
