@@ -419,6 +419,65 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
         else:
             meets_threshold = pa_spread_val is not None and pa_spread_val >= pa_spread_threshold_deg
 
+    # --- Fallback: if primary leakage cal fails PA threshold, search other fields ---
+    leakage_cal_alternatives: list[dict] = []
+    if leakage_cal_field_id is not None and not meets_threshold:
+        angle_cal_field_id = next(
+            (fid for fid, fn in zip(field_ids, field_names, strict=False) if fn == angle_cal_name),
+            None,
+        )
+        skip_ids: set[int] = {leakage_cal_field_id}
+        if angle_cal_field_id is not None:
+            skip_ids.add(angle_cal_field_id)
+
+        for fid, fname in zip(field_ids, field_names, strict=False):
+            if fid in skip_ids:
+                continue
+            ra_c, dec_c = (
+                field_coords[fid]
+                if fid < len(field_coords)
+                else (float("nan"), float("nan"))
+            )
+            if math.isnan(ra_c) or math.isnan(dec_c):
+                continue
+            try:
+                t_mids_c, sc_calls_c = _scan_times_for_field(ms_str, fid)
+                casa_calls.extend(sc_calls_c)
+                if len(t_mids_c) < 2:
+                    continue
+                spread_c = _pa_spread_deg(ra_c, dec_c, t_mids_c, lat, lon, height)
+                leakage_cal_alternatives.append(
+                    {
+                        "field_id": fid,
+                        "name": fname,
+                        "pa_spread_deg": round(spread_c, 2),
+                        "n_scans": len(t_mids_c),
+                        "meets_threshold": spread_c >= pa_spread_threshold_deg,
+                    }
+                )
+            except Exception as e:
+                warnings.append(f"PA spread computation failed for candidate field '{fname}': {e}")
+
+        leakage_cal_alternatives.sort(key=lambda x: x["pa_spread_deg"], reverse=True)
+
+        if leakage_cal_alternatives and leakage_cal_alternatives[0]["meets_threshold"]:
+            best = leakage_cal_alternatives[0]
+            primary_spread_str = f"{pa_spread_val:.1f}°" if pa_spread_val is not None else "unknown"
+            warnings.append(
+                f"Primary leakage calibrator '{leakage_cal_name}' has insufficient PA spread "
+                f"({primary_spread_str} < {pa_spread_threshold_deg}°). "
+                f"Falling back to '{best['name']}' "
+                f"(PA spread {best['pa_spread_deg']}°, {best['n_scans']} scans)."
+            )
+            leakage_cal_field_id = best["field_id"]
+            leakage_cal_name = best["name"]
+            leakage_cal_entry = None
+            leakage_source_name = best["name"]
+            leakage_source_entry = None
+            pa_spread_val = best["pa_spread_deg"]
+            n_cal_scans = best["n_scans"]
+            meets_threshold = True
+
     # --- Leakage cal pol properties ---
     has_low_pol_source = False
     if leakage_source_entry is not None and not math.isnan(band_ghz):
@@ -458,7 +517,7 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             "variability_warning": variability_warn,
         },
         "leakage_calibrator": {
-            "available": leakage_cal_entry is not None,
+            "available": leakage_cal_field_id is not None,
             "source": leakage_source_name,
             "category": leakage_source_entry.category if leakage_source_entry else None,
             "single_scan_sufficient": leakage_source_entry.single_scan_sufficient if leakage_source_entry else False,
@@ -472,6 +531,7 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             "n_calibrator_scans": n_cal_scans,
             "meets_threshold": meets_threshold,
             "threshold_deg": pa_spread_threshold_deg,
+            "leakage_cal_alternatives": leakage_cal_alternatives,
         },
         "verdict": verdict,
         "blocker": blocker,
