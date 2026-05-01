@@ -64,10 +64,11 @@ def run_scan_list(ms_path: str) -> dict:
                 fname = "UNKNOWN"
 
             # Intents — try per-scan first, fall back to field-level.
-            # Some MSs have STATE subtable linkage broken, causing intentsforscans()
+            # Some MSs have STATE subtable linkage broken, causing intentsforscan()
             # to return empty even when intentsforfield() works correctly.
+            # Note: CASA 6.x API is intentsforscan(int), not intentsforscans([int]).
             try:
-                scan_intents: list[str] = sorted(msmd.intentsforscans([scan_num]))
+                scan_intents: list[str] = sorted(msmd.intentsforscan(scan_num))
                 if not scan_intents and fid >= 0:
                     scan_intents = sorted(msmd.intentsforfield(fid))
                 intent_flag = "COMPLETE" if scan_intents else "UNAVAILABLE"
