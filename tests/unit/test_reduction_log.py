@@ -52,8 +52,18 @@ class TestReductionLog:
         replay = tmp_path / "reduction_replay.py"
         assert replay.exists()
         text = replay.read_text()
-        assert "ms_gaincal" in text
-        assert "G0" in text
+        # Executable form: importlib.import_module('ms_modify.gaincal').run(...)
+        assert "importlib.import_module('ms_modify.gaincal').run(" in text
+        assert "field='3C286'" in text
+        assert "G0" in text  # rationale comment
+
+    def test_render_marks_unmapped_as_manual(self, tmp_path):
+        wd = str(tmp_path)
+        run("append", wd, tool="setjy(manual,pol)", params={"polangle_deg": 33})
+        run("render", wd)
+        text = (tmp_path / "reduction_replay.py").read_text()
+        assert "MANUAL STEP" in text
+        assert "importlib.import_module" not in text
 
     def test_list_empty(self, tmp_path):
         out = run("list", str(tmp_path))

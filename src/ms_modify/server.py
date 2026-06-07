@@ -1337,6 +1337,14 @@ class TcleanInput(BaseModel):
         default="modelcolumn",
         description="'modelcolumn' writes MODEL_DATA for self-cal (default). 'none' skips it.",
     )
+    pblimit: float = Field(
+        default=-0.01,
+        description=(
+            "Primary-beam gain cutoff. Default -0.01 (negative disables PB-based "
+            "blanking, keeping low-gain regions and PB-sidelobe outliers visible). "
+            "CASA's default 0.2 blanks everything below 20% PB."
+        ),
+    )
     execute: bool = Field(
         default=False,
         description=(
@@ -1421,6 +1429,7 @@ async def ms_tclean(params: TcleanInput) -> str:
         params.niter,
         params.threshold,
         params.savemodel,
+        params.pblimit,
         params.execute,
     )
 

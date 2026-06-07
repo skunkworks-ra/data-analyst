@@ -45,6 +45,7 @@ def _build_script(
     niter: int,
     threshold: str,
     savemodel: str,
+    pblimit: float,
 ) -> str:
     optional_lines = ""
     if deconvolver == "mtmfs" and nterms is not None:
@@ -90,6 +91,7 @@ tclean(
     niter        = {niter},
     threshold    = {threshold!r},
     pbcor        = True,
+    pblimit      = {pblimit},
     savemodel    = {savemodel!r},
 )
 print("tclean complete. Images written with base name:", imagename)
@@ -114,6 +116,7 @@ def run(
     niter: int = 50000,
     threshold: str = "1.0mJy",
     savemodel: str = "modelcolumn",
+    pblimit: float = -0.01,
     execute: bool = False,
 ) -> dict:
     """
@@ -140,6 +143,11 @@ def run(
         robust:      Briggs robust parameter (default 0.5).
         niter:       Maximum clean iterations (default 50000).
         threshold:   Clean stopping threshold, e.g. '0.5mJy'.
+        pblimit:     Primary-beam gain cutoff. Default -0.01 (negative disables
+                     PB-based blanking, so low-gain regions and sources out in
+                     the PB sidelobes stay visible in the image — important for
+                     spotting outliers). CASA's own default is 0.2, which blanks
+                     everything below 20% PB.
         savemodel:   'modelcolumn' writes MODEL_DATA for self-cal (default).
         execute:     If False (default), write script and return.
                      If True, run tclean in-process (intended for test data only).
@@ -203,6 +211,7 @@ def run(
         niter=niter,
         threshold=threshold,
         savemodel=savemodel,
+        pblimit=pblimit,
     )
     script_file.write_text(script_content)
     casa_calls.append(f"write_script → {script_file}")
@@ -251,6 +260,7 @@ def run(
         niter=niter,
         threshold=threshold,
         pbcor=True,
+        pblimit=pblimit,
         savemodel=savemodel,
     )
     if deconvolver == "mtmfs" and nterms is not None:
