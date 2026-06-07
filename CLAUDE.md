@@ -59,6 +59,7 @@ ms-inspect/
 │   │   ├── __init__.py            ← version string
 │   │   ├── server.py              ← FastMCP entry point (ingestion utilities, port 8002)
 │   │   ├── exceptions.py          ← ASDMNotFoundError, ImportFailedError
+│   │   ├── sdm_summary.py         ← ms_sdm_summary tool (pre-conversion ASDM inspection)
 │   │   └── import_asdm.py         ← ms_import_asdm tool
 │   ├── ms_modify/
 │   │   ├── __init__.py            ← version string
@@ -228,6 +229,7 @@ Environment variable reference:
 | `ms_rfi_channel_stats` | `tools/rfi.py` | Per-channel flag fractions; identifies persistent RFI bands |
 | `ms_pol_cal_feasibility` | `tools/pol_cal_feasibility.py` | Parallactic angle spread + D-term feasibility gate |
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
+| `ms_corrected_stats` | `tools/corrected_stats.py` | Per-field parallel-hand amplitude (median/robust-std/p95) + phase RMS of a data column, **vector-averaged over the channel range** (so faint sources are not noise-biased). Post-applycal calibration sanity check. |
 
 ### Phase 3 — Imaging inspection (1 tool)
 
@@ -244,6 +246,7 @@ It has its own FastMCP server entry point (`ms_create.server`, port 8002).
 
 | Tool | Module | What it does |
 |------|--------|-------------|
+| `ms_sdm_summary` | `ms_create/sdm_summary.py` | Pre-conversion ASDM inspection (read-only, no casatools): telescope, config, band, per-SPW continuum-vs-line classification, HI-21cm coverage, correlation products, sources+intents, scan balance, max target elevation. Decide *what* a dataset is before importing it. |
 | `ms_import_asdm` | `ms_create/import_asdm.py` | Convert ASDM → MS; `ocorr_mode='co'`, `savecmds=True`, `applyflags=False`; writes `import_asdm.py` + `.flagonline.txt` |
 
 Fixed parameters (not exposed): `ocorr_mode='co'` (cross-correlations only),

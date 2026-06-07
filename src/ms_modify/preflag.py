@@ -97,6 +97,7 @@ split(
     vis=ms_path,
     outputvis=cal_ms,
     field=cal_fields,
+    datacolumn="data",
     keepflags=False,
 )
 print(f"Calibrator split complete: {{cal_ms}}")
@@ -214,13 +215,15 @@ def run(
         ) from exc
 
     casa_calls.append(
-        f"casatasks.split(field='{cal_fields}', outputvis='{cal_ms}', keepflags=False)"
+        f"casatasks.split(field='{cal_fields}', outputvis='{cal_ms}', "
+        f"datacolumn='data', keepflags=False)"
     )
     try:
         split(
             vis=ms_str,
             outputvis=cal_ms,
             field=cal_fields,
+            datacolumn="data",
             keepflags=False,
         )
     except Exception as exc:

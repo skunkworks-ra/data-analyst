@@ -459,21 +459,53 @@ def run(
         amp_sigma,
     )
 
-    # --- compact verbosity: strip field() wrappers, roll up incomplete ---
+    # --- compact verbosity: per-antenna scalar arrays, no per-channel dumps ---
+    # The full-mode output carries [n_ant, n_spw, n_field] arrays plus, for B
+    # tables, a [n_ant, n_spw, n_field, n_chan] amplitude cube — tens of
+    # thousands of nested floats. Compact mode collapses every quantity to one
+    # value per antenna (averaged over spw/field) returned as a flat array
+    # aligned to ant_names, and drops the per-channel amp_array entirely. Use
+    # ms_calsol_plot for per-channel bandpass shape.
     if verbosity == "compact":
-        incomplete_fields: list[dict] = []
-        compact_data: dict = {}
-        for k, v in data.items():
-            if k == "outliers":
-                compact_data[k] = v
-                continue
-            if isinstance(v, dict) and "value" in v and "flag" in v:
-                if v["flag"] != "COMPLETE":
-                    incomplete_fields.append({"path": k, "flag": v["flag"], "note": v.get("note")})
-                compact_data[k] = v["value"]
-            else:
-                compact_data[k] = v
-        compact_data["incomplete_fields"] = incomplete_fields
+
+        def _per_ant(arr: np.ndarray | None) -> list | None:
+            """Collapse [n_ant, n_spw, field, ...] → one rounded value per antenna."""
+            if arr is None:
+                return None
+            out: list = []
+            for i in range(n_ant):
+                valid = arr[i][~np.isnan(arr[i])]
+                out.append(round(float(np.mean(valid)), 4) if valid.size else None)
+            return out
+
+        compact_data: dict = {
+            "table_type": table_type,
+            "n_antennas": n_ant,
+            "n_spw": n_spw,
+            "n_field": n_field,
+            "ant_names": ant_names,
+            "spw_ids": spw_ids,
+            "field_ids": field_ids,
+            "field_names": field_names,
+            "overall_flagged_frac": round(overall_flagged_frac, 4),
+            "n_antennas_lost": n_antennas_lost,
+            "antennas_lost": antennas_lost,
+            "per_antenna_note": (
+                "Arrays are aligned to ant_names and averaged over spw/field. "
+                "Per-channel bandpass shape is omitted here — use ms_calsol_plot."
+            ),
+            "flagged_frac": _per_ant(flagged_frac_arr),
+            "snr_mean": _per_ant(snr_mean_arr),
+            "outliers": data["outliers"],
+        }
+        if table_type in ("G", "B"):
+            compact_data["amp_mean"] = _per_ant(amp_mean_arr)
+            compact_data["amp_std"] = _per_ant(amp_std_arr)
+            compact_data["phase_rms_deg"] = _per_ant(phase_rms_arr)
+        if table_type == "K" and delay_arr is not None:
+            da = np.nanmean(delay_arr, axis=(1, 2, 3))  # [n_ant]
+            compact_data["delay_ns"] = [round(float(x), 3) if np.isfinite(x) else None for x in da]
+            compact_data["delay_rms_ns"] = delay_rms_ns
         data = compact_data
 
     return response_envelope(

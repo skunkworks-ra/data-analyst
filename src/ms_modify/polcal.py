@@ -203,6 +203,10 @@ def run(
     )
 
     try:
+        # NOTE: casatasks.polcal does not accept a `parang` argument — it applies
+        # the parallactic-angle correction internally per poltype. Passing parang
+        # raises TypeError. The `parang` run() arg is retained for API symmetry
+        # with gaincal/bandpass/applycal but is not forwarded here.
         polcal(
             vis=ms_str,
             caltable=caltable,
@@ -213,7 +217,6 @@ def run(
             refant=refant,
             gaintable=gaintable,
             interp=interp,
-            parang=parang,
         )
     except Exception as e:
         raise PolcalFailedError(

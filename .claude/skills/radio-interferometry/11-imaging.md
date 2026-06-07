@@ -102,16 +102,28 @@ Primary beam FWHM:
 pb_fwhm_arcsec = (1.02 * lambda_m / {DISH_DIAMETER_M}) * (180 * 3600 / pi)
 ```
 
+**Always image out to the first primary-beam sidelobe.** Stopping at the FWHM
+leaves bright sources in the first sidelobe (radius ≈ 1.6 × FWHM, where the PB
+gain is still a few percent) undeconvolved — their sidelobes alias back across
+the field and limit the dynamic range. The first null sits at ≈ 1.2 × FWHM
+radius and the first sidelobe peak at ≈ 1.6 × FWHM radius, so the image
+**diameter** must be ≈ 3 × FWHM.
+
 **Single pointing:**
 ```
-imsize_pixels = ceil(pb_fwhm_arcsec * 2 / cell_arcsec)
+imsize_pixels = ceil(pb_fwhm_arcsec * 3 / cell_arcsec)   # diameter = 3 × FWHM → covers first sidelobe (~1.6 FWHM radius)
 ```
 
 **Mosaic:** compute the bounding box of all pointing centres in `{POINTING_CENTERS}`,
-convert angular extent to pixels, then add `pb_fwhm_arcsec` padding on each side:
+convert angular extent to pixels, then pad by `1.5 * pb_fwhm_arcsec` on each side
+so every pointing's first sidelobe is imaged:
 ```
-imsize_pixels = ceil((mosaic_extent_arcsec + 2 * pb_fwhm_arcsec) / cell_arcsec)
+imsize_pixels = ceil((mosaic_extent_arcsec + 3 * pb_fwhm_arcsec) / cell_arcsec)
 ```
+
+(If compute or memory is the binding constraint, dropping to a `2 × FWHM`
+diameter — first null only — is the fallback, but record it explicitly as a
+deviation: bright first-sidelobe sources will not be cleaned.)
 
 Round `imsize_pixels` **up** to the nearest composite number of the form
 2ᵃ × 3ᵇ × 5ᶜ. Common values: 240, 256, 320, 360, 384, 480, 512, 600, 640,

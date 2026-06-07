@@ -30,6 +30,7 @@ from ms_inspect.tools import (
     calsol_plot_library,
     calsol_stats,
     caltables,
+    corrected_stats,
     fields,
     flag_summary,
     flags,
@@ -255,6 +256,32 @@ class ResidualStatsInput(BaseModel):
     )
 
 
+class CorrectedStatsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(
+        ..., description="Path to the MS with the data column populated.", min_length=1
+    )
+    field: str = Field(
+        default="",
+        description="CASA field-name selection (comma-separated) or '' for all fields.",
+    )
+    chan_start: int | None = Field(
+        default=None, description="First channel to include (default 0). Use to drop band edges."
+    )
+    chan_end: int | None = Field(
+        default=None, description="One past the last channel (default n_chan)."
+    )
+    datacolumn: str = Field(
+        default="CORRECTED_DATA",
+        description="'CORRECTED_DATA' (default), 'DATA', or 'MODEL_DATA'.",
+    )
+    max_rows: int = Field(
+        default=500_000,
+        description="Per-field row cap; rows sampled uniformly above this (default 500 000).",
+        ge=1,
+    )
+
+
 class BaselineLengthInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to Measurement Set", min_length=1)
@@ -388,6 +415,7 @@ async def _run_tool(tool_fn, *args, **kwargs) -> str:
     Unexpected exceptions are re-raised (let FastMCP handle them).
     """
     import asyncio
+
     return await asyncio.to_thread(_run_tool_sync, tool_fn, *args, **kwargs)
 
 
@@ -668,7 +696,9 @@ async def ms_baseline_lengths(params: BaselineLengthInput) -> str:
     Returns:
         JSON with baseline statistics and per_spw_derived array.
     """
-    return await _run_tool(antennas.run_baseline_lengths, params.ms_path, params.spw_centre_freqs_hz)
+    return await _run_tool(
+        antennas.run_baseline_lengths, params.ms_path, params.spw_centre_freqs_hz
+    )
 
 
 @mcp.tool(
@@ -1143,6 +1173,49 @@ async def ms_verify_priorcals(params: VerifyPriorcalsInput) -> str:
 
 
 @mcp.tool(
+    name="ms_corrected_stats",
+    description=(
+        "Per-field parallel-hand amplitude (median / robust std / p95) and phase "
+        "RMS of a data column (CORRECTED_DATA by default) over a channel range. "
+        "Post-applycal calibration sanity check: a clean point-source calibrator "
+        "sits at its flux density with low amplitude scatter and near-zero phase. "
+        "Pass chan_start/chan_end to exclude band edges. Measures only."
+    ),
+    annotations={
+        "title": "Corrected Data Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_corrected_stats(params: CorrectedStatsInput) -> str:
+    """
+    Per-field amplitude/phase stats of a visibility column on parallel hands.
+
+    Args:
+        params.ms_path:    Path to the MS.
+        params.field:      CASA field-name selection or '' for all.
+        params.chan_start: First channel (default 0); use to drop band edges.
+        params.chan_end:   One past the last channel (default n_chan).
+        params.datacolumn: 'CORRECTED_DATA' (default), 'DATA', or 'MODEL_DATA'.
+        params.max_rows:   Per-field row cap (default 500 000).
+
+    Returns:
+        JSON with per_field amp_median, amp_robust_std, amp_p95, phase_rms_deg.
+    """
+    return await _run_tool(
+        corrected_stats.run,
+        params.ms_path,
+        params.field,
+        params.chan_start,
+        params.chan_end,
+        params.datacolumn,
+        params.max_rows,
+    )
+
+
+@mcp.tool(
     name="ms_residual_stats",
     description=(
         "CORRECTED − MODEL amplitude distribution per SpW. "
@@ -1413,6 +1486,7 @@ async def ms_image_stats(params: ImageStatsInput) -> str:
 # ---------------------------------------------------------------------------
 # Phase calibrator catalog lookup
 # ---------------------------------------------------------------------------
+
 
 class PhaseCalLookupInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
