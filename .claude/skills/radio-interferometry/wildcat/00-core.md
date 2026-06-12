@@ -1,5 +1,12 @@
 # 00 — Core: Bands, Intents, Calibrator Roles
 
+## Tool-call concurrency — hard limit
+
+Do not run more than 2 ms-inspect (or other MS-opening) tool calls in parallel
+against the same MS. CASA table access is not thread-safe within a single
+server process; ≥3 concurrent opens can crash the MCP server, and there is no
+way to recover it within the session. Prefer sequential calls; pairwise at most.
+
 ## VLA / EVLA band table
 
 | Band | Frequency | Flux standard |

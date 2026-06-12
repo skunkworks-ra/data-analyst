@@ -37,6 +37,13 @@ Before deriving any parameter, confirm with the user what to image.
 Do not assume — field selection has direct consequences for gridder choice,
 image size, and whether a mosaic is needed.
 
+**Single-vs-mosaic guard:** before asking anything, count the science target
+fields in `ms_field_list` (cross-check with `ms_scan_list` pointings). If only
+one target field exists, this is a single-pointing observation — a user request
+for a "mosaic" can only mean primary-beam-corrected wide-field imaging
+(awp2/awproject gridder), not multi-pointing mosaicking. State this explicitly
+and set `{IS_MOSAIC}=False`.
+
 Ask explicitly if not stated:
 
 1. **Which fields?** Show the target fields from `ms_field_list` and ask:
@@ -93,6 +100,20 @@ cell_arcsec      = cell_rad * (180 * 3600 / pi)
 Round `cell_arcsec` to 1 significant figure (e.g. 2.47" → 2.5"). State the
 value and record it as `{CELL}`.
 
+**Array-configuration cross-check (mandatory):** `{MAX_BASELINE_M}` must come
+from `ms_baseline_lengths` on the actual MS, never from an assumed array
+configuration. Estimate the synthesized beam:
+
+```
+beam_arcsec ≈ (lambda_m / {MAX_BASELINE_M}) * (180 * 3600 / pi)
+```
+
+and verify `cell ≈ beam/3` to `beam/5`. State both numbers. A cell derived for
+the wrong assumed configuration wastes compute quadratically: e.g. a 4" cell
+against a VLA D-config 40" beam is 10× oversampled — the image is valid but
+gridding cost and image size balloon for no resolution gain. The max baseline
+itself identifies the configuration (VLA: ~1 km D, ~3.4 km C, ~11 km B, ~36 km A).
+
 ---
 
 ## Step 4 — Derive image size
@@ -112,6 +133,19 @@ convert angular extent to pixels, then add `pb_fwhm_arcsec` padding on each side
 ```
 imsize_pixels = ceil((mosaic_extent_arcsec + 2 * pb_fwhm_arcsec) / cell_arcsec)
 ```
+
+**PB-driven image size for awp2/awproject (overrides the above):** when the
+gridder (Step 6) will be `awp2` or `awproject`, the image must cover the full
+primary beam response, not just the source:
+
+- Compute `pb_fwhm_arcsec` at the **lowest frequency in the selected SPWs**
+  (the PB is widest there), not at band centre.
+- Minimum field of view: `imsize × cell ≥ 2 × pb_fwhm(ν_min)`.
+- If the source extent is comparable to the beam (extent > 0.5 × FWHM), extend
+  coverage to the pblimit radius — for `pblimit ≈ 0.02` that is ~2.5 × FWHM.
+- `ms_tclean` defaults to `pblimit = -0.01` (no PB blanking), so the field of
+  view must be wide enough that the A-term normalization sees the whole beam;
+  do not rely on blanking to hide an undersized image.
 
 Round `imsize_pixels` **up** to the nearest composite number of the form
 2ᵃ × 3ᵇ × 5ᶜ. Common values: 240, 256, 320, 360, 384, 480, 512, 600, 640,
@@ -150,8 +184,29 @@ fresnel = {DISH_DIAMETER_M}**2 / ({MAX_BASELINE_M} * lambda_m)
 | Mosaic AND telescope in `{EVLA, ALMA}` AND W-terms required | `'awp2'` | from Step 5 |
 | Mosaic AND telescope in `{EVLA, ALMA}` AND W-terms not required | `'awp2'` | not set |
 | Mosaic AND telescope NOT in `{EVLA, ALMA}` | see note below | from Step 5 if required |
+| Single pointing, wide-field/low-freq, telescope in `{EVLA, ALMA}` | `'awp2'` | from Step 5 |
 | Single pointing AND W-terms required | `'wproject'` | from Step 5 |
 | Single pointing AND W-terms not required | `'standard'` | not set |
+
+**awp2 is not mosaic-only.** For a single pointing where the source extent is
+comparable to the primary beam, or where direction-dependent PB effects matter
+(beam squint, feed asymmetry — typical for VLA L-band wide-field), `'awp2'` is
+the right gridder: it models the DD primary beam and subsumes W-projection.
+
+**awp2 checklist:**
+- Always pass `wprojplanes` explicitly (from Step 5). If omitted, CASA defaults
+  to 1 — no W-projection — silently.
+- awp2 does **not** use a cfcache; that is an `awproject`-only mechanism. Do not
+  expect convolution functions to be persisted to disk — the CF/geometry
+  computation (potentially many hours) is repeated on every run.
+- awp2 does not implement `conjbeams`: with `specmode='mfs'` it needs several
+  major cycles to converge the wideband flux normalization. A single major
+  cycle yields a dirty image with wrong flux scaling — do not judge source
+  detection from it. Prefer `specmode='mvc'` for wideband awp2 imaging
+  (supported by `ms_tclean`).
+- If using `'awproject'` instead of `'awp2'`: always pass `cfcache` with a
+  persistent path — without it, awproject recomputes convolution functions
+  from scratch on every run (potentially many hours).
 
 **Unsupported mosaic telescope:** use `'wproject'` if W-terms required, else
 `'standard'`. Warn the user: primary beam mosaicing is not applied automatically
@@ -215,6 +270,19 @@ ms_tclean(
 Generate the script first (`execute=False`), review it, then run it as a
 background job. Wait for completion however long it takes — tclean on a
 real mosaic can run for hours.
+
+**Threading:** before launching the tclean script, set `OMP_NUM_THREADS` to the
+number of available CPUs (e.g. `OMP_NUM_THREADS=$(nproc)`). Do not let it
+default to 1 — gridding and FFT steps are OpenMP-parallel and a single-threaded
+run multiplies wall-clock time on expensive gridders.
+
+**Dirty-image gate before long runs:** for any expensive gridder (awp2,
+awproject, wproject on large images), first run with `niter=0` and inspect the
+dirty image peak against the expected source brightness. If the chosen
+`threshold` exceeds the dirty peak, tclean performs zero CLEAN iterations and
+restores an empty model — a full-cost run producing a noise image. Set the
+threshold from the radiometer estimate (Step 7) only after the dirty peak
+confirms the source is present at the expected level.
 
 ---
 

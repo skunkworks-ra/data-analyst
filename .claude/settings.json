@@ -8,7 +8,16 @@
       "Bash(pixi run test-int)",
       "Bash(pixi install *)",
       "Bash(mkdir *)",
-      "Bash(tar *)"
+      "Bash(tar *)",
+      "Bash(pixi run python *)",
+      "Bash(pgrep *)",
+      "Bash(nproc)",
+      "Bash(ls *)",
+      "Bash(du *)",
+      "Bash(rm -f */table.lock)",
+      "mcp__ms-inspect__*",
+      "mcp__ms-modify__*",
+      "mcp__ms-create__*"
     ]
   }
 }
