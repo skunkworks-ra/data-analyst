@@ -74,15 +74,19 @@ class TestGeneratePriorcals:
         assert any("gain_curves.gc" in t for t in expected)
         assert any("opacities.opac" in t for t in expected)
 
-    def test_script_contains_rq_mjd_threshold(self, tmp_path):
-        from ms_modify.priorcals import _RQ_MJD_THRESHOLD, run
+    def test_script_gates_rq_on_syspower(self, tmp_path):
+        """rq generation must be gated on SYSPOWER subtable presence (WIDAR
+        evidence), not an observation-date cutoff — date proxies misclassify
+        2010-11 commissioning-era WIDAR data."""
+        from ms_modify.priorcals import run
 
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
         run(str(ms), str(workdir), execute=False)
         script = (workdir / "priorcals.py").read_text()
-        assert str(_RQ_MJD_THRESHOLD) in script
+        assert "SYSPOWER" in script
+        assert "MJD" not in script
 
 
 # ---------------------------------------------------------------------------

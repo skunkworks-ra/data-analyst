@@ -615,7 +615,8 @@ async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> str:
     Tables generated via gencal in order:
       1. gain_curves.gc   — VLA elevation gain curves
       2. opacities.opac   — per-SPW zenith opacity
-      3. requantizer.rq   — post-2011 VLA requantizer (skipped for pre-WIDAR data)
+      3. requantizer.rq   — VLA WIDAR requantizer (attempted iff the SYSPOWER
+                            subtable has rows; absent SYSPOWER = pre-WIDAR data)
       4. antpos.ap        — antenna position corrections (skipped if empty)
 
     The returned 'priorcals' list is the canonical input to ms_initial_bandpass.
