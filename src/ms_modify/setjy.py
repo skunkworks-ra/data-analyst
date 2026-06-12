@@ -33,7 +33,10 @@ _DEFAULT_STANDARD = "Perley-Butler 2017"
 def _get_field_names(ms_str: str) -> list[str]:
     """Read field names from the FIELD subtable."""
     with open_table(ms_str + "/FIELD") as tb:
-        return list(tb.getcol("NAME"))
+        # Coerce numpy str_ to plain str: repr(np.str_(...)) renders as
+        # "np.str_('...')" under numpy >= 2, which is a NameError in the
+        # generated script (no numpy import there).
+        return [str(n) for n in tb.getcol("NAME")]
 
 
 def _build_setjy_block(field_name: str, standard: str) -> str:

@@ -35,6 +35,35 @@ class TestBuildSetjyBlock:
 
 
 # ---------------------------------------------------------------------------
+# _get_field_names — numpy str_ coercion
+# ---------------------------------------------------------------------------
+
+
+class TestGetFieldNamesCoercion:
+    def test_numpy_str_coerced_to_plain_str(self):
+        """tb.getcol returns numpy str_ values; repr(np.str_) renders as
+        np.str_('...') under numpy >= 2, breaking generated scripts."""
+        import numpy as np
+
+        from ms_modify.setjy import _get_field_names
+
+        class FakeTable:
+            def getcol(self, col):
+                return np.array(["3C286", "J1925+2106"])
+
+        from contextlib import contextmanager
+
+        @contextmanager
+        def fake_open_table(path):
+            yield FakeTable()
+
+        with patch("ms_modify.setjy.open_table", fake_open_table):
+            names = _get_field_names("/fake.ms")
+        assert all(type(n) is str for n in names)
+        assert all("np." not in repr(n) for n in names)
+
+
+# ---------------------------------------------------------------------------
 # ms_setjy.run — workdir and catalogue logic (mocked CASA reads)
 # ---------------------------------------------------------------------------
 
