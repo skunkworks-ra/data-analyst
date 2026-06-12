@@ -38,6 +38,7 @@ def _build_script(
     nterms: int | None,
     gridder: str,
     wprojplanes: int | None,
+    cfcache: str | None,
     cell: str,
     imsize: list[int],
     weighting: str,
@@ -52,6 +53,8 @@ def _build_script(
         optional_lines += f"    nterms       = {nterms},\n"
     if wprojplanes is not None:
         optional_lines += f"    wprojplanes  = {wprojplanes},\n"
+    if cfcache is not None:
+        optional_lines += f"    cfcache      = {cfcache!r},\n"
 
     script_name = Path(imagename).name.replace(".", "_")
 
@@ -109,6 +112,7 @@ def run(
     nterms: int | None = None,
     gridder: str = "standard",
     wprojplanes: int | None = None,
+    cfcache: str | None = None,
     cell: str = "1.0arcsec",
     imsize: list[int] | None = None,
     weighting: str = "briggs",
@@ -131,12 +135,21 @@ def run(
         field:       CASA field selection for science target(s).
         workdir:     Existing directory for script and image output.
         stokes:      Stokes products to image (default 'I').
-        specmode:    'mfs' or 'cube' (default 'mfs').
+        specmode:    'mfs', 'cube', or 'mvc' (default 'mfs'). Use 'mvc' with
+                     gridder='awp2' — awp2 does not implement conjbeams, and
+                     plain 'mfs' needs several major cycles to converge the
+                     wideband flux normalization.
         deconvolver: 'hogbom' or 'mtmfs' (default 'hogbom').
         nterms:      Taylor terms for mtmfs (default None; pass 2 for mtmfs).
         gridder:     'standard', 'wproject', or 'awp2' (default 'standard').
         wprojplanes: W-projection planes (None = omit; set for wproject/awp2
-                     when W-terms are required per Fresnel criterion).
+                     when W-terms are required per Fresnel criterion). If
+                     omitted for those gridders, CASA silently defaults to 1
+                     (no W-projection) — a warning is emitted in the response.
+        cfcache:     Convolution-function cache path. Applies to
+                     gridder='awproject' only (awp2 does not use a cfcache).
+                     Without it, awproject recomputes CFs from scratch on
+                     every run — potentially many hours.
         cell:        Cell size string, e.g. '2.5arcsec'.
         imsize:      Image size as [nx, ny] (default [512, 512]).
         weighting:   UV weighting scheme (default 'briggs').
@@ -164,6 +177,21 @@ def run(
 
     if imsize is None:
         imsize = [512, 512]
+
+    if gridder in ("wproject", "awp2", "awproject") and wprojplanes is None:
+        warnings.append(
+            f"gridder='{gridder}' with wprojplanes unset: CASA defaults to "
+            "wprojplanes=1 (no W-projection). Pass wprojplanes explicitly if "
+            "W-terms are significant (Fresnel < 0.9)."
+        )
+    if cfcache is not None and gridder != "awproject":
+        warnings.append(f"cfcache is only used by gridder='awproject'; ignored for '{gridder}'.")
+    if gridder == "awproject" and cfcache is None:
+        warnings.append(
+            "gridder='awproject' without cfcache: convolution functions will be "
+            "recomputed from scratch (potentially hours). Set cfcache to a "
+            "persistent path to reuse them across runs."
+        )
 
     workdir_path = Path(workdir)
     if not workdir_path.exists():
@@ -204,6 +232,7 @@ def run(
         nterms=nterms,
         gridder=gridder,
         wprojplanes=wprojplanes,
+        cfcache=cfcache if gridder == "awproject" else None,
         cell=cell,
         imsize=imsize,
         weighting=weighting,
@@ -267,6 +296,8 @@ def run(
         tclean_kwargs["nterms"] = nterms
     if wprojplanes is not None:
         tclean_kwargs["wprojplanes"] = wprojplanes
+    if cfcache is not None and gridder == "awproject":
+        tclean_kwargs["cfcache"] = cfcache
 
     casa_calls.append(f"casatasks.tclean(imagename={imagename!r}, ...)")
     try:

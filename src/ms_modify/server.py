@@ -1281,7 +1281,11 @@ class TcleanInput(BaseModel):
     )
     specmode: str = Field(
         default="mfs",
-        description="'mfs' for continuum (default) or 'cube' for per-channel imaging.",
+        description=(
+            "'mfs' for continuum (default), 'cube' for per-channel imaging, or "
+            "'mvc' for wideband awp2 imaging (awp2 lacks conjbeams; plain 'mfs' "
+            "needs several major cycles to converge flux normalization)."
+        ),
     )
     deconvolver: str = Field(
         default="hogbom",
@@ -1300,9 +1304,18 @@ class TcleanInput(BaseModel):
         default=None,
         description=(
             "Number of W-projection planes. Omit when W-terms are negligible "
-            "(Fresnel number >= 0.9). Valid for both 'wproject' and 'awp2' gridders."
+            "(Fresnel number >= 0.9). Valid for both 'wproject' and 'awp2' gridders. "
+            "If omitted for those gridders, CASA silently defaults to 1 (no W-projection)."
         ),
         ge=1,
+    )
+    cfcache: str | None = Field(
+        default=None,
+        description=(
+            "Convolution-function cache path. Only used by gridder='awproject' "
+            "(awp2 has no cfcache). Without it, awproject recomputes CFs on every "
+            "run — potentially hours."
+        ),
     )
     cell: str = Field(
         default="1.0arcsec",
@@ -1416,21 +1429,22 @@ async def ms_tclean(params: TcleanInput) -> str:
         params.imagename,
         params.field,
         params.workdir,
-        params.stokes,
-        params.specmode,
-        params.deconvolver,
-        params.nterms,
-        params.gridder,
-        params.wprojplanes,
-        params.cell,
-        params.imsize,
-        params.weighting,
-        params.robust,
-        params.niter,
-        params.threshold,
-        params.savemodel,
-        params.pblimit,
-        params.execute,
+        stokes=params.stokes,
+        specmode=params.specmode,
+        deconvolver=params.deconvolver,
+        nterms=params.nterms,
+        gridder=params.gridder,
+        wprojplanes=params.wprojplanes,
+        cfcache=params.cfcache,
+        cell=params.cell,
+        imsize=params.imsize,
+        weighting=params.weighting,
+        robust=params.robust,
+        niter=params.niter,
+        threshold=params.threshold,
+        savemodel=params.savemodel,
+        pblimit=params.pblimit,
+        execute=params.execute,
     )
 
 
