@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
@@ -396,6 +397,26 @@ class ImageStatsInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# Per-MS locks: CASA table access is not thread-safe for concurrent opens of
+# the same MS within one process (observed: >=2 simultaneous opens can crash
+# the server, with no in-session recovery). CASA's own locking is per-MS, so
+# tools against *different* MSes may still run concurrently.
+_MS_LOCKS: dict[str, threading.Lock] = {}
+_MS_LOCKS_GUARD = threading.Lock()
+
+
+def _ms_lock(path: str) -> threading.Lock:
+    # realpath: the same MS may be referenced via symlinked aliases
+    # (e.g. /users/... -> /lustre/...); those must share one lock.
+    path = os.path.realpath(path)
+    with _MS_LOCKS_GUARD:
+        lock = _MS_LOCKS.get(path)
+        if lock is None:
+            lock = threading.Lock()
+            _MS_LOCKS[path] = lock
+        return lock
+
+
 def _run_tool_sync(tool_fn, *args, **kwargs) -> str:
     """Run tool_fn synchronously; called from a thread via _run_tool."""
     try:
@@ -411,12 +432,20 @@ async def _run_tool(tool_fn, *args, **kwargs) -> str:
 
     Runs synchronous (potentially long-running) tool functions in a thread pool
     via asyncio.to_thread so they never block the MCP server's event loop.
+    Concurrent calls against the same primary resource path (first positional
+    argument — MS, image, or caltable) are serialized via a per-path lock.
     Catches RadioMSError and returns a well-formed error envelope.
     Unexpected exceptions are re-raised (let FastMCP handle them).
     """
     import asyncio
 
-    return await asyncio.to_thread(_run_tool_sync, tool_fn, *args, **kwargs)
+    def _locked() -> str:
+        if args:
+            with _ms_lock(str(args[0])):
+                return _run_tool_sync(tool_fn, *args, **kwargs)
+        return _run_tool_sync(tool_fn, *args, **kwargs)
+
+    return await asyncio.to_thread(_locked)
 
 
 # ---------------------------------------------------------------------------
