@@ -744,6 +744,51 @@ for this observation. Flag them globally and re-solve.
 
 ---
 
+## Antenna-set consistency check — run before Step 7
+
+applycal applies a *stack* of caltables to each visibility. With `applymode='calflag'`,
+a visibility is flagged if it has no usable solution in **any** table in the stack, so
+the antennas that survive applycal are the **intersection** of the surviving antenna
+sets across all stacked tables — not any single table's set. Each table can pass its
+own `n_antennas_lost ≤ 3` gate while the intersection still collapses (observed on
+AB1345: a target applycal reduced to a 5-antenna intersection). Nothing else in this
+workflow intersects the sets, so the collapse is otherwise silent until it shows up as
+gutted CORRECTED data — by which point the FLAG damage is done and there is no
+flagversions rollback in this build.
+
+Compute the intersection explicitly before applycal:
+
+1. `ms_antenna_list(ms_path={VIS})` → array total `N` = number of antennas.
+2. For each table in the applycal stack (`delay.K`, `bandpass.B`, `gain.fluxscaled`,
+   plus any priorcals), run `ms_calsol_stats(caltable_path=...)` and compute the
+   surviving set: `surviving = set(ant_names) − set(antennas_lost)`.
+3. `common` = intersection of `surviving` across all tables.
+4. `fraction = len(common) / N`.
+
+Gate on `fraction` (denominator is the full array, from `ms_antenna_list`):
+
+| `fraction` | Action |
+|---|---|
+| ≥ 0.50 | Antenna set is consistent — proceed to Step 7 |
+| < 0.50 | Pathological collapse — **do not applycal blindly.** Branch on processing mode (below) |
+
+**If `fraction < 0.50`:**
+
+- **Interactive / intervention requested:** present this as a decision point. Report
+  `N`, `len(common)`, and per-table which antennas each table dropped (the set
+  difference `surviving_table − common`). Ask the user whether to diagnose the cause
+  or apply anyway with the reduced set.
+- **Hands-off / autonomous processing:** do **not** proceed to applycal. Treat the
+  collapse as a signal of a pathological upstream failure and inspect:
+  - a-priori flagging — `ms_flag_summary` per field/antenna, to find an antenna or SPW
+    flagged out across the board;
+  - the calibration solution logs and per-table `ms_calsol_stats`, to find an antenna
+    that died across multiple solves (e.g. a bad refant, a feed swap, a hardware-dead
+    antenna). Resolve the root cause and re-solve before applycal — switching
+    `applymode` will not recover antennas that have no solution at all.
+
+---
+
 ## Step 7 — Apply calibration
 
 Applycal is called separately for each field category to ensure the correct
@@ -753,8 +798,12 @@ gain solutions are interpolated correctly for each.
 - `gainfield`: selects which rows from `gain.fluxscaled` apply to each field
 - `interp`: `'nearest'` for calibrators; `'linear'` for target (interpolate between adjacent cal scans)
 - `calwt=False`: VLA data weights are not properly calibrated; calibrating them produces nonsensical results
-- `applymode`: calibrators use `'calflagstrict'`; science target uses `'calflagstrict'` if
+- `applymode`: calibrators use `'calflag'`; science target uses `'calflag'` if
   per-calibrator flag fraction in `calibrators.ms` post-rflag is < 50%, otherwise `'calonly'`.
+  Use `'calflag'`, not `'calflagstrict'` — `calflagstrict` additionally flags visibilities whose
+  applicable solution is only *partially* flagged (one polarization out, an edge-channel gap, a
+  marginal interpolation), which on AB1345 helped collapse the applied antenna set. `calflag`
+  flags only where there is no usable solution at all.
   `calonly` leaves data without a matching gain solution uncalibrated but unflagged — prefer it
   for the target when calibrator flagging was heavy.
 
@@ -768,7 +817,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {FLUX_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
-    applymode  = 'calflagstrict',
+    applymode  = 'calflag',
     flagbackup = True,
     workdir    = {WORKDIR},
     execute    = False,
@@ -785,7 +834,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
-    applymode  = 'calflagstrict',
+    applymode  = 'calflag',
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,
@@ -802,7 +851,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'],
     calwt      = False,
-    applymode  = 'calonly',        # or 'calflagstrict' if calibrator flag fraction < 50%
+    applymode  = 'calonly',        # or 'calflag' if calibrator flag fraction < 50%
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,
