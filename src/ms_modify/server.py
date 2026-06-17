@@ -476,8 +476,11 @@ class SetjyPolcalInput(BaseModel):
         ),
     )
     epoch: str = Field(
-        default="perley_butler_2013",
-        description="Catalogue epoch key for the polarization data.",
+        default="2019",
+        description=(
+            "Catalogue epoch key for the polarization (polindex/polangle) data. "
+            "Stokes I is probed from Perley-Butler 2017, not this catalogue."
+        ),
     )
     pol_freq_range_lo_ghz: float | None = Field(
         default=None,
@@ -499,11 +502,19 @@ class SetjyPolcalInput(BaseModel):
         description="Polynomial degree for polangle (default 4).",
         ge=1,
     )
+    min_chunk_mhz: float = Field(
+        default=32.0,
+        description=(
+            "Minimum width (MHz) of each Perley-Butler Stokes I probe chunk when "
+            "equipartitioning a wide SPW (default 32)."
+        ),
+        gt=0.0,
+    )
     execute: bool = Field(
         default=False,
         description=(
             "If False (default), write setjy_polcal.py and return. "
-            "If True, run setjy(standard='manual') in-process."
+            "If True, probe Perley-Butler Stokes I and set the manual model in-process."
         ),
     )
 
@@ -785,17 +796,20 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
     """
     Set the full polarization model for a polarization angle calibrator.
 
-    Fits three polynomial models from the Perley & Butler (2013) catalogue:
-      - Stokes I spectral index (log-polynomial → spix)
+    Stokes I (flux@reffreq + spectral index) is probed from CASA's own
+    Perley-Butler 2017 flux standard at run time — setjy(standard='Perley-Butler
+    2017', usescratch=False) is run per SPW (wide SPWs equipartitioned into
+    chunks >= min_chunk_mhz) and the returned model flux is fit in log space.
+    The pol-property catalogue (default epoch '2019') supplies only:
       - Pol fraction vs frequency (ascending polynomial → polindex)
       - Pol angle vs frequency in radians (ascending polynomial → polangle)
 
-    All polynomials use x = (f - f_ref)/f_ref, ASCENDING coefficient order
-    [c0, c1, ...] as required by CASA setjy(standard='manual').
+    All polynomials use ASCENDING coefficient order [c0, c1, ...] as required by
+    CASA setjy(standard='manual').
 
-    Writes workdir/setjy_polcal.py. Run it with CASA to populate the MODEL
-    column with the full polarized flux density model before solving Kcross,
-    D-terms, or position angle calibration tables.
+    Writes workdir/setjy_polcal.py — a self-contained probe→fit→apply script.
+    Run it with CASA to populate the MODEL column with the full polarized flux
+    density model before solving Kcross, D-terms, or position angle tables.
 
     Args:
         params.ms_path:               Path to the Measurement Set.
@@ -803,17 +817,18 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
         params.workdir:               Existing directory for the generated script.
         params.reffreq_ghz:           Reference frequency in GHz.
         params.calibrator_name:       Catalogue lookup name (defaults to field).
-        params.epoch:                 Catalogue epoch (default 'perley_butler_2013').
+        params.epoch:                 Pol-property catalogue epoch (default '2019').
         params.pol_freq_range_lo_ghz: Lower GHz bound to restrict pol fits.
         params.pol_freq_range_hi_ghz: Upper GHz bound to restrict pol fits.
         params.polindex_deg:          Polynomial degree for polindex (default 3).
         params.polangle_deg:          Polynomial degree for polangle (default 4).
+        params.min_chunk_mhz:         Minimum probe-chunk width in MHz (default 32).
         params.execute:               Generate script only (False) or run in-process (True).
 
     Returns:
-        JSON with script_path, calibrator, reffreq_ghz, flux_jy, polindex,
-        polangle, polindex_c0 (pol fraction at reffreq), polangle_c0_rad
-        (pol angle in radians at reffreq).
+        JSON with script_path, calibrator, reffreq_ghz, polindex, polangle,
+        polindex_c0 (pol fraction at reffreq), polangle_c0_rad (pol angle in
+        radians at reffreq), and — when execute=True — the probed flux_jy/spix.
     """
     return _run_tool(
         setjy_polcal.run,
@@ -827,6 +842,7 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
         params.pol_freq_range_hi_ghz,
         params.polindex_deg,
         params.polangle_deg,
+        params.min_chunk_mhz,
         params.execute,
     )
 

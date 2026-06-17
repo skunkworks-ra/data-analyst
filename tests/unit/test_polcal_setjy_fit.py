@@ -21,10 +21,12 @@ import pytest
 from ms_inspect.util.polcal_setjy_fit import (
     SetjyPolParams,
     fit_from_catalogue,
+    fit_pol_terms_from_catalogue,
     fit_polangle,
     fit_polindex,
     fit_setjy_params,
     fit_stokes_i,
+    fit_stokes_i_adaptive,
 )
 
 # ---------------------------------------------------------------------------
@@ -306,3 +308,72 @@ class TestFitFromCatalogue:
         # Should NOT raise — 14 S-band-and-above nodes with defined PA are available
         params = fit_from_catalogue("3C48", reffreq_ghz=3.0, pol_freq_range_ghz=(2.0, 9.0))
         assert params is not None
+
+
+# ---------------------------------------------------------------------------
+# fit_stokes_i_adaptive — degree adapts to sample count
+# ---------------------------------------------------------------------------
+
+
+class TestFitStokesIAdaptive:
+    def test_three_points_quadratic_recovers_alpha(self):
+        alpha = -0.7
+        reffreq = 1.5
+        freq = np.array([1.0, 1.5, 2.0, 3.0])
+        flux = 12.0 * (freq / reffreq) ** alpha
+        flux_at_ref, spix = fit_stokes_i_adaptive(freq, flux, reffreq)
+        assert flux_at_ref == pytest.approx(12.0, rel=1e-4)
+        assert len(spix) == 2
+        assert spix[0] == pytest.approx(alpha, abs=1e-3)
+
+    def test_two_points_linear_spix(self):
+        flux_at_ref, spix = fit_stokes_i_adaptive([1.0, 2.0], [10.0, 5.0], reffreq_ghz=1.5)
+        assert len(spix) == 1  # degree 1 → single alpha
+
+    def test_single_point_flat_spix(self):
+        flux_at_ref, spix = fit_stokes_i_adaptive([1.5], [9.0], reffreq_ghz=1.5)
+        assert flux_at_ref == pytest.approx(9.0, rel=1e-6)
+        assert spix == [0.0]
+
+    def test_no_points_raises(self):
+        with pytest.raises(ValueError, match="≥1"):
+            fit_stokes_i_adaptive([], [], reffreq_ghz=1.5)
+
+    def test_nonpositive_flux_raises(self):
+        with pytest.raises(ValueError, match="positive"):
+            fit_stokes_i_adaptive([1.0, 2.0, 3.0], [10.0, 0.0, 5.0], reffreq_ghz=2.0)
+
+
+# ---------------------------------------------------------------------------
+# fit_pol_terms_from_catalogue — pol-only fit, works for flux-less 2019 epoch
+# ---------------------------------------------------------------------------
+
+
+class TestFitPolTermsFromCatalogue:
+    def test_3c286_2019_pol_only_no_flux_needed(self):
+        """3C286's 2019 epoch has NO Stokes I — pol-only fit must still succeed."""
+        polindex, polangle = fit_pol_terms_from_catalogue("3C286", reffreq_ghz=1.5)
+        # 2019 table: ~9.8% pol and PA ~33° near L-band
+        assert polindex[0] == pytest.approx(0.099, abs=0.01)
+        assert polangle[0] == pytest.approx(math.radians(33.0), abs=0.05)
+
+    def test_default_epoch_is_2019(self):
+        # Should not raise with the default epoch for a 2019-only calibrator.
+        # 3C138 has 5 PA-defined nodes (1.45-15 GHz) — exactly enough for deg=4.
+        polindex, polangle = fit_pol_terms_from_catalogue("3C138", reffreq_ghz=3.0)
+        assert len(polindex) == 4
+        assert len(polangle) == 5
+
+    def test_3c147_polangle_fails_unpolarized(self):
+        # 3C147 has no defined position angle (leakage calibrator) — polangle
+        # fit must raise rather than fabricate an angle.
+        with pytest.raises(ValueError, match="polangle"):
+            fit_pol_terms_from_catalogue("3C147", reffreq_ghz=6.0)
+
+    def test_unknown_calibrator_raises(self):
+        with pytest.raises(KeyError, match="not found"):
+            fit_pol_terms_from_catalogue("J9999+0000", reffreq_ghz=3.0)
+
+    def test_unknown_epoch_raises(self):
+        with pytest.raises(KeyError, match="Epoch"):
+            fit_pol_terms_from_catalogue("3C286", reffreq_ghz=1.5, epoch="nope")

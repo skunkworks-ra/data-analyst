@@ -210,6 +210,118 @@ def fit_setjy_params(
 # ---------------------------------------------------------------------------
 
 
+def fit_stokes_i_adaptive(
+    freq_ghz: list[float] | np.ndarray,
+    flux_jy: list[float] | np.ndarray,
+    reffreq_ghz: float,
+) -> tuple[float, list[float]]:
+    """Fit the Stokes I log-polynomial with a degree adapted to the node count.
+
+    Same model as ``fit_stokes_i`` — log10(S) = log10(S_ref) + alpha*x + beta*x^2,
+    x = log10(f/f_ref) — but the polynomial degree is chosen from the number of
+    available frequency samples so the probe works with a single SPW (1 point)
+    up to a wide multi-SPW band:
+
+        ≥3 points → degree 2 → spix = [alpha, beta]
+         2 points → degree 1 → spix = [alpha]
+         1 point  → degree 0 → spix = [0.0]  (flat; no slope determinable)
+
+    Returns (flux_at_reffreq_jy, spix).
+    """
+    freq = np.asarray(freq_ghz, dtype=float)
+    flux = np.asarray(flux_jy, dtype=float)
+    n = freq.size
+    if n < 1:
+        raise ValueError("fit_stokes_i_adaptive needs ≥1 frequency sample; got 0.")
+    if np.any(flux <= 0):
+        raise ValueError("Stokes I flux samples must be positive (log fit).")
+    x = np.log10(freq / reffreq_ghz)
+    y = np.log10(flux)
+    deg = min(2, n - 1)
+    # Vandermonde in ascending powers: columns [1, x, x^2, ...]
+    A = np.vander(x, deg + 1, increasing=True)
+    coeffs, _, _, _ = np.linalg.lstsq(A, y, rcond=None)
+    flux_at_ref = float(10.0 ** coeffs[0])
+    spix = [float(c) for c in coeffs[1:]] if deg >= 1 else [0.0]
+    return flux_at_ref, spix
+
+
+def fit_pol_terms_from_catalogue(
+    calibrator_name: str,
+    reffreq_ghz: float,
+    epoch: str = "2019",
+    pol_freq_range_ghz: tuple[float, float] | None = None,
+    polindex_deg: int = 3,
+    polangle_deg: int = 4,
+) -> tuple[list[float], list[float]]:
+    """Fit only the polarization terms (polindex, polangle) from the catalogue.
+
+    The Stokes I flux/spix are NOT fit here — they come from a Perley-Butler
+    setjy probe at run time (the pol-property tables, e.g. the 2019 NRAO epoch,
+    tabulate fractional polarization and angle only, no Stokes I). This is the
+    pure-numpy half of ms_setjy_polcal; it has no CASA dependency.
+
+    Returns (polindex, polangle), both ASCENDING-order coefficient lists.
+
+    Raises:
+        KeyError:   calibrator not in catalogue, or epoch not present.
+        ValueError: insufficient nodes for the requested polynomial degrees.
+    """
+    from ms_inspect.util.pol_calibrators import lookup_pol
+
+    entry = lookup_pol(calibrator_name)
+    if entry is None:
+        raise KeyError(f"Calibrator {calibrator_name!r} not found in pol catalogue.")
+    rows = entry.epochs.get(epoch)
+    if not rows:
+        raise KeyError(
+            f"Epoch {epoch!r} not present for {calibrator_name!r}. "
+            f"Available epochs: {list(entry.epochs)}"
+        )
+
+    rows_sorted = sorted(rows, key=lambda r: r.freq_ghz)
+    freq = np.array([r.freq_ghz for r in rows_sorted], dtype=float)
+    pf = np.array(
+        [
+            r.frac_pol_pct / 100.0 if r.frac_pol_pct is not None else float("nan")
+            for r in rows_sorted
+        ],
+        dtype=float,
+    )
+    pa = np.array(
+        [
+            np.radians(r.pol_angle_deg) if r.pol_angle_deg is not None else float("nan")
+            for r in rows_sorted
+        ],
+        dtype=float,
+    )
+
+    def _band_mask(values: np.ndarray) -> np.ndarray:
+        mask = ~np.isnan(values)
+        if pol_freq_range_ghz is not None:
+            lo, hi = pol_freq_range_ghz
+            mask &= (freq >= lo) & (freq <= hi)
+        return mask
+
+    mask_p = _band_mask(pf)
+    if mask_p.sum() < polindex_deg + 1:
+        raise ValueError(
+            f"polindex fit (deg {polindex_deg}) needs ≥{polindex_deg + 1} valid nodes; "
+            f"got {mask_p.sum()}."
+        )
+    polindex = fit_polindex(freq[mask_p], pf[mask_p], reffreq_ghz, deg=polindex_deg)
+
+    mask_a = _band_mask(pa)
+    if mask_a.sum() < polangle_deg + 1:
+        raise ValueError(
+            f"polangle fit (deg {polangle_deg}) needs ≥{polangle_deg + 1} valid nodes; "
+            f"got {mask_a.sum()}."
+        )
+    polangle = fit_polangle(freq[mask_a], pa[mask_a], reffreq_ghz, deg=polangle_deg)
+
+    return polindex, polangle
+
+
 def fit_from_catalogue(
     calibrator_name: str,
     reffreq_ghz: float,
