@@ -1514,6 +1514,27 @@ class TcleanInput(BaseModel):
             "CASA's default 0.2 blanks everything below 20% PB."
         ),
     )
+    nchan: int | None = Field(
+        default=None,
+        description=(
+            "Number of output channels for a frequency cube (specmode='cube' "
+            "only; None = all). For an IQUV polarization cube, set one plane per "
+            "SPW-chunk per skill 11. Ignored for specmode='mfs'/'mvc'."
+        ),
+        ge=1,
+    )
+    start: str | None = Field(
+        default=None,
+        description="Cube first channel as a CASA spectral string, e.g. '1.0GHz' or '0' (specmode='cube').",
+    )
+    width: str | None = Field(
+        default=None,
+        description="Cube channel width, e.g. '64MHz' or '4' (specmode='cube').",
+    )
+    outframe: str | None = Field(
+        default=None,
+        description="Output spectral reference frame, e.g. 'LSRK' (specmode='cube'). None = CASA default.",
+    )
     execute: bool = Field(
         default=False,
         description=(
@@ -1562,7 +1583,9 @@ async def ms_tclean(params: TcleanInput) -> str:
         params.field:       CASA field selection for science target(s).
         params.workdir:     Existing directory for the generated script.
         params.stokes:      Stokes products (default 'I').
-        params.specmode:    'mfs' or 'cube'.
+        params.specmode:    'mfs', 'cube', or 'mvc'.
+        params.nchan/start/width/outframe: frequency-cube channelization
+                            (specmode='cube' only; ignored otherwise).
         params.deconvolver: 'hogbom' or 'mtmfs'.
         params.nterms:      Taylor terms (pass 2 for mtmfs; omit for hogbom).
         params.gridder:     'standard', 'wproject', or 'awp2'.
@@ -1600,6 +1623,10 @@ async def ms_tclean(params: TcleanInput) -> str:
         threshold=params.threshold,
         savemodel=params.savemodel,
         pblimit=params.pblimit,
+        nchan=params.nchan,
+        start=params.start,
+        width=params.width,
+        outframe=params.outframe,
         execute=params.execute,
     )
 

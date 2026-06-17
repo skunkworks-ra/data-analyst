@@ -65,3 +65,39 @@ class TestSpecmodeMvc:
     def test_mvc_rendered(self, tmp_path):
         script, _ = _run(tmp_path, gridder="awp2", wprojplanes=32, specmode="mvc")
         assert "specmode     = 'mvc'" in script
+
+
+class TestCubeArgs:
+    def test_cube_args_rendered_for_cube(self, tmp_path):
+        script, _ = _run(
+            tmp_path,
+            specmode="cube",
+            stokes="IQUV",
+            nchan=16,
+            start="1.0GHz",
+            width="64MHz",
+            outframe="LSRK",
+        )
+        assert "specmode     = 'cube'" in script
+        assert "nchan        = 16" in script
+        assert "start        = '1.0GHz'" in script
+        assert "width        = '64MHz'" in script
+        assert "outframe     = 'LSRK'" in script
+
+    def test_cube_args_ignored_for_mfs_with_warning(self, tmp_path):
+        script, warnings = _run(tmp_path, specmode="mfs", nchan=16, outframe="LSRK")
+        assert "nchan" not in script
+        assert "outframe" not in script
+        assert any("cube args" in w for w in warnings)
+
+    def test_no_cube_args_no_warning(self, tmp_path):
+        script, warnings = _run(tmp_path, specmode="mfs")
+        assert not any("cube args" in w for w in warnings)
+        assert "nchan" not in script
+
+    def test_partial_cube_args_omits_unset(self, tmp_path):
+        script, _ = _run(tmp_path, specmode="cube", nchan=8)
+        assert "nchan        = 8" in script
+        assert "start" not in script
+        assert "width" not in script
+        assert "outframe" not in script

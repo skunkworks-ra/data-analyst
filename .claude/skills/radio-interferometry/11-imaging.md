@@ -253,3 +253,91 @@ Quality gates:
 If `rms_jy` is > 3× the radiometer estimate, run `ms_residual_stats` on the
 CORRECTED column before re-imaging — the problem is likely in the calibration,
 not the imaging parameters.
+
+---
+
+## Polarization frequency cubes (IQUV)
+
+Use this path when the science needs Stokes Q/U as a function of frequency —
+rotation-measure (RM) work, depolarization studies, or any check that the
+polarization calibration (skill 09) holds across the band. Spectral-line cubes
+(continuum subtraction, velocity frames) are a separate workflow and out of
+scope here.
+
+### Why a cube, not wideband MFS
+
+`deconvolver='mtmfs', nterms=2` (Step 2's wideband continuum path) **cannot**
+image `stokes='IQUV'` — the Taylor-term expansion is defined for total
+intensity only, and CASA will error or silently mis-model Q/U/V. So for
+polarization spectral coverage you image a **frequency cube**:
+`specmode='cube'`, `stokes='IQUV'`, `deconvolver='hogbom'` (per-plane CLEAN; no
+joint spectral deconvolution). This trades the wideband sensitivity/spectral-
+index benefit of mtmfs for honest per-channel polarization.
+
+A wideband Stokes-I headline image (mtmfs) and an IQUV cube (hogbom) are
+complementary, not alternatives — run both if you need both the deep I image
+and the polarization spectrum.
+
+### Channelization
+
+Default to **per-SPW-chunk** planes, not per-native-channel. One plane per SPW
+(or per N-MHz chunk) gives enough λ² sampling for RM synthesis without the cost
+and per-plane noise of full spectral resolution. This mirrors the chunking
+`ms_setjy_polcal` already uses to fit the polarization model.
+
+- Derive `width` from the chunk size: e.g. a 1 GHz SPW split into 64 MHz
+  planes → `width='64MHz'`, `nchan=16`. Match the chunking you used in polcal
+  so the model and the cube share a frequency grid.
+- Set `start` to the band's low edge and `outframe='LSRK'` (TOPO is acceptable
+  for continuum polarization, but be explicit).
+- Use **per-native-channel** only for narrow fractional bandwidth, or when RM
+  is large enough that Q/U rotates within a chunk (chunk Δ(λ²) must keep the
+  intra-chunk RM rotation well below a radian — otherwise bandwidth
+  depolarization washes out the signal you are trying to measure).
+
+### Call
+
+Pass the cube args through `ms_tclean` (no separate tool):
+
+```
+ms_tclean(
+    ms_path     = {VIS},
+    imagename   = {WORKDIR}/{imagename}_iquv,
+    field       = {TARGET_FIELD},
+    stokes      = 'IQUV',
+    specmode    = 'cube',
+    deconvolver = 'hogbom',
+    nchan       = {N_CHUNKS},
+    start       = {BAND_LOW_EDGE},   # e.g. '1.0GHz'
+    width       = {CHUNK_WIDTH},     # e.g. '64MHz'
+    outframe    = 'LSRK',
+    gridder     = {gridder},         # Steps 5–6 as usual
+    cell        = {CELL},
+    imsize      = [{IMSIZE}, {IMSIZE}],
+    weighting   = 'briggs',
+    robust      = 0.5,
+    niter       = 50000,
+    threshold   = {threshold},
+    workdir     = {WORKDIR},
+    execute     = False,
+)
+```
+
+Cell size and imsize are derived as in Steps 3–4 using the **highest** frequency
+in the band (smallest beam → finest cell), so every plane is adequately sampled.
+
+### Quality gates (per-plane)
+
+`ms_image_stats` returns a `planes` array (per Stokes, per channel) for a cube.
+Reason over it — the tool does not interpret:
+
+| Check | Expectation | If violated |
+|---|---|---|
+| Stokes I `rms_jy` per plane | rises smoothly toward band edges / RFI-flagged chunks | a single spiking plane = residual RFI or a flagged-out chunk; flag and re-image or drop the plane |
+| Q, U `peak_jy` per plane | present and varying smoothly with frequency | Q/U at noise across all planes when the source is known-polarized = polcal (skill 09) didn't apply, or parang was off in applycal |
+| V `peak_jy` per plane | near noise (most sources have negligible circular pol) | significant V everywhere = leakage (D-term) error; revisit skill 09 |
+| fractional pol = sqrt(Q²+U²)/I | physically plausible (≲ a few–10% for most sources) | > ~20% smoothly across the band = I likely wrong (model/fluxscale); spiky = per-plane artefact |
+
+Compute fractional polarization and RM-related quantities yourself from the
+per-plane numbers — these are skill-level interpretations, deliberately not in
+the tool.

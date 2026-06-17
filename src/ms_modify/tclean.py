@@ -47,6 +47,10 @@ def _build_script(
     threshold: str,
     savemodel: str,
     pblimit: float,
+    nchan: int | None,
+    start: str | None,
+    width: str | None,
+    outframe: str | None,
 ) -> str:
     optional_lines = ""
     if deconvolver == "mtmfs" and nterms is not None:
@@ -55,6 +59,16 @@ def _build_script(
         optional_lines += f"    wprojplanes  = {wprojplanes},\n"
     if cfcache is not None:
         optional_lines += f"    cfcache      = {cfcache!r},\n"
+    # Cube channelization — only meaningful for specmode='cube'.
+    if specmode == "cube":
+        if nchan is not None:
+            optional_lines += f"    nchan        = {nchan},\n"
+        if start is not None:
+            optional_lines += f"    start        = {start!r},\n"
+        if width is not None:
+            optional_lines += f"    width        = {width!r},\n"
+        if outframe is not None:
+            optional_lines += f"    outframe     = {outframe!r},\n"
 
     script_name = Path(imagename).name.replace(".", "_")
 
@@ -121,6 +135,10 @@ def run(
     threshold: str = "1.0mJy",
     savemodel: str = "modelcolumn",
     pblimit: float = -0.01,
+    nchan: int | None = None,
+    start: str | None = None,
+    width: str | None = None,
+    outframe: str | None = None,
     execute: bool = False,
 ) -> dict:
     """
@@ -162,6 +180,15 @@ def run(
                      spotting outliers). CASA's own default is 0.2, which blanks
                      everything below 20% PB.
         savemodel:   'modelcolumn' writes MODEL_DATA for self-cal (default).
+        nchan:       Number of output channels for the cube (specmode='cube'
+                     only; None = all). For a polarization frequency cube,
+                     one plane per SPW-chunk per skill 11.
+        start:       First channel of the cube as a CASA spectral string, e.g.
+                     '1.0GHz' or '0' (specmode='cube' only).
+        width:       Channel width of the cube, e.g. '64MHz' or '4'
+                     (specmode='cube' only).
+        outframe:    Output spectral reference frame, e.g. 'LSRK' (specmode=
+                     'cube' only). None lets CASA default.
         execute:     If False (default), write script and return.
                      If True, run tclean in-process (intended for test data only).
 
@@ -191,6 +218,11 @@ def run(
             "gridder='awproject' without cfcache: convolution functions will be "
             "recomputed from scratch (potentially hours). Set cfcache to a "
             "persistent path to reuse them across runs."
+        )
+    if specmode != "cube" and any(v is not None for v in (nchan, start, width, outframe)):
+        warnings.append(
+            f"specmode='{specmode}': cube args (nchan/start/width/outframe) are "
+            "ignored. Set specmode='cube' to image a frequency cube."
         )
 
     workdir_path = Path(workdir)
@@ -241,6 +273,10 @@ def run(
         threshold=threshold,
         savemodel=savemodel,
         pblimit=pblimit,
+        nchan=nchan,
+        start=start,
+        width=width,
+        outframe=outframe,
     )
     script_file.write_text(script_content)
     casa_calls.append(f"write_script → {script_file}")
@@ -298,6 +334,15 @@ def run(
         tclean_kwargs["wprojplanes"] = wprojplanes
     if cfcache is not None and gridder == "awproject":
         tclean_kwargs["cfcache"] = cfcache
+    if specmode == "cube":
+        if nchan is not None:
+            tclean_kwargs["nchan"] = nchan
+        if start is not None:
+            tclean_kwargs["start"] = start
+        if width is not None:
+            tclean_kwargs["width"] = width
+        if outframe is not None:
+            tclean_kwargs["outframe"] = outframe
 
     casa_calls.append(f"casatasks.tclean(imagename={imagename!r}, ...)")
     try:

@@ -235,7 +235,7 @@ Environment variable reference:
 
 | Tool | Module | What it does |
 |------|--------|-------------|
-| `ms_image_stats` | `tools/image_stats.py` | Robust RMS (MAD-based), peak flux, dynamic range, restoring beam from a CASA image |
+| `ms_image_stats` | `tools/image_stats.py` | Robust RMS (MAD-based), peak flux, dynamic range, restoring beam from a CASA image. For a multi-plane image (frequency cube / multi-Stokes, e.g. IQUV pol cube) also returns `n_planes` + a per-(Stokes, channel) `planes` array |
 
 ---
 
@@ -278,7 +278,7 @@ Functions are also callable directly by skills and scripts.
 | `ms_bandpass` | `ms_modify/bandpass.py` | Bandpass calibration |
 | `ms_fluxscale` | `ms_modify/fluxscale.py` | Bootstrap flux scale from flux standard |
 | `ms_applycal` | `ms_modify/applycal.py` | Apply caltables; write CORRECTED_DATA |
-| `ms_tclean` | `ms_modify/tclean.py` | Generate (and optionally execute) a tclean imaging script; validates CORRECTED_DATA; pbcor=True hardcoded |
+| `ms_tclean` | `ms_modify/tclean.py` | Generate (and optionally execute) a tclean imaging script; validates CORRECTED_DATA; pbcor=True hardcoded. Cube args (`nchan`/`start`/`width`/`outframe`) for frequency cubes incl. IQUV polarization cubes (specmode='cube'); ignored otherwise |
 | *(utility)* | `ms_modify/slurm.py` | SLURM batch submission: wrap scripts in sbatch files, chain with afterok dependencies |
 
 `set_intents` logic:
