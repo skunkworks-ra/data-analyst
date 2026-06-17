@@ -513,6 +513,16 @@ class ApplyInitialRflagInput(BaseModel):
         min_length=1,
     )
     workdir: str = Field(..., description="Existing directory for generated scripts.", min_length=1)
+    field: str = Field(
+        ...,
+        description=(
+            "REQUIRED. The field(s) to flag — scope to whichever field's CORRECTED column "
+            "is genuinely calibrated at this point (e.g. the bandpass calibrator right after "
+            "initial_bandpass, or all calibrators after the full solve). An all-field pass over "
+            "uncalibrated fields flags ~90% of the data and is recoverable only by re-splitting."
+        ),
+        min_length=1,
+    )
     timedevscale: float = Field(
         default=5.0,
         description="rflag time deviation threshold (default 5.0).",
@@ -770,6 +780,8 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
     Args:
         params.ms_path:      Path to the MS (CORRECTED + MODEL must exist).
         params.workdir:      Existing directory for generated scripts.
+        params.field:        REQUIRED. Field(s) whose CORRECTED column is valid at this stage.
+                             All-field passes over uncalibrated fields are unsafe (see field docs).
         params.timedevscale: rflag time deviation threshold (default 5.0).
         params.freqdevscale: rflag frequency deviation threshold (default 5.0).
         params.timecutoff:   tfcrop time deviation threshold (default 4.0).
@@ -783,6 +795,7 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
         initial_rflag.run,
         params.ms_path,
         params.workdir,
+        params.field,
         params.timedevscale,
         params.freqdevscale,
         params.timecutoff,

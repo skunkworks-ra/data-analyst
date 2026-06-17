@@ -27,15 +27,23 @@ TOOL_NAME = "ms_apply_initial_rflag"
 
 
 def _build_cmds_content(
+    field: str,
     timedevscale: float,
     freqdevscale: float,
     timecutoff: float,
     freqcutoff: float,
 ) -> str:
-    """Build the text content for initial_rflag_cmds.txt."""
+    """Build the text content for initial_rflag_cmds.txt.
+
+    field selection is mandatory. Residual rflag is only meaningful on fields
+    whose CORRECTED column is genuinely calibrated at the point of the call.
+    Running it over fields with no valid solutions yet flags almost everything
+    (their CORRECTED-MODEL residual is dominated by uncorrected gain/phase error,
+    not RFI). The caller (skill) decides which field is valid at each stage.
+    """
     lines = [
-        f"mode='rflag' datacolumn='residual' timedevscale={timedevscale} freqdevscale={freqdevscale}",
-        f"mode='tfcrop' datacolumn='residual' timecutoff={timecutoff} freqcutoff={freqcutoff}",
+        f"mode='rflag' field={field!r} datacolumn='residual' timedevscale={timedevscale} freqdevscale={freqdevscale}",
+        f"mode='tfcrop' field={field!r} datacolumn='residual' timecutoff={timecutoff} freqcutoff={freqcutoff}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -76,6 +84,7 @@ print("and ms_residual_stats to verify the residual distribution.")
 def run(
     ms_path: str,
     workdir: str,
+    field: str,
     timedevscale: float = 5.0,
     freqdevscale: float = 5.0,
     timecutoff: float = 4.0,
@@ -88,6 +97,13 @@ def run(
     Args:
         ms_path:      Path to the MS (CORRECTED + MODEL must exist).
         workdir:      Existing directory for the generated scripts.
+        field:        REQUIRED. The field selection to flag. Must be scoped to the
+                      field(s) whose CORRECTED column is genuinely calibrated at the
+                      point of the call (the caller decides which — e.g. the bandpass
+                      calibrator right after initial_bandpass, or all calibrators after
+                      the full solve + applycal). An all-field pass over uncalibrated
+                      fields flags ~90% of the data and is recoverable only by
+                      re-splitting. The tool only enforces that a field is given.
         timedevscale: rflag time deviation threshold (default 5.0).
         freqdevscale: rflag frequency deviation threshold (default 5.0).
         timecutoff:   tfcrop time deviation threshold (default 4.0).
@@ -115,8 +131,18 @@ def run(
     cmds_path = str(workdir_path / "initial_rflag_cmds.txt")
     script_path = str(workdir_path / "initial_rflag.py")
 
+    if not field or not str(field).strip():
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(
+            "field is required. Scope residual rflag to the field(s) whose CORRECTED "
+            "column is valid at this stage. An all-field pass over uncalibrated fields "
+            "flags ~90% of the data and is recoverable only by re-splitting.",
+            ms_path=ms_path,
+        )
+
     # Always write the flag command list
-    cmds_content = _build_cmds_content(timedevscale, freqdevscale, timecutoff, freqcutoff)
+    cmds_content = _build_cmds_content(field, timedevscale, freqdevscale, timecutoff, freqcutoff)
     Path(cmds_path).write_text(cmds_content)
     casa_calls.append(f"write_cmds → {cmds_path}")
 
@@ -128,6 +154,7 @@ def run(
     base_data: dict = {
         "cmds_path": fmt_field(cmds_path),
         "script_path": fmt_field(script_path),
+        "field": fmt_field(field),
         "rflag_timedevscale": timedevscale,
         "rflag_freqdevscale": freqdevscale,
         "tfcrop_timecutoff": timecutoff,

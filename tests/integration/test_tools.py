@@ -588,7 +588,7 @@ class TestApplyInitialRflagReal:
     def test_script_generation_only(self, tmp_path):
         from ms_modify.initial_rflag import run
 
-        result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
+        result = run(_TEST_MS, str(tmp_path), "0", execute=False)
         assert result["status"] == "ok"
         import os
 
@@ -600,7 +600,7 @@ class TestApplyInitialRflagReal:
 
         from ms_modify.initial_rflag import run
 
-        run(_TEST_MS, workdir=str(tmp_path), execute=False)
+        run(_TEST_MS, str(tmp_path), "0", execute=False)
         with open(os.path.join(str(tmp_path), "initial_rflag_cmds.txt")) as fh:
             cmds = fh.read()
         lines = [ln for ln in cmds.splitlines() if ln.strip()]

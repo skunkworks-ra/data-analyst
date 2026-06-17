@@ -230,6 +230,22 @@ narrowband RFI (GPS, GSM). Cross-check with `ms_rfi_channel_stats` annotations.
 
 ## Step 8 — Initial RFI flagging on residuals
 
+**`ms_apply_initial_rflag` requires a `field` argument — there is no all-field
+default, by design.** Residual rflag is only meaningful on a field whose
+CORRECTED column is genuinely calibrated at the point you call it.
+
+**At this stage that field is the bandpass calibrator only (`field={BP_FIELD}`).**
+`ms_initial_bandpass` solves gains on the bandpass calibrator alone, so it is the
+only field with a valid CORRECTED column right now. On every other field,
+CORRECTED−MODEL is dominated by uncorrected gain/phase error — not RFI — so a
+residual pass there flags almost the entire field (observed: 9.2% → ~90% overall,
+phase cals ~97%), recoverable only by re-splitting the calibrators.
+
+Residual rflag on the *other* calibrators happens later (see 07-calibration-execution.md),
+once the full gain solve + applycal has populated valid CORRECTED for them — at
+that point you pass those fields instead. The rule is invariant; the specific
+field changes with the stage.
+
 `ms_apply_initial_rflag` runs rflag + tfcrop on the residual column in a single
 flagdata list-mode pass. `flagbackup=True` saves a versioned backup automatically.
 

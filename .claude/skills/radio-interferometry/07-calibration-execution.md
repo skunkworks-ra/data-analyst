@@ -795,6 +795,14 @@ bandpass solutions (Step 3) before re-running applycal.
 If the phase calibrator shows anomalous time structure: consider flagging the
 affected scans and re-running Steps 4–6 before re-applying.
 
+**Residual rflag on the other calibrators belongs here.** This is the "later"
+pass deferred in 10-precal-workflow.md Step 8: now that applycal has populated a
+valid CORRECTED column for *all* calibrators (not just the bandpass cal), a
+residual rflag pass on them is finally meaningful. Call `ms_apply_initial_rflag`
+with `field` set to the calibrators whose CORRECTED is now valid — never an
+all-field pass over fields that were not in this applycal. Re-inspect with
+`ms_flag_summary` before/after.
+
 ---
 
 ## parang parameter
