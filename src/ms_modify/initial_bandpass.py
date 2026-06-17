@@ -8,7 +8,14 @@ CASA call sequence (adapted from evla_pipe/stages/initial_bp.py):
 
   Step 1 — gaincal(solint='int', calmode='p')  → init_gain.g
   Step 2 — bandpass(solint='inf', combine='scan', fillgaps=62) → BP0.b
-  Step 3 — applycal(all fields)                → CORRECTED column written
+  Step 3 — applycal(field=applycal_field)       → CORRECTED column written
+
+Step 3 applies only to the caller-supplied ``applycal_field`` — there is no
+all-field default. At this stage gains were solved on the bandpass calibrator
+only, so applying to other fields under a strict flag mode flags them for
+lack of a matching solution. Pass the bandpass calibrator field here; pass ''
+(all fields) only deliberately. ``applymode`` defaults to 'calflagstrict';
+fall back to 'calflag' if strict flagging is too aggressive.
 
 Hard fails if either caltable is not produced on disk.
 
@@ -45,12 +52,14 @@ def _build_script(
     init_gain_table: str,
     bp_table: str,
     bp_field: str,
+    applycal_field: str,
     ref_ant: str,
     bp_scan: str,
     all_spw: str,
     priorcals: list[str],
     min_bl_per_ant: int,
     uvrange: str,
+    applymode: str,
 ) -> str:
     """Return a self-contained Python script that runs the bandpass calibration."""
     uvrange_line = (
@@ -117,15 +126,16 @@ bandpass_kwargs = dict(
 )
 bandpass(**bandpass_kwargs)
 
-# Step 3 — applycal (all fields)
+# Step 3 — applycal (field={applycal_field!r})
 applycal_gaintable = priorcals + [init_gain_table, bp_table]
 n_tables = len(applycal_gaintable)
 applycal(
     vis=ms_str,
-    field="",
+    field={applycal_field!r},
     spw={all_spw!r},
     gaintable=applycal_gaintable,
     calwt=[False] * n_tables,
+    applymode={applymode!r},
     flagbackup=False,
 )
 print("Done. CORRECTED column populated.")
@@ -135,6 +145,7 @@ print("Done. CORRECTED column populated.")
 def run(
     ms_path: str,
     bp_field: str,
+    applycal_field: str,
     ref_ant: str,
     workdir: str,
     bp_scan: str = "",
@@ -142,6 +153,7 @@ def run(
     priorcals: list[str] | None = None,
     min_bl_per_ant: int = 4,
     uvrange: str = "",
+    applymode: str = "calflagstrict",
     execute: bool = False,
 ) -> dict:
     """
@@ -149,7 +161,12 @@ def run(
 
     Args:
         ms_path:        Path to cal_only.ms.
-        bp_field:       CASA field selection string for bandpass calibrator.
+        bp_field:       CASA field selection string for bandpass calibrator
+                        (used for the gaincal + bandpass solves).
+        applycal_field: CASA field selection string for the Step 3 applycal.
+                        Required, no default. Gains were solved on bp_field only,
+                        so normally pass the bandpass calibrator field here; pass
+                        '' (all fields) only deliberately.
         ref_ant:        Reference antenna name (from ms_refant output).
         workdir:        Directory to write caltables into (must exist).
         bp_scan:        CASA scan selection string (empty = all scans).
@@ -157,6 +174,8 @@ def run(
         priorcals:      Prior calibration tables to pre-apply (e.g. requantiser, Tsys).
         min_bl_per_ant: minblperant for gaincal and bandpass (default 4).
         uvrange:        UV range restriction (set for 3C84 to exclude extended emission).
+        applymode:      applycal mode for Step 3 (default 'calflagstrict').
+                        Fall back to 'calflag' if strict flagging is too aggressive.
         execute:        If False (default), write script and return immediately.
                         If True, run CASA calibration in-process (may take minutes).
 
@@ -206,12 +225,14 @@ def run(
         init_gain_table=init_gain_table,
         bp_table=bp_table,
         bp_field=bp_field,
+        applycal_field=applycal_field,
         ref_ant=ref_ant,
         bp_scan=bp_scan,
         all_spw=all_spw,
         priorcals=priorcals,
         min_bl_per_ant=min_bl_per_ant,
         uvrange=uvrange,
+        applymode=applymode,
     )
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
@@ -227,6 +248,8 @@ def run(
             "corrected_written": fmt_field(False),
             "ref_ant": ref_ant,
             "bp_field": bp_field,
+            "applycal_field": applycal_field,
+            "applymode": applymode,
             "solint_phase": "int",
             "solint_bp": "inf",
             "fillgaps": _FILLGAPS,
@@ -351,23 +374,24 @@ def run(
         )
 
     # ------------------------------------------------------------------
-    # Step 3 — applycal (all fields)
+    # Step 3 — applycal (field=applycal_field)
     # ------------------------------------------------------------------
     applycal_gaintable = priorcals + [init_gain_table, bp_table]
     n_tables = len(applycal_gaintable)
 
     casa_calls.append(
-        f"casatasks.applycal(field='', gaintable=[...{n_tables} tables], "
-        f"calwt=[False]*{n_tables}) → CORRECTED column populated"
+        f"casatasks.applycal(field='{applycal_field}', gaintable=[...{n_tables} tables], "
+        f"calwt=[False]*{n_tables}, applymode='{applymode}') → CORRECTED column populated"
     )
 
     try:
         applycal(
             vis=ms_str,
-            field="",
+            field=applycal_field,
             spw=all_spw,
             gaintable=applycal_gaintable,
             calwt=[False] * n_tables,
+            applymode=applymode,
             flagbackup=False,
         )
     except Exception as e:
@@ -389,6 +413,8 @@ def run(
         "n_prior_tables": len(priorcals),
         "ref_ant": ref_ant,
         "bp_field": bp_field,
+        "applycal_field": applycal_field,
+        "applymode": applymode,
         "solint_phase": "int",
         "solint_bp": "inf",
         "fillgaps": _FILLGAPS,

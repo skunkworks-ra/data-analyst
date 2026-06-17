@@ -92,6 +92,14 @@ class InitialBandpassInput(BaseModel):
         description="CASA field selection string for the bandpass calibrator (e.g. '3C147').",
         min_length=1,
     )
+    applycal_field: str = Field(
+        ...,
+        description=(
+            "CASA field selection for the Step 3 applycal. Required, no default. "
+            "Gains are solved on bp_field only, so normally pass the bandpass "
+            "calibrator field here; pass '' (all fields) only deliberately."
+        ),
+    )
     ref_ant: str = Field(
         ...,
         description="Reference antenna name from ms_refant output (e.g. 'ea17').",
@@ -123,6 +131,13 @@ class InitialBandpassInput(BaseModel):
         default="",
         description=(
             "UV range restriction (e.g. '>1klambda'). Set for 3C84 to exclude extended emission."
+        ),
+    )
+    applymode: str = Field(
+        default="calflagstrict",
+        description=(
+            "applycal mode for Step 3 (default 'calflagstrict'). "
+            "Fall back to 'calflag' if strict flagging is too aggressive."
         ),
     )
     execute: bool = Field(
@@ -259,14 +274,16 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
     Three-step sequence (adapted from evla_pipe/stages/initial_bp.py):
       1. gaincal(solint='int', calmode='p') → workdir/init_gain.g
       2. bandpass(solint='inf', combine='scan', fillgaps=62) → workdir/BP0.b
-      3. applycal(all fields, calwt=False) → CORRECTED column populated
+      3. applycal(field=applycal_field, calwt=False) → CORRECTED column populated
 
     Hard fails (INITIAL_BANDPASS_FAILED) if either caltable is not produced.
     After this tool completes, rflag can be run on the CORRECTED column.
 
     Args:
         params.ms_path:        Path to cal_only.ms.
-        params.bp_field:       Bandpass calibrator field selection.
+        params.bp_field:       Bandpass calibrator field selection (solve step).
+        params.applycal_field: Field selection for Step 3 applycal (required).
+                               Normally the bandpass calibrator; '' = all fields.
         params.ref_ant:        Reference antenna (from ms_refant).
         params.workdir:        Existing directory for caltable output.
         params.bp_scan:        Scan selection (default: all).
@@ -274,15 +291,17 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
         params.priorcals:      Prior caltables to pre-apply.
         params.min_bl_per_ant: minblperant (default 4).
         params.uvrange:        UV range restriction for extended calibrators.
+        params.applymode:      applycal mode (default 'calflagstrict').
 
     Returns:
         JSON with init_gain_table, bp_table, corrected_written, ref_ant,
-        bp_field, solint_phase, solint_bp, fillgaps.
+        bp_field, applycal_field, applymode, solint_phase, solint_bp, fillgaps.
     """
     return _run_tool(
         initial_bandpass.run,
         params.ms_path,
         params.bp_field,
+        params.applycal_field,
         params.ref_ant,
         params.workdir,
         params.bp_scan,
@@ -290,6 +309,7 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
         params.priorcals,
         params.min_bl_per_ant,
         params.uvrange,
+        params.applymode,
         params.execute,
     )
 

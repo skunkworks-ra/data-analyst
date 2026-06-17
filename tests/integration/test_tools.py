@@ -382,7 +382,13 @@ class TestInitialBandpassReal:
         if bp_field is None:
             pytest.skip("No CALIBRATE_BANDPASS field found in test MS")
 
-        return bp_run(_TEST_MS, bp_field=bp_field, ref_ant=ref_ant, workdir=bp_workdir)
+        return bp_run(
+            _TEST_MS,
+            bp_field=bp_field,
+            applycal_field=bp_field,
+            ref_ant=ref_ant,
+            workdir=bp_workdir,
+        )
 
     def test_returns_ok(self, bp_result):
         assert bp_result["status"] == "ok"
@@ -431,7 +437,14 @@ class TestVerifyCaltablesReal:
         if bp_field is None:
             pytest.skip("No CALIBRATE_BANDPASS field found in test MS")
 
-        bp_run(_TEST_MS, bp_field=bp_field, ref_ant=ref_ant, workdir=workdir, execute=True)
+        bp_run(
+            _TEST_MS,
+            bp_field=bp_field,
+            applycal_field=bp_field,
+            ref_ant=ref_ant,
+            workdir=workdir,
+            execute=True,
+        )
 
         import os
 

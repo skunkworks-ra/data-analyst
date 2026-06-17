@@ -34,7 +34,8 @@ ms_setjy(execute=False, ...)             → generate setjy.py
   → run setjy.py as background job; wait for completion however long it takes
 
 ms_refant(calibrators.ms, field=bp_field) → ranked reference antenna list
-ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
+ms_initial_bandpass(execute=False,        → generate initial_bandpass.py
+    bp_field=bp_field, applycal_field=bp_field, ...)
   → run initial_bandpass.py as background job; wait for completion however long it takes
 ms_verify_caltables(...)                  → confirm init_gain.g + BP0.b valid
 ms_plot_caltable_library(               → plot both caltables; review before proceeding
@@ -174,6 +175,26 @@ short baselines independent of the reference antenna.
 and populates the CORRECTED column.
 
 **This tool runs casatasks — it can take several minutes on large MSs.**
+
+**Set `applycal_field` to the bandpass calibrator field at this stage.** It is a
+required argument with no default. Gains are solved on the bandpass calibrator
+only (`bp_field`), so it is the only field with a valid solution. The Step 3
+applycal must be restricted to that field — applying to other fields under the
+default `applymode='calflagstrict'` flags them for lack of a matching solution
+and silently corrupts the FLAG state of every non-BP calibrator (observed on
+AB1345). There is no flagversions rollback in this build, so the only recovery
+is to re-split `calibrators.ms`. Pass `applycal_field=bp_field` here; reserve
+`applycal_field=''` (all fields) for stages where all fields genuinely have
+solutions.
+
+If the before/after `ms_flag_summary` delta on the bandpass calibrator is still
+unexpectedly high, re-run with `applymode='calflag'` (softer — does not flag on
+partial per-polarization solutions).
+
+**Never re-run `ms_initial_bandpass` before the final gain/pol solves.** It is a
+one-shot bootstrap to populate CORRECTED for residual rflag on the BP cal — not
+something to iterate. If you need a clean FLAG state for the final solves,
+re-split `calibrators.ms` rather than re-running this tool.
 
 After the script completes, verify with `ms_verify_caltables`:
 
