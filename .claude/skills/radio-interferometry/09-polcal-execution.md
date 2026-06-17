@@ -82,6 +82,21 @@ setjy(
 `ms_setjy_polcal` — it sources coefficients from `fit_from_catalogue`, which
 applies the correct ascending-order convention and excludes RM-wrapped nodes.
 
+**`usescratch=True` is mandatory here and forces a consistency requirement on
+the whole MS.** `ms_setjy_polcal` always uses `usescratch=True` because virtual
+models (`usescratch=False`) fail on source models with non-zero rotation measure
+— a known CASA bug. But `usescratch` cannot be mixed within one MS: the first
+`usescratch=True` call creates the physical `MODEL_DATA` column, and every
+downstream task then reads `MODEL_DATA` for *all* fields. Any field whose model
+was written virtually (`usescratch=False`) is left at the default `MODEL_DATA=1
+Jy`, which silently corrupts the flux scale (fluxscale comes out
+order-of-magnitude low).
+
+**Therefore, when polcal is in scope, the flux/bandpass cals must be set with
+`ms_setjy(usescratch=True)` too** — re-run `ms_setjy` with `usescratch=True`
+before (or together with) `ms_setjy_polcal` so the entire MS uses one consistent
+physical `MODEL_DATA`. See skill 07 Step 6 (fluxscale) for the sanity check.
+
 ---
 
 ## Step 2 — Cross-hand delay (Kcross)

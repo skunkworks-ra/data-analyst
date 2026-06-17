@@ -147,6 +147,11 @@ The returned `flux_fields` list confirms which fields received a model. If a
 flux calibrator is missing from this list, check that its field name matches
 the catalogue (use `ms_field_list` cross-match for disambiguation).
 
+**If polarization calibration is in scope for this dataset, call `ms_setjy` with
+`usescratch=True`** (default is `False`). `ms_setjy_polcal` forces `usescratch=True`
+later, and `usescratch` cannot be mixed within one MS without corrupting the flux
+scale. Set it consistently from the start. See skill 09 Step 1 and skill 07 Step 6.
+
 ---
 
 ## Step 5 — Reference antenna selection

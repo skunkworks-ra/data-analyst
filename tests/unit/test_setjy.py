@@ -22,16 +22,24 @@ from ms_modify.setjy import _DEFAULT_STANDARD, _build_setjy_block
 
 class TestBuildSetjyBlock:
     def test_contains_field_name(self):
-        block = _build_setjy_block("3C286", _DEFAULT_STANDARD)
+        block = _build_setjy_block("3C286", _DEFAULT_STANDARD, False)
         assert "3C286" in block
 
     def test_contains_standard(self):
-        block = _build_setjy_block("3C147", _DEFAULT_STANDARD)
+        block = _build_setjy_block("3C147", _DEFAULT_STANDARD, False)
         assert _DEFAULT_STANDARD in block
 
     def test_contains_setjy_call(self):
-        block = _build_setjy_block("3C48", _DEFAULT_STANDARD)
+        block = _build_setjy_block("3C48", _DEFAULT_STANDARD, False)
         assert "setjy(" in block
+
+    def test_usescratch_false_in_block(self):
+        block = _build_setjy_block("3C286", _DEFAULT_STANDARD, False)
+        assert "usescratch=False" in block
+
+    def test_usescratch_true_in_block(self):
+        block = _build_setjy_block("3C286", _DEFAULT_STANDARD, True)
+        assert "usescratch=True" in block
 
 
 # ---------------------------------------------------------------------------
@@ -161,3 +169,28 @@ class TestSetjyRun:
             run(str(ms), str(workdir), execute=False)
         script = (workdir / "setjy.py").read_text()
         assert "Perley-Butler 2017" in script
+
+    def test_usescratch_defaults_false_in_script(self, tmp_path):
+        from ms_modify.setjy import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        with patch("ms_modify.setjy._get_field_names", return_value=["3C286"]):
+            result = run(str(ms), str(workdir), execute=False)
+        script = (workdir / "setjy.py").read_text()
+        assert "usescratch=False" in script
+        assert result["data"]["usescratch"] is False
+
+    def test_usescratch_true_threads_into_script_and_response(self, tmp_path):
+        from ms_modify.setjy import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        with patch("ms_modify.setjy._get_field_names", return_value=["3C286"]):
+            result = run(str(ms), str(workdir), usescratch=True, execute=False)
+        script = (workdir / "setjy.py").read_text()
+        assert "usescratch=True" in script
+        assert "usescratch=False" not in script
+        assert result["data"]["usescratch"] is True

@@ -425,6 +425,17 @@ class SetjyInput(BaseModel):
         default="Perley-Butler 2017",
         description="Flux standard to use (default 'Perley-Butler 2017').",
     )
+    usescratch: bool = Field(
+        default=False,
+        description=(
+            "False (default) = virtual model; True = fill physical MODEL_DATA. "
+            "Must match across all setjy calls on one MS. If polarization "
+            "calibration is in scope, set True here (ms_setjy_polcal forces True "
+            "because virtual models fail on non-zero-RM source models — a known "
+            "CASA bug). Mixing leaves virtual-model fields at MODEL_DATA=1 Jy and "
+            "corrupts the flux scale."
+        ),
+    )
     execute: bool = Field(
         default=False,
         description=(
@@ -738,8 +749,10 @@ async def ms_setjy(params: SetjyInput) -> str:
     Args:
         params.ms_path:   Path to calibrators.ms.
         params.workdir:   Existing directory for setjy.py script.
-        params.standard:  Flux standard (default 'Perley-Butler 2017').
-        params.execute:   Generate script only (False) or run setjy in-process (True).
+        params.standard:   Flux standard (default 'Perley-Butler 2017').
+        params.usescratch: Virtual model (False) or fill MODEL_DATA (True). Set
+                           True when polarization calibration is in scope.
+        params.execute:    Generate script only (False) or run setjy in-process (True).
 
     Returns:
         JSON with flux_fields, skipped_fields, warnings, and script_path.
@@ -749,6 +762,7 @@ async def ms_setjy(params: SetjyInput) -> str:
         params.ms_path,
         params.workdir,
         params.standard,
+        params.usescratch,
         params.execute,
     )
 

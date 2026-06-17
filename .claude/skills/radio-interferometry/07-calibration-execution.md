@@ -677,6 +677,17 @@ phase calibrator against the VLA calibrator manual or known source monitoring.
 Values deviating by > 20% from the expected value suggest a problem with the
 prior caltables or the flux calibrator model.
 
+**An order-of-magnitude-low flux (e.g. ~10× low) is the signature of a mixed
+`usescratch` MODEL_DATA collision, not a calibration problem.** It happens when
+`ms_setjy_polcal` (always `usescratch=True`) created the physical `MODEL_DATA`
+column while the flux/bandpass cals were set with `ms_setjy(usescratch=False)`
+(virtual) — leaving their `MODEL_DATA` at the default 1 Jy. fluxscale then
+bootstraps off a 1 Jy reference instead of the true model flux. If you see this,
+do not retune the solve: re-run `ms_setjy` with `usescratch=True` for the flux
+cal so the whole MS uses one consistent physical model, then redo the gain solve
+and fluxscale. The rule: all setjy calls on one MS must share the same
+`usescratch` (see skill 09 Step 1).
+
 After fluxscale, gain amplitudes for both calibrators should be similar in
 magnitude — the phase calibrator corrections should no longer be systematically
 higher or lower than the flux calibrator.

@@ -164,9 +164,7 @@ def run(
             versionname="before_rflag",
             comment="Flag state before ms_apply_rflag",
         )
-        casa_calls.append(
-            "casatasks.flagmanager(vis=..., mode='save', versionname='before_rflag')"
-        )
+        casa_calls.append("casatasks.flagmanager(vis=..., mode='save', versionname='before_rflag')")
     except Exception as exc:
         warnings.append(f"Could not save flag backup: {exc}. Proceeding without backup.")
 

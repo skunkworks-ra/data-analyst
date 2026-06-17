@@ -39,14 +39,14 @@ def _get_field_names(ms_str: str) -> list[str]:
         return [str(n) for n in tb.getcol("NAME")]
 
 
-def _build_setjy_block(field_name: str, standard: str) -> str:
+def _build_setjy_block(field_name: str, standard: str, usescratch: bool) -> str:
     """Return a single setjy() call string for the script."""
     return (
         f"setjy(\n"
         f"    vis=ms_path,\n"
         f"    field={field_name!r},\n"
         f"    standard={standard!r},\n"
-        f"    usescratch=False,\n"
+        f"    usescratch={usescratch!r},\n"
         f")"
     )
 
@@ -55,6 +55,7 @@ def _build_script(
     ms_str: str,
     flux_fields: list[str],
     standard: str,
+    usescratch: bool,
     warnings_inline: list[str],
 ) -> str:
     """Return a self-contained setjy Python script."""
@@ -63,7 +64,7 @@ def _build_script(
         warn_lines = "\n".join(f"# WARNING: {w}" for w in warnings_inline)
         warn_block = warn_lines + "\n\n"
 
-    setjy_blocks = "\n\n".join(_build_setjy_block(f, standard) for f in flux_fields)
+    setjy_blocks = "\n\n".join(_build_setjy_block(f, standard, usescratch) for f in flux_fields)
 
     no_flux_block = ""
     if not flux_fields:
@@ -91,17 +92,27 @@ def run(
     ms_path: str,
     workdir: str,
     standard: str = _DEFAULT_STANDARD,
+    usescratch: bool = False,
     execute: bool = False,
 ) -> dict:
     """
     Set flux density models for standard calibrators in the MS.
 
     Args:
-        ms_path:  Path to calibrators.ms (or full MS).
-        workdir:  Existing output directory for setjy.py script.
-        standard: Flux standard (default 'Perley-Butler 2017').
-        execute:  If False (default), write setjy.py and return.
-                  If True, run setjy in-process for each flux field.
+        ms_path:    Path to calibrators.ms (or full MS).
+        workdir:    Existing output directory for setjy.py script.
+        standard:   Flux standard (default 'Perley-Butler 2017').
+        usescratch: If False (default), write a virtual model (no MODEL_DATA
+                    column). If True, fill the physical MODEL_DATA column.
+                    Must be consistent across ALL setjy calls on one MS: if
+                    polarization calibration is in scope, ms_setjy_polcal forces
+                    usescratch=True (virtual models fail on source models with
+                    non-zero RM — a known CASA bug), so the flux/bandpass cals
+                    must use usescratch=True here too. Mixing the two leaves the
+                    virtual-model fields at MODEL_DATA=1 Jy and corrupts the
+                    flux scale (fluxscale comes out order-of-magnitude low).
+        execute:    If False (default), write setjy.py and return.
+                    If True, run setjy in-process for each flux field.
 
     Returns:
         Standard response envelope with flux_fields, skipped_fields,
@@ -163,7 +174,7 @@ def run(
             skipped_fields.append(fname)
 
     script_path = str(workdir_path / "setjy.py")
-    script_content = _build_script(ms_str, flux_fields, standard, inline_warnings)
+    script_content = _build_script(ms_str, flux_fields, standard, usescratch, inline_warnings)
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
 
@@ -172,6 +183,7 @@ def run(
         "flux_fields": fmt_field(flux_fields),
         "skipped_fields": fmt_field(skipped_fields),
         "standard": standard,
+        "usescratch": usescratch,
         "n_flux_fields": len(flux_fields),
     }
 
@@ -206,13 +218,15 @@ def run(
 
     fields_done: list[str] = []
     for fname in flux_fields:
-        casa_calls.append(f"casatasks.setjy(field='{fname}', standard='{standard}')")
+        casa_calls.append(
+            f"casatasks.setjy(field='{fname}', standard='{standard}', usescratch={usescratch})"
+        )
         try:
             setjy(
                 vis=ms_str,
                 field=fname,
                 standard=standard,
-                usescratch=False,
+                usescratch=usescratch,
             )
             fields_done.append(fname)
         except Exception as exc:
