@@ -20,6 +20,7 @@ from ms_modify import (
     __version__,
     applycal,
     bandpass,
+    flag_caltable,
     fluxscale,
     gaincal,
     initial_bandpass,
@@ -552,6 +553,47 @@ class ApplyInitialRflagInput(BaseModel):
     )
 
 
+class FlagCaltableInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    caltable_path: str = Field(
+        ..., description="Path to the CASA calibration table to autoflag.", min_length=1
+    )
+    workdir: str = Field(
+        ..., description="Existing directory for the generated script.", min_length=1
+    )
+    sigma: float = Field(
+        default=5.0,
+        description=(
+            "Threshold scale (default 5.0; 6.0 is more conservative). Maps to "
+            "timecutoff/freqcutoff (tfcrop) or timedevscale/freqdevscale (rflag)."
+        ),
+        gt=0.0,
+    )
+    mode: str | None = Field(
+        default=None,
+        description=(
+            "'rflag' or 'tfcrop'. Default None → auto-route from the VisCal type "
+            "(B→tfcrop, G/T/D→rflag, K→refused)."
+        ),
+    )
+    datacolumn: str = Field(
+        default="CPARAM",
+        description="Solution column to flag on. Default 'CPARAM' (complex: B/G/D). 'FPARAM' for real-valued.",
+        min_length=1,
+    )
+    flagbackup: bool = Field(
+        default=True,
+        description="Save a .flagversions backup of the caltable before flagging (default True).",
+    )
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write flag_caltable.py and return. If True, run "
+            "summary→apply→summary in-process and report flagged_frac_before/after/delta."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tools — Preflag
 # ---------------------------------------------------------------------------
@@ -800,6 +842,56 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
         params.freqdevscale,
         params.timecutoff,
         params.freqcutoff,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_flag_caltable",
+    description=(
+        "Autoflag a caltable's solutions (rflag/tfcrop, auto-routed from VisCal type) "
+        "to catch RFI-contaminated outliers that passed the solve-time SNR cut. Run "
+        "after a table is created, before it is applied as a prior. Delay (K) tables "
+        "are refused. Reports flagged fraction before/after."
+    ),
+    annotations={
+        "title": "Flag Calibration Table Solutions",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_flag_caltable(params: FlagCaltableInput) -> str:
+    """
+    Autoflag outlier solutions in a calibration table.
+
+    Mode is auto-routed from the VisCal type unless overridden: B→tfcrop,
+    G/T/D→rflag, K→refused. A single sigma (default 5.0) maps to the relevant
+    flagdata thresholds. The flagged fraction is reported so the caller can
+    decide whether to redo the solve (> 30% flagged) versus loosen sigma.
+
+    Args:
+        params.caltable_path: Path to the CASA calibration table.
+        params.workdir:       Existing directory for the generated script.
+        params.sigma:         Threshold scale (default 5.0; 6.0 more conservative).
+        params.mode:          'rflag'/'tfcrop' override, or None to auto-route.
+        params.datacolumn:    Solution column (default 'CPARAM').
+        params.flagbackup:    Save a .flagversions backup first (default True).
+        params.execute:       Generate script only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, viscal_type, resolved mode, and (if execute=True)
+        flagged_frac_before/after/delta.
+    """
+    return _run_tool(
+        flag_caltable.run,
+        params.caltable_path,
+        params.workdir,
+        params.sigma,
+        params.mode,
+        params.datacolumn,
+        params.flagbackup,
         params.execute,
     )
 

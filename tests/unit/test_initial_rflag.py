@@ -133,7 +133,9 @@ class TestInitialRflagRun:
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
-        result = run(str(ms), str(workdir), "3C147", timedevscale=3.5, freqdevscale=4.5, execute=False)
+        result = run(
+            str(ms), str(workdir), "3C147", timedevscale=3.5, freqdevscale=4.5, execute=False
+        )
         assert result["data"]["rflag_timedevscale"] == 3.5
         assert result["data"]["rflag_freqdevscale"] == 4.5
 

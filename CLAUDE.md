@@ -270,7 +270,8 @@ Functions are also callable directly by skills and scripts.
 | `ms_setjy` | `ms_modify/setjy.py` | Set Perley-Butler 2017 flux models for standard calibrators |
 | `ms_setjy_polcal` | `ms_modify/setjy_polcal.py` | Set polarisation angle models for pol calibrators |
 | `ms_initial_bandpass` | `ms_modify/initial_bandpass.py` | gaincal → bandpass → applycal; populates CORRECTED |
-| `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass |
+| `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass; **requires** explicit `field` (only the field with valid CORRECTED) |
+| `ms_flag_caltable` | `ms_modify/flag_caltable.py` | Autoflag a caltable's solutions (mode auto-routed from VisCal: B→tfcrop, G/T/D→rflag, K refused) at a gentle sigma; reports flagged fraction before/after |
 | `ms_apply_rflag` | `ms_modify/rflag.py` | General-purpose rflag pass |
 | `ms_gaincal` | `ms_modify/gaincal.py` | Phase/amplitude/cross-hand delay gain calibration (supports gaintype='KCROSS' with smodel) |
 | `ms_polcal` | `ms_modify/polcal.py` | Polarisation calibration: D-term leakage (Df/Df+QU) or position angle (Xf) |

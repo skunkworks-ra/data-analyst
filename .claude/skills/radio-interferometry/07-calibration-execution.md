@@ -113,6 +113,37 @@ Tables are written to `{WORKDIR}/`:
 
 ---
 
+## Caltable solution flagging (after each table, before it's applied)
+
+Once a caltable is created and *before* it is applied on-the-fly as a prior in
+the next solve, run `ms_flag_caltable` on it to catch RFI-contaminated outlier
+solutions that still passed the solve-time SNR cut. This keeps a few bad
+solutions from propagating into every downstream solve.
+
+| Table | When | mode (auto) | sigma |
+|---|---|---|---|
+| `bandpass.B` | after Step 3, before Step 4 gain solve | tfcrop | 5.0 |
+| `gain.G` | after Step 4, before fluxscale | rflag | 5.0 |
+| `dterms.D` (polcal) | after the D-term solve (skill 09) | rflag | 5.0 |
+| `delay.K` | — | — | **do not flag** — one value per antenna; inspect with `ms_calsol_stats` and flag bad antennas explicitly instead |
+
+`ms_flag_caltable` auto-routes the mode from the table's VisCal type, so you
+normally pass only `caltable_path`, `workdir`, and `sigma`. Default `sigma=5.0`
+is gentle — it catches the worst outliers without over-flagging.
+
+**Read the reported flagged fraction:**
+
+| Flagged fraction after | Action |
+|---|---|
+| < 30% | Normal — outliers removed; proceed |
+| ≥ 30% | The a-priori (visibility) flagging was insufficient. **Do not just loosen sigma.** Improve the upstream preflag/RFI excision and redo *this* solve. If it is still ≥ 30% after redoing, raise `sigma` to 6.0 |
+
+The order matters: flagged caltable solutions are a *symptom* of unflagged RFI
+in the visibilities. Loosening sigma hides the symptom; fixing the preflag
+removes the cause.
+
+---
+
 ## Step 1 — Initial phase calibration (G0)
 
 **Purpose:** remove fast phase variations across time on the bandpass calibrator
@@ -238,6 +269,9 @@ ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B)
 | `outliers.amp_outliers` | list | empty | non-empty → antenna has anomalous amplitude shape; check against `amp_array` for that antenna |
 
 Both polarizations on a given antenna should show the same amplitude shape within ~10%.
+
+**Before using `bandpass.B` in Step 4, flag its solutions** with `ms_flag_caltable`
+(tfcrop, sigma=5.0) — see "Caltable solution flagging" above.
 
 ---
 
@@ -600,6 +634,10 @@ ms_calsol_stats(caltable_path = {WORKDIR}/gain.G)
 
 The `gain.G` table contains solutions for both flux and phase calibrators. Use
 `field_names` from the output to identify which field index corresponds to each.
+
+**Before fluxscale (Step 6), flag the `gain.G` solutions** with `ms_flag_caltable`
+(rflag, sigma=5.0) — see "Caltable solution flagging" above. Outlier gain
+solutions left in place will bias the fluxscale transfer.
 
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|

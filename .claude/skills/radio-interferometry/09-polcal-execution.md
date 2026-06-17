@@ -166,6 +166,10 @@ polcal(
 A small number of antennas with D-terms slightly above 10% is acceptable if the
 rest of the array is clean. An array-wide D-term above 10% is a systematic problem.
 
+**Before applying `dterms.D`, flag its solutions** with `ms_flag_caltable`
+(rflag, sigma=5.0) to remove RFI-contaminated outlier leakage solutions — see
+"Caltable solution flagging" in 07-calibration-execution.md.
+
 ---
 
 ## Step 4 — Position angle calibration (Xf)
