@@ -48,7 +48,11 @@ class TestBuildScript:
             workdir=str(tmp_path),
         )
         assert "before_rflag" in script
-        assert "flagmanager" in script
+        # Backup must use the flagmanager task, not flagdata(mode='flagmanager'),
+        # which is not a valid flagdata mode and raises a versionname kwarg error.
+        assert "flagmanager(" in script
+        assert 'mode="flagmanager"' not in script
+        assert 'mode="save"' in script
 
     def test_script_is_valid_python(self, tmp_path):
         script = rflag._build_script(
