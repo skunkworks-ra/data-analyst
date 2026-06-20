@@ -59,8 +59,14 @@ def _read_records(path: Path) -> list[dict]:
 _RUN_REGISTRY: dict[str, str] = {
     "ms_sdm_summary": "ms_create.sdm_summary",
     "ms_import_asdm": "ms_create.import_asdm",
+    # NOTE: ms_set_intents is intentionally NOT registered — its entrypoint is
+    # set_intents(), not run(), so it cannot be replayed via the run() convention
+    # and is emitted as a MANUAL step. It is also a rare one-off (only for MSs
+    # that lack scan intents).
     "ms_apply_preflag": "ms_modify.preflag",
     "ms_generate_priorcals": "ms_modify.priorcals",
+    "ms_initial_bandpass": "ms_modify.initial_bandpass",
+    "ms_apply_initial_rflag": "ms_modify.initial_rflag",
     "ms_setjy": "ms_modify.setjy",
     "ms_setjy_polcal": "ms_modify.setjy_polcal",
     "ms_gaincal": "ms_modify.gaincal",
@@ -68,6 +74,8 @@ _RUN_REGISTRY: dict[str, str] = {
     "ms_fluxscale": "ms_modify.fluxscale",
     "ms_polcal": "ms_modify.polcal",
     "ms_applycal": "ms_modify.applycal",
+    "ms_apply_rflag": "ms_modify.rflag",
+    "ms_flag_caltable": "ms_modify.flag_caltable",
     "ms_tclean": "ms_modify.tclean",
 }
 

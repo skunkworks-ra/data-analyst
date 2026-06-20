@@ -10,7 +10,31 @@ import json
 
 import pytest
 
-from ms_create.reduction_log import run
+from ms_create.reduction_log import _RUN_REGISTRY, run
+
+
+class TestRunRegistry:
+    """The replay registry maps recorded tool names to modules. Every mapped
+    module must be importable and expose run(), or render() silently emits a
+    broken replay line instead of a runnable call."""
+
+    def test_every_registry_module_imports_and_has_run(self):
+        import importlib
+
+        for tool, mod_name in _RUN_REGISTRY.items():
+            mod = importlib.import_module(mod_name)
+            assert hasattr(mod, "run"), f"{mod_name} (for {tool}) has no run()"
+
+    def test_replayable_pipeline_tools_are_registered(self):
+        # Core steps exercised in a real reduction must be replayable, not
+        # emitted as MANUAL markers.
+        for tool in (
+            "ms_initial_bandpass",
+            "ms_apply_initial_rflag",
+            "ms_apply_rflag",
+            "ms_flag_caltable",
+        ):
+            assert tool in _RUN_REGISTRY
 
 
 class TestReductionLog:
