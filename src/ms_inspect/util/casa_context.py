@@ -259,3 +259,60 @@ def open_ms(ms_path: str) -> Generator[Any, None, None]:
     finally:
         with suppress(Exception):
             ms.close()
+
+
+def describe_numeric_fields(ms_path: str, field_sel: str) -> list[str]:
+    """
+    Resolve any bare-integer tokens in a CASA field selection to their field
+    NAMEs and return human-readable warning lines.
+
+    Field selection by numeric ID is valid CASA syntax, but it is silently
+    wrong when an MS has been re-indexed (e.g. after split() the field IDs no
+    longer match the parent MS). Echoing the resolved names back to the caller
+    makes a mis-selection — like solving on '5' and hitting 3C84 instead of
+    3C147 — immediately visible.
+
+    This is a best-effort, non-fatal helper: it returns an empty list on any
+    problem (no CASA, MS not openable, no numeric tokens, out-of-range ID).
+    It never raises, so it is safe to call on the script-generation path.
+
+    Returns:
+        e.g. ["field selection contains numeric IDs — verify the mapping: "
+              "'1'→'J1331+3030', '4'→'0542+498=3C147'. After split() the IDs "
+              "may differ from the parent MS; prefer field NAMES."]
+        or [] when there is nothing to warn about.
+    """
+    if not field_sel or not str(field_sel).strip():
+        return []
+
+    # Collect bare integer tokens (skip ranges like '1~3', names, '*').
+    numeric_tokens = [
+        tok.strip()
+        for tok in str(field_sel).split(",")
+        if tok.strip().isdigit()
+    ]
+    if not numeric_tokens:
+        return []
+
+    try:
+        with open_msmd(ms_path) as msmd:
+            names = list(msmd.fieldnames())
+    except Exception:
+        return []
+
+    mappings: list[str] = []
+    for tok in numeric_tokens:
+        idx = int(tok)
+        if 0 <= idx < len(names):
+            mappings.append(f"'{tok}'→'{names[idx]}'")
+        else:
+            mappings.append(f"'{tok}'→<out of range>")
+
+    if not mappings:
+        return []
+
+    return [
+        "field selection contains numeric IDs — verify the mapping: "
+        + ", ".join(mappings)
+        + ". After split() the IDs may differ from the parent MS; prefer field NAMES."
+    ]

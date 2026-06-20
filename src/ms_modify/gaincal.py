@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ms_inspect.util.casa_context import validate_ms_path
+from ms_inspect.util.casa_context import describe_numeric_fields, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, response_envelope
 from ms_modify.exceptions import GaincalFailedError
@@ -142,6 +142,7 @@ def run(
     ms_str = str(p)
     casa_calls: list[str] = []
     warnings: list[str] = []
+    warnings.extend(describe_numeric_fields(ms_path, field))
 
     if gaintable is None:
         gaintable = []

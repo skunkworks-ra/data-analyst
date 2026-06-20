@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ms_inspect.util.casa_context import validate_ms_path
+from ms_inspect.util.casa_context import describe_numeric_fields, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_modify.exceptions import FluxscaleFailedError
@@ -100,6 +100,8 @@ def run(
     ms_str = str(p)
     casa_calls: list[str] = []
     warnings: list[str] = []
+    _flux_fields = ",".join([reference, *transfer])
+    warnings.extend(describe_numeric_fields(ms_path, _flux_fields))
 
     workdir_path = Path(workdir)
     if not workdir_path.exists():
