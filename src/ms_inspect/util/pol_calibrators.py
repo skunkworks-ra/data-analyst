@@ -79,60 +79,81 @@ POL_CATALOGUE: list[PolCalEntry] = [
         variability_note=None,
         aka=["1331+305", "1331+3030", "3c286", "j1331+305"],
         epochs={
-            # 17-node table from NRAO VLA Observing Guide Table 8.2.7 (January/February 2019).
-            # Frequencies are actual measurement frequencies, not band centres.
-            # Stokes I flux density not tabulated here — use calibrators.py / Perley-Butler 2017.
+            # 17-node table from the NRAO VLA Observing Guide flux-density-scale /
+            # polarization tables, file 3c286_2019 (R. Perley, 31 Jan/01 Feb 2019;
+            # "reference flux densities were used"). Frequencies are actual
+            # measurement frequencies, not band centres. Stokes I (flux_jy), pol
+            # fraction and pol angle all come from this same table — internally
+            # consistent at one epoch. frac_pol_pct = P.F.*100; pol_angle_deg from
+            # the tabulated P.A. (radians). flux_jy is the tabulated I (Jy).
             "2019": [
                 PolFreqEntry(
-                    freq_ghz=1.02, frac_pol_pct=8.6, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=1.02, frac_pol_pct=8.6, frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0, flux_jy=17.46
                 ),
                 PolFreqEntry(
-                    freq_ghz=1.47, frac_pol_pct=9.8, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=1.47, frac_pol_pct=9.8, frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0, flux_jy=14.64
                 ),
                 PolFreqEntry(
-                    freq_ghz=1.87, frac_pol_pct=10.1, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=1.87, frac_pol_pct=10.1, frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0, flux_jy=13.03
                 ),
                 PolFreqEntry(
-                    freq_ghz=2.57, frac_pol_pct=10.6, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=2.57, frac_pol_pct=10.6, frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0, flux_jy=10.85
                 ),
                 PolFreqEntry(
-                    freq_ghz=3.57, frac_pol_pct=11.2, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=3.57, frac_pol_pct=11.2, frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0, flux_jy=8.94
                 ),
                 PolFreqEntry(
-                    freq_ghz=4.89, frac_pol_pct=11.5, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=4.89, frac_pol_pct=11.5, frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0, flux_jy=7.33
                 ),
                 PolFreqEntry(
-                    freq_ghz=6.68, frac_pol_pct=11.9, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=6.68, frac_pol_pct=11.9, frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0, flux_jy=5.97
                 ),
                 PolFreqEntry(
-                    freq_ghz=8.43, frac_pol_pct=12.1, frac_pol_upper_limit=False, pol_angle_deg=33.0
+                    freq_ghz=8.43, frac_pol_pct=12.1, frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0, flux_jy=5.12
                 ),
                 PolFreqEntry(
-                    freq_ghz=11.3, frac_pol_pct=12.3, frac_pol_upper_limit=False, pol_angle_deg=34.0
+                    freq_ghz=11.3, frac_pol_pct=12.3, frac_pol_upper_limit=False,
+                    pol_angle_deg=34.0, flux_jy=4.12
                 ),
                 PolFreqEntry(
-                    freq_ghz=14.1, frac_pol_pct=12.3, frac_pol_upper_limit=False, pol_angle_deg=34.0
+                    freq_ghz=14.1, frac_pol_pct=12.3, frac_pol_upper_limit=False,
+                    pol_angle_deg=34.0, flux_jy=3.54
                 ),
                 PolFreqEntry(
-                    freq_ghz=16.6, frac_pol_pct=12.5, frac_pol_upper_limit=False, pol_angle_deg=35.0
+                    freq_ghz=16.6, frac_pol_pct=12.5, frac_pol_upper_limit=False,
+                    pol_angle_deg=35.0, flux_jy=3.15
                 ),
                 PolFreqEntry(
-                    freq_ghz=19.1, frac_pol_pct=12.6, frac_pol_upper_limit=False, pol_angle_deg=35.0
+                    freq_ghz=19.1, frac_pol_pct=12.6, frac_pol_upper_limit=False,
+                    pol_angle_deg=35.0, flux_jy=2.85
                 ),
                 PolFreqEntry(
-                    freq_ghz=25.6, frac_pol_pct=12.7, frac_pol_upper_limit=False, pol_angle_deg=36.0
+                    freq_ghz=25.6, frac_pol_pct=12.7, frac_pol_upper_limit=False,
+                    pol_angle_deg=36.0, flux_jy=2.30
                 ),
                 PolFreqEntry(
-                    freq_ghz=32.1, frac_pol_pct=13.1, frac_pol_upper_limit=False, pol_angle_deg=36.0
+                    freq_ghz=32.1, frac_pol_pct=13.1, frac_pol_upper_limit=False,
+                    pol_angle_deg=36.0, flux_jy=1.92
                 ),
                 PolFreqEntry(
-                    freq_ghz=37.1, frac_pol_pct=13.5, frac_pol_upper_limit=False, pol_angle_deg=36.0
+                    freq_ghz=37.1, frac_pol_pct=13.5, frac_pol_upper_limit=False,
+                    pol_angle_deg=36.0, flux_jy=1.73
                 ),
                 PolFreqEntry(
-                    freq_ghz=42.1, frac_pol_pct=13.4, frac_pol_upper_limit=False, pol_angle_deg=37.0
+                    freq_ghz=42.1, frac_pol_pct=13.4, frac_pol_upper_limit=False,
+                    pol_angle_deg=37.0, flux_jy=1.57
                 ),
                 PolFreqEntry(
-                    freq_ghz=48.1, frac_pol_pct=14.6, frac_pol_upper_limit=False, pol_angle_deg=36.0
+                    freq_ghz=48.1, frac_pol_pct=14.6, frac_pol_upper_limit=False,
+                    pol_angle_deg=36.0, flux_jy=1.44
                 ),
             ],
         },
@@ -147,33 +168,79 @@ POL_CATALOGUE: list[PolCalEntry] = [
         variability_note="In flare Jan 2025 at K/Ka/Q bands — avoid until cleared",
         aka=["0518+165", "0521+1638", "3c138", "j0518+165"],
         epochs={
+            # 17-node table from the NRAO VLA Observing Guide file 3c138_2019
+            # (R. Perley, 31 Jan/01 Feb 2019). I (Jy), P.F. and P.A. tabulated
+            # together. frac_pol_pct = P.F.*100; pol_angle_deg from P.A. (radians).
+            # NOTE: 16.654 GHz is transcribed verbatim from the source file (likely
+            # a typo for 16.564, the value used for the other calibrators).
             "2019": [
                 PolFreqEntry(
-                    freq_ghz=1.45, frac_pol_pct=5.6, frac_pol_upper_limit=False, pol_angle_deg=-14.0
+                    freq_ghz=1.022, frac_pol_pct=5.462, frac_pol_upper_limit=False,
+                    pol_angle_deg=-13.28, flux_jy=10.07
                 ),
                 PolFreqEntry(
-                    freq_ghz=3.0, frac_pol_pct=7.5, frac_pol_upper_limit=False, pol_angle_deg=-11.0
+                    freq_ghz=1.465, frac_pol_pct=7.795, frac_pol_upper_limit=False,
+                    pol_angle_deg=-9.56, flux_jy=8.26
                 ),
                 PolFreqEntry(
-                    freq_ghz=6.0, frac_pol_pct=10.4, frac_pol_upper_limit=False, pol_angle_deg=-11.0
+                    freq_ghz=1.865, frac_pol_pct=8.955, frac_pol_upper_limit=False,
+                    pol_angle_deg=-9.3, flux_jy=7.21
                 ),
                 PolFreqEntry(
-                    freq_ghz=10.0, frac_pol_pct=9.0, frac_pol_upper_limit=False, pol_angle_deg=-12.0
+                    freq_ghz=2.565, frac_pol_pct=9.848, frac_pol_upper_limit=False,
+                    pol_angle_deg=-10.15, flux_jy=6.0
                 ),
                 PolFreqEntry(
-                    freq_ghz=15.0,
-                    frac_pol_pct=10.6,
-                    frac_pol_upper_limit=False,
-                    pol_angle_deg=-10.0,
+                    freq_ghz=3.565, frac_pol_pct=10.337, frac_pol_upper_limit=False,
+                    pol_angle_deg=-9.52, flux_jy=4.89
                 ),
                 PolFreqEntry(
-                    freq_ghz=22.0, frac_pol_pct=9.9, frac_pol_upper_limit=False, pol_angle_deg=None
+                    freq_ghz=4.885, frac_pol_pct=10.524, frac_pol_upper_limit=False,
+                    pol_angle_deg=-10.53, flux_jy=4.0
                 ),
                 PolFreqEntry(
-                    freq_ghz=33.0, frac_pol_pct=10.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                    freq_ghz=6.68, frac_pol_pct=10.219, frac_pol_upper_limit=False,
+                    pol_angle_deg=-11.49, flux_jy=3.23
                 ),
                 PolFreqEntry(
-                    freq_ghz=45.0, frac_pol_pct=9.7, frac_pol_upper_limit=False, pol_angle_deg=None
+                    freq_ghz=8.435, frac_pol_pct=10.939, frac_pol_upper_limit=False,
+                    pol_angle_deg=-9.4, flux_jy=2.76
+                ),
+                PolFreqEntry(
+                    freq_ghz=11.32, frac_pol_pct=9.063, frac_pol_upper_limit=False,
+                    pol_angle_deg=-7.94, flux_jy=2.24
+                ),
+                PolFreqEntry(
+                    freq_ghz=14.065, frac_pol_pct=8.231, frac_pol_upper_limit=False,
+                    pol_angle_deg=-10.48, flux_jy=1.9
+                ),
+                PolFreqEntry(
+                    freq_ghz=16.654, frac_pol_pct=8.186, frac_pol_upper_limit=False,
+                    pol_angle_deg=-13.23, flux_jy=1.69
+                ),
+                PolFreqEntry(
+                    freq_ghz=19.064, frac_pol_pct=8.437, frac_pol_upper_limit=False,
+                    pol_angle_deg=-16.05, flux_jy=1.54
+                ),
+                PolFreqEntry(
+                    freq_ghz=25.564, frac_pol_pct=8.422, frac_pol_upper_limit=False,
+                    pol_angle_deg=-18.16, flux_jy=1.25
+                ),
+                PolFreqEntry(
+                    freq_ghz=32.064, frac_pol_pct=8.541, frac_pol_upper_limit=False,
+                    pol_angle_deg=-19.43, flux_jy=1.06
+                ),
+                PolFreqEntry(
+                    freq_ghz=37.064, frac_pol_pct=8.694, frac_pol_upper_limit=False,
+                    pol_angle_deg=-19.53, flux_jy=0.96
+                ),
+                PolFreqEntry(
+                    freq_ghz=42.064, frac_pol_pct=8.772, frac_pol_upper_limit=False,
+                    pol_angle_deg=-23.21, flux_jy=0.88
+                ),
+                PolFreqEntry(
+                    freq_ghz=48.064, frac_pol_pct=9.147, frac_pol_upper_limit=False,
+                    pol_angle_deg=-24.12, flux_jy=0.82
                 ),
             ],
         },
@@ -188,51 +255,22 @@ POL_CATALOGUE: list[PolCalEntry] = [
         variability_note=None,
         aka=["0137+331", "0137+3309", "3c48", "j0137+331"],
         epochs={
-            "2019": [
-                # Below 4 GHz: polarisation is very low and PA is unstable/undefined.
-                # Encode explicitly so callers can gate on these values.
-                PolFreqEntry(
-                    freq_ghz=0.35, frac_pol_pct=0.3, frac_pol_upper_limit=True, pol_angle_deg=None
-                ),
-                PolFreqEntry(
-                    freq_ghz=1.45, frac_pol_pct=0.5, frac_pol_upper_limit=True, pol_angle_deg=None
-                ),
-                # Usable above 4 GHz:
-                PolFreqEntry(
-                    freq_ghz=6.0, frac_pol_pct=5.0, frac_pol_upper_limit=False, pol_angle_deg=-66.0
-                ),
-                PolFreqEntry(
-                    freq_ghz=10.0, frac_pol_pct=6.0, frac_pol_upper_limit=False, pol_angle_deg=-67.0
-                ),
-                PolFreqEntry(
-                    freq_ghz=15.0, frac_pol_pct=7.4, frac_pol_upper_limit=False, pol_angle_deg=-67.0
-                ),
-                PolFreqEntry(
-                    freq_ghz=22.0, frac_pol_pct=7.5, frac_pol_upper_limit=False, pol_angle_deg=-68.0
-                ),
-                PolFreqEntry(
-                    freq_ghz=33.0, frac_pol_pct=7.4, frac_pol_upper_limit=False, pol_angle_deg=-67.0
-                ),
-                PolFreqEntry(
-                    freq_ghz=45.0, frac_pol_pct=8.5, frac_pol_upper_limit=False, pol_angle_deg=-71.0
-                ),
-            ],
-            # 17-node table from Perley & Butler (2013), reproduced in the NRAO VLA
-            # Polarization Calibration Guide (TDRW0001 example, March 2024).
-            # Stokes I from the Perley-Butler 2017 flux scale; polfrac and polangle
-            # measured contemporaneously.
+            # 17-node table from the NRAO VLA Observing Guide file 3c48_2019
+            # (R. Perley, 31 Jan/01 Feb 2019). I (Jy), P.F. and P.A. tabulated
+            # together; reference flux densities were used.
             #
             # pol_angle_deg is stored in degrees, converted from the source radians.
             # Angles are NOT derotated for Faraday rotation (RM ≈ -68 rad/m² for 3C48).
             #
-            # pol_angle_deg = None for the three lowest-frequency nodes:
+            # pol_angle_deg = None for the three lowest-frequency nodes (the source
+            # tabulates values there, but they are unusable):
             #   1.022 GHz — pol fraction < 0.3%, PA heavily rotated and near upper limit
             #   1.465 GHz — pol fraction < 0.5%, λ² large enough for near-full RM wrap
             #   1.865 GHz — PA wraps by ~π relative to higher frequencies;
             #               requires explicit π-correction before use in polynomial fitting
             #               (see NRAO polcal guide step: data[2,3] -= np.pi)
             # Angles at 2.565 GHz and above are stable and directly usable.
-            "perley_butler_2013": [
+            "2019": [
                 PolFreqEntry(
                     freq_ghz=1.022,
                     frac_pol_pct=0.293,
@@ -365,32 +403,79 @@ POL_CATALOGUE: list[PolCalEntry] = [
         variability_note=None,
         aka=["0538+498", "0542+4951", "3c147", "j0538+498"],
         epochs={
+            # 17-node table from the NRAO VLA Observing Guide file 3c147_2019
+            # (R. Perley, 31 Jan/01 Feb 2019). Essentially unpolarised below
+            # ~3 GHz (P.A. tabulated as N/A → pol_angle_deg=None, upper limits on
+            # P.F.); pol fraction rises above 10 GHz. Leakage calibrator — pol
+            # angle is not used for angle calibration but is retained for fidelity.
             "2019": [
-                # <10 GHz: essentially unpolarised (<0.05%) — ideal leakage calibrator.
-                # Rises to ~5% above 10 GHz where it is less useful.
                 PolFreqEntry(
-                    freq_ghz=1.45, frac_pol_pct=0.05, frac_pol_upper_limit=True, pol_angle_deg=None
+                    freq_ghz=1.022, frac_pol_pct=0.028, frac_pol_upper_limit=True,
+                    pol_angle_deg=None, flux_jy=27.73
                 ),
                 PolFreqEntry(
-                    freq_ghz=3.0, frac_pol_pct=0.05, frac_pol_upper_limit=True, pol_angle_deg=None
+                    freq_ghz=1.465, frac_pol_pct=0.018, frac_pol_upper_limit=True,
+                    pol_angle_deg=None, flux_jy=21.36
                 ),
                 PolFreqEntry(
-                    freq_ghz=6.0, frac_pol_pct=0.05, frac_pol_upper_limit=True, pol_angle_deg=None
+                    freq_ghz=1.865, frac_pol_pct=0.021, frac_pol_upper_limit=True,
+                    pol_angle_deg=None, flux_jy=17.86
                 ),
                 PolFreqEntry(
-                    freq_ghz=10.0, frac_pol_pct=0.5, frac_pol_upper_limit=False, pol_angle_deg=None
+                    freq_ghz=2.565, frac_pol_pct=0.015, frac_pol_upper_limit=True,
+                    pol_angle_deg=None, flux_jy=13.79
                 ),
                 PolFreqEntry(
-                    freq_ghz=15.0, frac_pol_pct=2.5, frac_pol_upper_limit=False, pol_angle_deg=None
+                    freq_ghz=3.565, frac_pol_pct=0.052, frac_pol_upper_limit=False,
+                    pol_angle_deg=-34.1, flux_jy=10.4
                 ),
                 PolFreqEntry(
-                    freq_ghz=22.0, frac_pol_pct=4.8, frac_pol_upper_limit=False, pol_angle_deg=None
+                    freq_ghz=4.885, frac_pol_pct=0.157, frac_pol_upper_limit=False,
+                    pol_angle_deg=-13.18, flux_jy=7.88
                 ),
                 PolFreqEntry(
-                    freq_ghz=33.0, frac_pol_pct=5.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                    freq_ghz=6.68, frac_pol_pct=0.514, frac_pol_upper_limit=False,
+                    pol_angle_deg=-57.35, flux_jy=5.91
                 ),
                 PolFreqEntry(
-                    freq_ghz=45.0, frac_pol_pct=5.0, frac_pol_upper_limit=False, pol_angle_deg=None
+                    freq_ghz=8.435, frac_pol_pct=0.476, frac_pol_upper_limit=False,
+                    pol_angle_deg=-19.04, flux_jy=4.81
+                ),
+                PolFreqEntry(
+                    freq_ghz=11.32, frac_pol_pct=0.849, frac_pol_upper_limit=False,
+                    pol_angle_deg=26.68, flux_jy=3.67
+                ),
+                PolFreqEntry(
+                    freq_ghz=14.065, frac_pol_pct=1.791, frac_pol_upper_limit=False,
+                    pol_angle_deg=52.51, flux_jy=3.02
+                ),
+                PolFreqEntry(
+                    freq_ghz=16.564, frac_pol_pct=2.4, frac_pol_upper_limit=False,
+                    pol_angle_deg=59.82, flux_jy=2.61
+                ),
+                PolFreqEntry(
+                    freq_ghz=19.064, frac_pol_pct=2.904, frac_pol_upper_limit=False,
+                    pol_angle_deg=65.76, flux_jy=2.32
+                ),
+                PolFreqEntry(
+                    freq_ghz=25.564, frac_pol_pct=3.432, frac_pol_upper_limit=False,
+                    pol_angle_deg=78.69, flux_jy=1.82
+                ),
+                PolFreqEntry(
+                    freq_ghz=32.064, frac_pol_pct=4.033, frac_pol_upper_limit=False,
+                    pol_angle_deg=82.49, flux_jy=1.53
+                ),
+                PolFreqEntry(
+                    freq_ghz=37.064, frac_pol_pct=4.47, frac_pol_upper_limit=False,
+                    pol_angle_deg=87.44, flux_jy=1.38
+                ),
+                PolFreqEntry(
+                    freq_ghz=42.064, frac_pol_pct=4.943, frac_pol_upper_limit=False,
+                    pol_angle_deg=86.62, flux_jy=1.26
+                ),
+                PolFreqEntry(
+                    freq_ghz=48.064, frac_pol_pct=5.956, frac_pol_upper_limit=False,
+                    pol_angle_deg=85.34, flux_jy=1.14
                 ),
             ],
         },

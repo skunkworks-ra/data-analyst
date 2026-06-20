@@ -53,8 +53,10 @@ def _build_script(
     interp: list[str],
     parang: bool,
     smodel: list[float] | None = None,
+    spwmap: list[list[int]] | None = None,
 ) -> str:
     smodel_line = f"    smodel={smodel!r},\n" if smodel is not None else ""
+    spwmap_line = f"    spwmap={spwmap!r},\n" if spwmap is not None else ""
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -82,7 +84,7 @@ gaincal(
     solnorm={solnorm},
 {smodel_line}    gaintable={gaintable!r},
     interp={interp!r},
-    parang={parang},
+{spwmap_line}    parang={parang},
 )
 print("Done. Caltable written to: {caltable}")
 """
@@ -104,6 +106,7 @@ def run(
     solnorm: bool = False,
     gaintable: list[str] | None = None,
     interp: list[str] | None = None,
+    spwmap: list[list[int]] | None = None,
     parang: bool = True,
     smodel: list[float] | None = None,
     execute: bool = False,
@@ -127,6 +130,10 @@ def run(
         solnorm:      Normalise solutions to unit amplitude (default False).
         gaintable:    Prior caltables to apply on-the-fly.
         interp:       Interpolation mode per gaintable entry.
+        spwmap:       Optional per-prior-table SPW map (list-of-lists aligned to
+                      gaintable) to fan an spw-combined prior across all SPWs.
+                      Default None → CASA identity. Only needed if a prior used
+                      combine='spw' (a VLA multiband-delay choice).
         parang:       Apply parallactic angle correction (default True).
         smodel:       Scratch model [I, Q, U, V] for gaintype='KCROSS' (default None).
         execute:      If False (default), write script and return.
@@ -147,6 +154,15 @@ def run(
         gaintable = []
     if interp is None:
         interp = [""] * len(gaintable)
+
+    if spwmap is not None and len(spwmap) != len(gaintable):
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(
+            f"spwmap length ({len(spwmap)}) must match gaintable length ({len(gaintable)}). "
+            "Pass a per-table list-of-lists, e.g. [[], [0,0,0,0]].",
+            ms_path=ms_path,
+        )
 
     workdir_path = Path(workdir)
     if not workdir_path.exists():
@@ -185,6 +201,7 @@ def run(
             interp=interp,
             parang=parang,
             smodel=smodel,
+            spwmap=spwmap,
         )
     )
     casa_calls.append(f"write_script → {script}")
@@ -249,6 +266,8 @@ def run(
     )
     if smodel is not None:
         kwargs["smodel"] = smodel
+    if spwmap is not None:
+        kwargs["spwmap"] = spwmap
     try:
         gaincal(**kwargs)
     except Exception as e:

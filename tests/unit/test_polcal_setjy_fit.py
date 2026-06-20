@@ -191,14 +191,26 @@ class TestFitSetjyParams:
         assert params_wide.polindex != params_narrow.polindex
 
     def test_insufficient_stokes_i_nodes_raises(self):
+        """A single node gives no slope; ≥2 in-band nodes are required."""
         with pytest.raises(ValueError, match="Stokes I"):
             fit_setjy_params(
-                [3.0, 4.0],
-                [10.0, 7.5],
-                [0.02, 0.03],
-                [-95.0, -90.0],
+                [3.0],
+                [10.0],
+                [0.02],
+                [-95.0],
                 reffreq_ghz=3.5,
             )
+
+    def test_two_stokes_i_nodes_ok_degree_one(self):
+        """Exactly 2 in-band nodes → first-order spix (spectral index only)."""
+        params = fit_setjy_params(
+            [3.0, 4.0],
+            [10.0, 7.5],
+            [0.02, 0.03],
+            [-95.0, -90.0],
+            reffreq_ghz=3.5,
+        )
+        assert len(params.spix) == 1
 
     def test_insufficient_polindex_nodes_raises(self):
         """Fewer nodes than polindex_deg+1 should raise ValueError."""

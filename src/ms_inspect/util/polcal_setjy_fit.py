@@ -70,21 +70,29 @@ def fit_stokes_i(
     freq_ghz: np.ndarray,
     flux_jy: np.ndarray,
     reffreq_ghz: float,
+    deg: int = 2,
 ) -> tuple[float, list[float]]:
-    """Fit S(f) = S_ref * (f/f_ref)^(alpha + beta*log10(f/f_ref)).
+    """Fit S(f) = S_ref * (f/f_ref)^(spix[0] + spix[1]*log10(f/f_ref) + ...).
 
     Linearises in log-log space:
-        log10(S) = log10(S_ref) + alpha*x + beta*x^2   where x = log10(f/f_ref)
+        log10(S) = log10(S_ref) + spix[0]*x + spix[1]*x^2 + ...   x = log10(f/f_ref)
 
-    Returns (flux_at_reffreq_jy, [alpha, beta]).
+    The fit degree is capped at the number of nodes minus one, so it uses as many
+    spix terms as the (in-band) data supports: with 2 nodes it returns just the
+    spectral index [spix[0]]; with 3+ nodes it can also return curvature, etc.
+
+    Returns (flux_at_reffreq_jy, spix) where spix has length = effective degree.
     """
+    n = len(freq_ghz)
+    eff_deg = max(1, min(deg, n - 1))
     x = np.log10(freq_ghz / reffreq_ghz)
     y = np.log10(flux_jy)
-    # Design matrix for [log10(S_ref), alpha, beta]
-    A = np.column_stack([np.ones_like(x), x, x**2])
+    # Design matrix columns: [1, x, x^2, ...] up to eff_deg
+    A = np.column_stack([x**k for k in range(eff_deg + 1)])
     coeffs, _, _, _ = np.linalg.lstsq(A, y, rcond=None)
-    log_s_ref, alpha, beta = coeffs
-    return float(10.0**log_s_ref), [float(alpha), float(beta)]
+    log_s_ref = coeffs[0]
+    spix = [float(c) for c in coeffs[1:]]
+    return float(10.0**log_s_ref), spix
 
 
 def fit_polindex(
@@ -159,15 +167,21 @@ def fit_setjy_params(
     def _to_float_array(seq: list) -> np.ndarray:
         return np.array([v if v is not None else float("nan") for v in seq], dtype=float)
 
+    # Each model is fit independently over its in-band nodes. The polynomial
+    # degree is capped at (n_nodes - 1) so a band with only 2 nodes yields a
+    # first-order fit rather than failing — "as many terms as the band supports".
+    # A minimum of 2 nodes is required (a slope needs two points); a single node
+    # gives no frequency information and is rejected.
+
     # --- Stokes I ---
     flux = _to_float_array(flux_jy)
     mask_i = ~np.isnan(flux)
     if flux_freq_range_ghz is not None:
         lo, hi = flux_freq_range_ghz
         mask_i &= (freq >= lo) & (freq <= hi)
-    if mask_i.sum() < 3:
-        raise ValueError(f"Stokes I fit needs ≥3 valid nodes; got {mask_i.sum()} after filtering.")
-    flux_at_ref, spix = fit_stokes_i(freq[mask_i], flux[mask_i], reffreq_ghz)
+    if mask_i.sum() < 2:
+        raise ValueError(f"Stokes I fit needs ≥2 in-band nodes; got {mask_i.sum()} after filtering.")
+    flux_at_ref, spix = fit_stokes_i(freq[mask_i], flux[mask_i], reffreq_ghz, deg=spix_deg)
 
     # --- Pol fraction ---
     pf = _to_float_array(polfrac)
@@ -175,12 +189,12 @@ def fit_setjy_params(
     if pol_freq_range_ghz is not None:
         lo, hi = pol_freq_range_ghz
         mask_p &= (freq >= lo) & (freq <= hi)
-    if mask_p.sum() < polindex_deg + 1:
+    if mask_p.sum() < 2:
         raise ValueError(
-            f"polindex fit (deg {polindex_deg}) needs ≥{polindex_deg + 1} valid nodes; "
-            f"got {mask_p.sum()}."
+            f"polindex fit needs ≥2 in-band nodes; got {mask_p.sum()} after filtering."
         )
-    polindex_coeffs = fit_polindex(freq[mask_p], pf[mask_p], reffreq_ghz, deg=polindex_deg)
+    eff_polindex_deg = min(polindex_deg, int(mask_p.sum()) - 1)
+    polindex_coeffs = fit_polindex(freq[mask_p], pf[mask_p], reffreq_ghz, deg=eff_polindex_deg)
 
     # --- Pol angle ---
     pa_deg_arr = _to_float_array(polangle_deg)
@@ -189,12 +203,12 @@ def fit_setjy_params(
     if pol_freq_range_ghz is not None:
         lo, hi = pol_freq_range_ghz
         mask_a &= (freq >= lo) & (freq <= hi)
-    if mask_a.sum() < polangle_poly_deg + 1:
+    if mask_a.sum() < 2:
         raise ValueError(
-            f"polangle fit (deg {polangle_poly_deg}) needs ≥{polangle_poly_deg + 1} valid nodes; "
-            f"got {mask_a.sum()}."
+            f"polangle fit needs ≥2 in-band nodes; got {mask_a.sum()} after filtering."
         )
-    polangle_coeffs = fit_polangle(freq[mask_a], pa_rad[mask_a], reffreq_ghz, deg=polangle_poly_deg)
+    eff_polangle_deg = min(polangle_poly_deg, int(mask_a.sum()) - 1)
+    polangle_coeffs = fit_polangle(freq[mask_a], pa_rad[mask_a], reffreq_ghz, deg=eff_polangle_deg)
 
     return SetjyPolParams(
         reffreq_ghz=reffreq_ghz,
@@ -213,18 +227,27 @@ def fit_setjy_params(
 def fit_from_catalogue(
     calibrator_name: str,
     reffreq_ghz: float,
-    epoch: str = "perley_butler_2013",
+    epoch: str | None = None,
     flux_freq_range_ghz: tuple[float, float] | None = None,
     pol_freq_range_ghz: tuple[float, float] | None = None,
     polindex_deg: int = 3,
     polangle_deg: int = 4,
+    spix_deg: int = 2,
+    obs_epoch_year: float | None = None,
 ) -> SetjyPolParams:
     """Look up a calibrator in pol_calibrators.py and fit polynomial coefficients.
+
+    Stokes I (flux at reffreq + spix) is taken from the bundled Perley-Butler 2017
+    flux model when the calibrator is present there — this is the authoritative
+    source and the only one available for 3C286, whose pol catalogue rows carry no
+    tabulated flux. If the calibrator is absent from PB2017, Stokes I falls back to
+    a log-polynomial fit of the catalogue's own flux_jy nodes (e.g. legacy epochs).
 
     Args:
         calibrator_name:     Any recognised name/alias (e.g. '3C48', 'J0137+3309').
         reffreq_ghz:         Reference frequency for the polynomial expansion.
-        epoch:               Epoch key in the catalogue (default 'perley_butler_2013').
+        epoch:               Epoch key in the catalogue. None (default) auto-selects
+                             the epoch nearest obs_epoch_year (latest if unset).
         flux_freq_range_ghz: Restrict Stokes I fit to this (lo, hi) GHz range.
         pol_freq_range_ghz:  Restrict pol fits to this (lo, hi) GHz range.
         polindex_deg:        Polynomial degree for pol fraction (default 3).
@@ -251,6 +274,22 @@ def fit_from_catalogue(
     entry = lookup_pol(calibrator_name)
     if entry is None:
         raise KeyError(f"Calibrator {calibrator_name!r} not found in pol catalogue.")
+
+    if epoch is None:
+        # Select the pol reference epoch nearest the observation date. Epoch keys
+        # carry a 4-digit year (e.g. '2019'); pick the one closest to
+        # obs_epoch_year, or the latest year when no obs date is given.
+        import re
+
+        def _epoch_year(key: str) -> int:
+            m = re.search(r"(\d{4})", key)
+            return int(m.group(1)) if m else 0
+
+        if obs_epoch_year is not None:
+            epoch = min(entry.epochs, key=lambda k: abs(_epoch_year(k) - obs_epoch_year))
+        else:
+            epoch = max(entry.epochs, key=_epoch_year)
+
     rows = entry.epochs.get(epoch)
     if not rows:
         raise KeyError(
@@ -272,6 +311,7 @@ def fit_from_catalogue(
         reffreq_ghz=reffreq_ghz,
         flux_freq_range_ghz=flux_freq_range_ghz,
         pol_freq_range_ghz=pol_freq_range_ghz,
+        spix_deg=spix_deg,
         polindex_deg=polindex_deg,
         polangle_poly_deg=polangle_deg,
     )

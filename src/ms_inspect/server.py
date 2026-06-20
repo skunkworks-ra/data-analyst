@@ -30,6 +30,7 @@ from ms_inspect.tools import (
     calsol_plot,
     calsol_plot_library,
     calsol_stats,
+    calsol_stats_detail,
     caltables,
     corrected_stats,
     fields,
@@ -120,7 +121,7 @@ class PolCalFeasibilityInput(BaseModel):
         default=60.0,
         description=(
             "Minimum parallactic angle spread (degrees) required for a reliable "
-            "D-term leakage solution (default 60°). Lower values relax the criterion."
+            "Df+QU (unknown-pol) leakage solution (default 30°; NRAO suggests 60°). Irrelevant to Xf and known-pol Df."
         ),
         ge=0.0,
         le=180.0,
@@ -337,6 +338,27 @@ class CalsolStatsInput(BaseModel):
     verbosity: str = Field(
         default="full",
         description="'full' (default) or 'compact'. Compact strips field() wrappers.",
+    )
+
+
+class CalsolStatsDetailInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    npz_path: str = Field(
+        ...,
+        description="Path to the {caltable}.calsol_stats.npz sidecar written by ms_calsol_stats.",
+        min_length=1,
+    )
+    kind: str = Field(
+        default="low_snr",
+        description="'low_snr', 'amp_outliers', or 'antenna' (all quantities for one antenna).",
+    )
+    antenna: str = Field(
+        default="", description="Restrict to this antenna name (required for kind='antenna')."
+    )
+    spw: int | None = Field(default=None, description="Restrict to this SPW id.")
+    field: str = Field(default="", description="Restrict to this field name.")
+    max_rows: int = Field(
+        default=300, ge=1, description="Row cap (hard-limited to 300)."
     )
 
 
@@ -1113,7 +1135,7 @@ async def ms_pol_cal_feasibility(params: PolCalFeasibilityInput) -> str:
 
     Args:
         params.ms_path:                Path to the Measurement Set.
-        params.pa_spread_threshold_deg: PA spread threshold for D-term feasibility (default 60°).
+        params.pa_spread_threshold_deg: PA spread threshold for the Df+QU path (default 30°).
 
     Returns:
         JSON with band_centre_ghz, pol_angle_calibrator (source, frac_pol, PA, stable_pa),
@@ -1321,6 +1343,50 @@ async def ms_calsol_stats(params: CalsolStatsInput) -> str:
         snr_min=params.snr_min,
         amp_sigma=params.amp_sigma,
         verbosity=params.verbosity,
+    )
+
+
+@mcp.tool(
+    name="ms_calsol_stats_detail",
+    description=(
+        "Deep-dive reader over the {caltable}.calsol_stats.npz sidecar written by "
+        "ms_calsol_stats. Returns the full per-(antenna, SpW, field) detail that the "
+        "stats response caps: kind='low_snr'|'amp_outliers'|'antenna', filterable by "
+        "antenna/spw/field. Use when a gate needs detail beyond the bounded summary."
+    ),
+    annotations={
+        "title": "Calibration Solution Detail",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_calsol_stats_detail(params: CalsolStatsDetailInput) -> str:
+    """
+    Slice the raw NPZ sidecar from ms_calsol_stats for full outlier/antenna detail.
+
+    The stats tool returns a bounded summary (worst-N rows + per-antenna rollups);
+    this tool returns the complete enumeration from disk for a requested slice, so
+    drilling into a flagged antenna or SPW needs no re-solve and no generated script.
+
+    Args:
+        params.npz_path: Path to the {caltable}.calsol_stats.npz sidecar.
+        params.kind: 'low_snr', 'amp_outliers', or 'antenna'.
+        params.antenna / params.spw / params.field: optional filters.
+        params.max_rows: row cap (hard-limited to 300).
+
+    Returns:
+        JSON with kind, filters, n_total, n_returned, truncated, rows, thresholds.
+    """
+    return await _run_tool(
+        calsol_stats_detail.run,
+        params.npz_path,
+        kind=params.kind,
+        antenna=params.antenna,
+        spw=params.spw,
+        field=params.field,
+        max_rows=params.max_rows,
     )
 
 

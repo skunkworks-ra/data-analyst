@@ -445,8 +445,12 @@ class SetjyPolcalInput(BaseModel):
         ),
     )
     epoch: str = Field(
-        default="perley_butler_2013",
-        description="Catalogue epoch key for the polarization data.",
+        default="",
+        description=(
+            "Catalogue epoch key for the polarization data. Leave empty to "
+            "auto-select the epoch nearest the observation date (latest if "
+            "unknown)."
+        ),
     )
     pol_freq_range_lo_ghz: float | None = Field(
         default=None,
@@ -496,6 +500,14 @@ class PolcalInput(BaseModel):
     refant: str = Field(default="", description="Reference antenna name.")
     gaintable: list[str] = Field(default_factory=list, description="Prior caltables to apply.")
     interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
+    spwmap: list[list[int]] = Field(
+        default_factory=list,
+        description=(
+            "Optional per-prior-table SPW map (list-of-lists aligned to gaintable), "
+            "e.g. [[], [0,0,0,0]] to fan an spw-combined prior (VLA multiband-delay "
+            "Kcross) across all SPWs. Empty → CASA identity (default per-SPW behaviour)."
+        ),
+    )
     parang: bool = Field(
         default=True,
         description="Apply parallactic angle correction (default True, critical for polcal).",
@@ -769,7 +781,7 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
         params.workdir:               Existing directory for the generated script.
         params.reffreq_ghz:           Reference frequency in GHz.
         params.calibrator_name:       Catalogue lookup name (defaults to field).
-        params.epoch:                 Catalogue epoch (default 'perley_butler_2013').
+        params.epoch:                 Catalogue epoch (empty → auto-select by obs date).
         params.pol_freq_range_lo_ghz: Lower GHz bound to restrict pol fits.
         params.pol_freq_range_hi_ghz: Upper GHz bound to restrict pol fits.
         params.polindex_deg:          Polynomial degree for polindex (default 3).
@@ -788,7 +800,7 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
         params.workdir,
         params.reffreq_ghz,
         params.calibrator_name or None,
-        params.epoch,
+        params.epoch or None,
         params.pol_freq_range_lo_ghz,
         params.pol_freq_range_hi_ghz,
         params.polindex_deg,
@@ -934,6 +946,14 @@ class GaincalInput(BaseModel):
     )
     gaintable: list[str] = Field(default_factory=list, description="Prior caltables to apply.")
     interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
+    spwmap: list[list[int]] = Field(
+        default_factory=list,
+        description=(
+            "Optional per-prior-table SPW map (list-of-lists aligned to gaintable) to "
+            "fan an spw-combined prior across all SPWs. Empty → CASA identity. Only "
+            "needed if a prior used combine='spw' (VLA multiband delay)."
+        ),
+    )
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
     execute: bool = Field(
         default=False,
@@ -1031,6 +1051,16 @@ class ApplycalInput(BaseModel):
             "'nearest,nearestflag' for delay (K) tables."
         ),
     )
+    spwmap: list[list[int]] = Field(
+        default_factory=list,
+        description=(
+            "Optional per-table SPW map (list-of-lists aligned to gaintable), e.g. "
+            "[[], [0,0,0,0], []] to fan an spw-combined table across all SPWs while "
+            "leaving per-SPW tables on identity. Empty → CASA identity (unchanged "
+            "per-SPW behaviour). Only needed when a table used combine='spw' (VLA "
+            "multiband delay)."
+        ),
+    )
     calwt: bool = Field(
         default=False,
         description=(
@@ -1123,6 +1153,7 @@ async def ms_gaincal(params: GaincalInput) -> str:
         params.solnorm,
         params.gaintable,
         params.interp,
+        params.spwmap or None,
         params.parang,
         params.smodel,
         params.execute,
@@ -1182,6 +1213,7 @@ async def ms_polcal(params: PolcalInput) -> str:
         params.refant,
         params.gaintable or None,
         params.interp or None,
+        params.spwmap or None,
         params.parang,
         params.execute,
     )
@@ -1348,6 +1380,7 @@ async def ms_applycal(params: ApplycalInput) -> str:
         params.workdir,
         params.gainfield or None,
         params.interp or None,
+        params.spwmap or None,
         params.calwt,
         params.applymode,
         params.parang,

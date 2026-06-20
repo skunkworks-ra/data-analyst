@@ -45,7 +45,10 @@ def _build_script(
     applymode: str,
     parang: bool,
     flagbackup: bool,
+    spwmap: list[list[int]] | None = None,
 ) -> str:
+    # spwmap is omitted entirely when not supplied → CASA default (identity).
+    spwmap_line = f"    spwmap={spwmap!r},\n" if spwmap is not None else ""
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -60,7 +63,7 @@ applycal(
     gaintable={gaintable!r},
     gainfield={gainfield!r},
     interp={interp!r},
-    calwt={calwt},
+{spwmap_line}    calwt={calwt},
     applymode={applymode!r},
     parang={parang},
     flagbackup={flagbackup},
@@ -76,6 +79,7 @@ def run(
     workdir: str,
     gainfield: list[str] | None = None,
     interp: list[str] | None = None,
+    spwmap: list[list[int]] | None = None,
     calwt: bool = False,
     applymode: str = "calflagstrict",
     parang: bool = True,
@@ -95,6 +99,12 @@ def run(
         interp:     Per-table interpolation mode. Use 'nearest' for calibrators,
                     'linear' for the target, 'nearest,nearestflag' for delay tables.
                     Default: ['linear'] * len(gaintable).
+        spwmap:     Optional per-table SPW map (list-of-lists aligned to gaintable),
+                    e.g. [[], [0,0,0,0], []] to fan an spw-combined table (entry 1)
+                    across all SPWs while leaving per-SPW tables on identity. Default
+                    None → CASA identity mapping (no change to per-SPW behaviour).
+                    Only needed when a table was solved with combine='spw' (a VLA
+                    multiband-delay choice); not telescope-general.
         calwt:      Calibrate the weights (default False — VLA weights are not
                     properly normalised; use statwt before imaging instead).
         applymode:  'calflagstrict' flags data with missing solutions (recommended).
@@ -136,6 +146,15 @@ def run(
             ms_path=ms_path,
         )
 
+    if spwmap is not None and len(spwmap) != len(gaintable):
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(
+            f"spwmap length ({len(spwmap)}) must match gaintable length ({len(gaintable)}). "
+            "Pass a per-table list-of-lists, e.g. [[], [0,0,0,0], []].",
+            ms_path=ms_path,
+        )
+
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
@@ -166,6 +185,7 @@ def run(
             applymode=applymode,
             parang=parang,
             flagbackup=flagbackup,
+            spwmap=spwmap,
         )
     )
     casa_calls.append(f"write_script → {script}")
@@ -211,7 +231,7 @@ def run(
     )
 
     try:
-        applycal(
+        applycal_kwargs: dict = dict(
             vis=ms_str,
             field=field,
             gaintable=gaintable,
@@ -222,6 +242,9 @@ def run(
             parang=parang,
             flagbackup=flagbackup,
         )
+        if spwmap is not None:
+            applycal_kwargs["spwmap"] = spwmap
+        applycal(**applycal_kwargs)
         corrected_written = True
     except Exception as e:
         raise ApplycalFailedError(
