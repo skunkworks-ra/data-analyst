@@ -74,6 +74,22 @@ class TestGeneratePriorcals:
         assert any("gain_curves.gc" in t for t in expected)
         assert any("opacities.opac" in t for t in expected)
 
+    def test_script_computes_opacity_from_weather(self, tmp_path):
+        """opac must be computed from the WEATHER subtable via plotweather and
+        passed to gencal(caltype='opac', parameter=...). A bare gencal opac call
+        with no parameter always yields a 0-row table, so the script must gate on
+        WEATHER and supply the computed zenith opacities."""
+        from ms_modify.priorcals import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        run(str(ms), str(workdir), execute=False)
+        script = (workdir / "priorcals.py").read_text()
+        assert "plotweather" in script
+        assert "WEATHER" in script
+        assert "parameter=taus" in script
+
     def test_script_gates_rq_on_syspower(self, tmp_path):
         """rq generation must be gated on SYSPOWER subtable presence (WIDAR
         evidence), not an observation-date cutoff — date proxies misclassify

@@ -59,7 +59,7 @@ Run with: python priorcals.py
 \"\"\"
 import os
 import shutil
-from casatasks import gencal
+from casatasks import gencal, plotweather
 from casatools import table
 
 ms_path = {ms_str!r}
@@ -103,24 +103,35 @@ if "gain_curves.gc" not in skip_reasons:
         skip_reasons["gain_curves.gc"] = "gencal returned 0-row table"
         print("  gc: empty — skipped")
 
-# 2 — Opacities
+# 2 — Opacities (per-SPW zenith opacity from the WEATHER subtable)
+# gencal(caltype='opac') is a *manual* caltype: it writes whatever values are
+# passed via parameter=. Called with no parameter it produces a 0-row table,
+# so the zenith opacities must be computed first (plotweather reads the WEATHER
+# subtable). Genuinely skipped only when there is no WEATHER subtable.
 print("Generating opacities...")
 if os.path.exists(opac_table):
     shutil.rmtree(opac_table)
-try:
-    gencal(vis=ms_path, caltable=opac_table, caltype="opac")
-except Exception as _exc:
-    print(f"  opac: gencal raised {{_exc!r}} — skipped")
+if _table_nrows(ms_path + "/WEATHER") == 0:
     skipped.append("opacities.opac")
-    skip_reasons["opacities.opac"] = str(_exc)
-if "opacities.opac" not in skip_reasons:
-    if _table_nrows(opac_table) > 0:
-        priorcals.append(opac_table)
-        print(f"  opac: {{opac_table}}")
-    else:
+    skip_reasons["opacities.opac"] = "no WEATHER subtable — cannot compute zenith opacity"
+    print("  opac: skipped (no WEATHER subtable)")
+else:
+    try:
+        taus = plotweather(vis=ms_path, doPlot=False)
+        spw_sel = ",".join(str(i) for i in range(len(taus)))
+        gencal(vis=ms_path, caltable=opac_table, caltype="opac", spw=spw_sel, parameter=taus)
+    except Exception as _exc:
+        print(f"  opac: raised {{_exc!r}} — skipped")
         skipped.append("opacities.opac")
-        skip_reasons["opacities.opac"] = "gencal returned 0-row table"
-        print("  opac: empty — skipped")
+        skip_reasons["opacities.opac"] = str(_exc)
+    if "opacities.opac" not in skip_reasons:
+        if _table_nrows(opac_table) > 0:
+            priorcals.append(opac_table)
+            print(f"  opac: {{opac_table}} (tau={{[round(t, 4) for t in taus]}})")
+        else:
+            skipped.append("opacities.opac")
+            skip_reasons["opacities.opac"] = "gencal returned 0-row table"
+            print("  opac: empty — skipped")
 
 # 3 — Requantizer (WIDAR data only; SYSPOWER subtable is written only by WIDAR)
 if _table_nrows(ms_path + "/SYSPOWER") > 0:
@@ -270,12 +281,36 @@ def run(
         skipped.append("gain_curves.gc")
         skip_reasons["gain_curves.gc"] = "gencal returned 0-row table"
 
-    # opac
-    if _run_gencal(opac_table, "opac", "opacities.opac"):
-        priorcals.append(opac_table)
-    else:
+    # opac — per-SPW zenith opacity computed from the WEATHER subtable via
+    # plotweather, then written with gencal(caltype='opac', parameter=taus).
+    # gencal opac is a *manual* caltype: without parameter it writes a 0-row
+    # table, so opacity must be computed first. Genuinely skipped only when
+    # there is no WEATHER subtable (e.g. some older/imported MSs).
+    casa_calls.append("tb.open(WEATHER) → nrows (opacity check)")
+    if _table_nrows(ms_str + "/WEATHER") == 0:
         skipped.append("opacities.opac")
-        skip_reasons["opacities.opac"] = "gencal returned 0-row table"
+        skip_reasons["opacities.opac"] = "no WEATHER subtable — cannot compute zenith opacity"
+    else:
+        try:
+            from casatasks import plotweather  # type: ignore[import]
+
+            casa_calls.append("casatasks.plotweather(doPlot=False) → zenith opacities")
+            taus = plotweather(vis=ms_str, doPlot=False)
+            spw_sel = ",".join(str(i) for i in range(len(taus)))
+            casa_calls.append(
+                f"casatasks.gencal(caltype='opac', spw='{spw_sel}', parameter=taus)"
+            )
+            gencal(vis=ms_str, caltable=opac_table, caltype="opac", spw=spw_sel, parameter=taus)
+        except Exception as exc:
+            warnings.append(f"opacity computation failed: {exc}")
+            skipped.append("opacities.opac")
+            skip_reasons["opacities.opac"] = str(exc)
+        if "opacities.opac" not in skip_reasons:
+            if _table_nrows(opac_table) > 0:
+                priorcals.append(opac_table)
+            else:
+                skipped.append("opacities.opac")
+                skip_reasons["opacities.opac"] = "gencal returned 0-row table"
 
     # rq — WIDAR data only. SYSPOWER is written only by the WIDAR correlator,
     # so its presence is the discriminator; an observation-date cutoff
