@@ -80,17 +80,18 @@ def _annotate_freq_mhz(freq_mhz: float) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _rfi_chunk_worker(args: tuple) -> dict[int, np.ndarray]:
+def _rfi_chunk_worker(args: tuple) -> tuple[dict[int, tuple], str | None]:
     """
-    Worker: reads FLAG + DATA_DESC_ID for a row range.
-    Returns {dd_id: channel_flag_count_array} where each array has length n_chan_max.
-    All shapes normalised to n_chan_max (zero-padded) so they can be stacked.
-    """
-    ms_path, start_row, n_rows, n_chan_max = args
+    Worker: reads FLAG for a row range of a SINGLE DATA_DESC_ID.
 
-    # dd_id → [flagged_per_channel, total_per_channel]
-    dd_flagged: dict[int, np.ndarray] = {}
-    dd_total: dict[int, np.ndarray] = {}
+    Reading one DDID at a time guarantees a uniform FLAG cell shape
+    [n_corr, n_chan] — a row range spanning DDIDs with different channel
+    counts cannot form a rectangular array and makes getcolslice raise.
+
+    Returns ({ddid: (flagged_per_chan, total_per_chan)}, error_str_or_None),
+    both arrays zero-padded to n_chan_max so chunks stack.
+    """
+    ms_path, ddid, start_row, n_rows, n_chan_max = args
 
     try:
         import casatools  # type: ignore[import]
@@ -98,40 +99,29 @@ def _rfi_chunk_worker(args: tuple) -> dict[int, np.ndarray]:
         tb = casatools.table()
         tb.open(ms_path, nomodify=True)
         try:
-            flag_chunk = tb.getcolslice(
-                "FLAG", blc=[0, 0], trc=[-1, -1], startrow=start_row, nrow=n_rows
-            )
-            ddid_chunk = tb.getcol("DATA_DESC_ID", startrow=start_row, nrow=n_rows)
+            sub = tb.query(f"DATA_DESC_ID == {ddid}")
+            try:
+                # incr is a required positional in this casatools build; [1,1] = no stride.
+                flag = sub.getcolslice(
+                    "FLAG", [0, 0], [-1, -1], [1, 1], startrow=start_row, nrow=n_rows
+                )
+            finally:
+                sub.close()
         finally:
             tb.close()
 
-        # flag_chunk shape: [n_corr, n_chan, n_rows_in_chunk]
-        n_corr, n_chan, n_chunk_rows = flag_chunk.shape
+        # flag shape: [n_corr, n_chan, n_rows_in_chunk] — uniform within one DDID.
+        n_corr, n_chan, n_chunk_rows = flag.shape
+        flagged = flag.sum(axis=(0, 2)).astype(np.int64)  # [n_chan]
+        total = np.full(n_chan, n_corr * n_chunk_rows, dtype=np.int64)
 
-        # Per-channel flag fraction: collapse over correlations, accumulate per ddid
-        # flagged_per_chan[row]: bool array [n_chan] — True if any corr is flagged
-        # Use sum over corr axis, then compare to n_corr for "all flagged"
-        # We count partial flags: fraction of (corr) elements flagged per (chan, row)
-
-        for row_idx in range(n_chunk_rows):
-            ddid = int(ddid_chunk[row_idx])
-            row_flags = flag_chunk[:, :, row_idx]  # [n_corr, n_chan]
-
-            # Per-channel: count flagged corr elements
-            chan_flagged = row_flags.sum(axis=0).astype(np.int64)  # [n_chan]
-            chan_total = np.full(n_chan, n_corr, dtype=np.int64)
-
-            if ddid not in dd_flagged:
-                dd_flagged[ddid] = np.zeros(n_chan_max, dtype=np.int64)
-                dd_total[ddid] = np.zeros(n_chan_max, dtype=np.int64)
-
-            dd_flagged[ddid][:n_chan] += chan_flagged
-            dd_total[ddid][:n_chan] += chan_total
-
-    except Exception:
-        pass
-
-    return {k: (dd_flagged[k], dd_total[k]) for k in dd_flagged}
+        flagged_pad = np.zeros(n_chan_max, dtype=np.int64)
+        total_pad = np.zeros(n_chan_max, dtype=np.int64)
+        flagged_pad[:n_chan] = flagged
+        total_pad[:n_chan] = total
+        return {ddid: (flagged_pad, total_pad)}, None
+    except Exception as exc:  # surface, don't silently drop the chunk
+        return {}, f"DDID {ddid} rows [{start_row}:{start_row + n_rows}]: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -200,17 +190,30 @@ def run(
     n_workers = max(
         1, min(int(os.environ.get("RADIO_MCP_WORKERS", _DEFAULT_WORKERS)), _MAX_WORKERS)
     )
-    chunk_size = max(1, n_total_rows // n_workers)
+
+    # Per-DDID row counts (a chunk must never span DDIDs — see worker docstring).
+    dd_row_counts: dict[int, int] = {}
+    with open_table(ms_str) as tb:
+        for ddid in range(len(dd_to_spw)):
+            sub = tb.query(f"DATA_DESC_ID == {ddid}")
+            try:
+                dd_row_counts[ddid] = sub.nrows()
+            finally:
+                sub.close()
+
+    # Partition each DDID's rows into chunks sized to spread across workers while
+    # bounding per-read memory.
+    target_chunk_rows = max(1, n_total_rows // n_workers)
     chunks = []
-    for i in range(n_workers):
-        start = i * chunk_size
-        size = chunk_size if i < n_workers - 1 else (n_total_rows - start)
-        if size > 0:
-            chunks.append((ms_str, start, size, n_chan_max))
+    for ddid, dd_rows in dd_row_counts.items():
+        for start in range(0, dd_rows, target_chunk_rows):
+            size = min(target_chunk_rows, dd_rows - start)
+            if size > 0:
+                chunks.append((ms_str, ddid, start, size, n_chan_max))
 
     casa_calls.append(
-        f"tb.getcolslice(FLAG) + tb.getcol(DATA_DESC_ID) "
-        f"in {len(chunks)} parallel chunks ({n_workers} workers)"
+        f"tb.query(DATA_DESC_ID) + getcolslice(FLAG) "
+        f"in {len(chunks)} per-DDID chunks ({n_workers} workers)"
     )
 
     # ------------------------------------------------------------------
@@ -229,7 +232,9 @@ def run(
     # ------------------------------------------------------------------
     dd_flagged_agg: dict[int, np.ndarray] = {}
     dd_total_agg: dict[int, np.ndarray] = {}
-    for result in chunk_results:
+    for result, err in chunk_results:
+        if err:
+            warnings.append(f"FLAG read chunk failed — {err}")
         for ddid, (nf, nt) in result.items():
             if ddid not in dd_flagged_agg:
                 dd_flagged_agg[ddid] = np.zeros(n_chan_max, dtype=np.int64)
@@ -243,8 +248,8 @@ def run(
     spw_flagged: dict[int, np.ndarray] = {}
     spw_total: dict[int, np.ndarray] = {}
     for ddid, spw_id in enumerate(dd_to_spw):
-        nf = dd_flagged_agg.get(ddid, np.zeros(n_chan_max))
-        nt = dd_total_agg.get(ddid, np.zeros(n_chan_max))
+        nf = dd_flagged_agg.get(ddid, np.zeros(n_chan_max, dtype=np.int64))
+        nt = dd_total_agg.get(ddid, np.zeros(n_chan_max, dtype=np.int64))
         if spw_id not in spw_flagged:
             spw_flagged[spw_id] = np.zeros(n_chan_max, dtype=np.int64)
             spw_total[spw_id] = np.zeros(n_chan_max, dtype=np.int64)

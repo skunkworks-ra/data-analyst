@@ -59,7 +59,7 @@ Run with: python priorcals.py
 \"\"\"
 import os
 import shutil
-from casatasks import gencal
+from casatasks import gencal, plotweather
 from casatools import table
 
 ms_path = {ms_str!r}
@@ -104,13 +104,19 @@ if "gain_curves.gc" not in skip_reasons:
         print("  gc: empty — skipped")
 
 # 2 — Opacities
+# gencal(caltype='opac') does NOT compute tau; it only writes the values passed
+# in parameter=. Derive per-SPW zenith opacities from the WEATHER table with
+# plotweather(doPlot=False), then feed them to gencal with a matching spw list.
 print("Generating opacities...")
 if os.path.exists(opac_table):
     shutil.rmtree(opac_table)
 try:
-    gencal(vis=ms_path, caltable=opac_table, caltype="opac")
+    _tau = list(plotweather(vis=ms_path, doPlot=False))
+    _spw = ",".join(str(_i) for _i in range(len(_tau)))
+    gencal(vis=ms_path, caltable=opac_table, caltype="opac", spw=_spw, parameter=_tau)
+    print(f"  opac: tau per spw = {{_tau}}")
 except Exception as _exc:
-    print(f"  opac: gencal raised {{_exc!r}} — skipped")
+    print(f"  opac: plotweather/gencal raised {{_exc!r}} — skipped")
     skipped.append("opacities.opac")
     skip_reasons["opacities.opac"] = str(_exc)
 if "opacities.opac" not in skip_reasons:
