@@ -590,9 +590,17 @@ class PostcalFlagInput(BaseModel):
         description="Drop-tier SpWs — fully flagged via manual command. Empty = drop nothing.",
     )
     datacolumn: str = Field(default="corrected", description="Column to flag on (default 'corrected').")
+    clip_sigma: float | None = Field(
+        default=5.0,
+        description="Per-SpW robust clip ceiling = median + clip_sigma*1.4826*MAD, computed per kept SpW. None disables.",
+    )
     clipmax: float | None = Field(
         default=None,
-        description="Optional |CORRECTED| ceiling (clipminmax=[0,clipmax]) applied first to kill egregious outliers.",
+        description="Flat |data| ceiling fallback, used only when clip_sigma is None.",
+    )
+    uvrange: str = Field(
+        default="",
+        description="Optional CASA uvrange applied to the clip only (e.g. '>2klambda') to protect short-spacing flux on extended sources.",
     )
     timedevscale: float = Field(default=5.0, description="rflag time deviation threshold.", gt=0.0)
     freqdevscale: float = Field(default=5.0, description="rflag frequency deviation threshold.", gt=0.0)
@@ -945,7 +953,9 @@ async def ms_postcal_flag(params: PostcalFlagInput) -> str:
         params.keep_spw,
         params.drop_spw,
         params.datacolumn,
+        params.clip_sigma,
         params.clipmax,
+        params.uvrange,
         params.timedevscale,
         params.freqdevscale,
         params.timecutoff,

@@ -31,6 +31,101 @@ from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, r
 
 TOOL_NAME = "ms_postcal_flag"
 
+_DATACOL_MAP = {
+    "corrected": "CORRECTED_DATA",
+    "data": "DATA",
+    "model": "MODEL_DATA",
+}
+
+
+def _parse_spw_ids(spw_sel: str) -> list[int]:
+    """Parse a plain comma-separated SpW selection into ints.
+
+    Channel/range syntax ('0:5~10', '0~3') is not supported here — the robust
+    clip is computed per whole SpW. Returns the ints it could parse.
+    """
+    ids: list[int] = []
+    for tok in spw_sel.split(","):
+        tok = tok.strip()
+        if tok.isdigit():
+            ids.append(int(tok))
+    return ids
+
+
+def _robust_clip_thresholds(
+    ms_str: str,
+    field_sel: str,
+    keep_spw_ids: list[int],
+    datacolumn: str,
+    clip_sigma: float,
+    max_samples: int = 5000,
+    row_chunk: int = 20_000,
+) -> tuple[dict[int, float], list[str]]:
+    """Per-SpW robust clip ceiling = median + clip_sigma * 1.4826 * MAD.
+
+    Memory-bounded: one reservoir sample of |datacolumn| per SpW (pooled over
+    channels/correlations), scoped to the selected fields and kept SpWs.
+    Returns (thresholds_by_spw, warnings).
+    """
+    import numpy as np
+
+    from ms_inspect.tools.spw_amp_severity import _ChanReservoir
+    from ms_inspect.util.casa_context import open_table
+
+    warnings: list[str] = []
+    col = _DATACOL_MAP.get(datacolumn.lower(), datacolumn)
+    rng = np.random.default_rng(1234)
+
+    # field selection → ids
+    with open_table(ms_str + "/FIELD") as tb:
+        names = list(tb.getcol("NAME"))
+    wanted = {n.strip() for n in field_sel.split(",") if n.strip()}
+    field_ids: list[int] = []
+    for sel in wanted:
+        if sel.isdigit():
+            field_ids.append(int(sel))
+        else:
+            field_ids.extend(i for i, nm in enumerate(names) if nm == sel)
+
+    with open_table(ms_str + "/DATA_DESCRIPTION") as tb:
+        dd_to_spw = [int(x) for x in tb.getcol("SPECTRAL_WINDOW_ID")]
+
+    keep = set(keep_spw_ids)
+    reservoirs: dict[int, _ChanReservoir] = {s: _ChanReservoir(max_samples) for s in keep}
+    fid_clause = ""
+    if field_ids:
+        fid_clause = " && FIELD_ID IN [" + ",".join(str(i) for i in sorted(set(field_ids))) + "]"
+
+    with open_table(ms_str) as tb:
+        if col not in set(tb.colnames()):
+            warnings.append(f"{col} not present; robust clip skipped.")
+            return {}, warnings
+        for ddid, spw in enumerate(dd_to_spw):
+            if spw not in keep:
+                continue
+            sub = tb.query(f"DATA_DESC_ID == {ddid}{fid_clause}")
+            try:
+                n = int(sub.nrows())
+                if n == 0:
+                    continue
+                for start in range(0, n, row_chunk):
+                    nr = min(row_chunk, n - start)
+                    amp = np.abs(sub.getcol(col, startrow=start, nrow=nr))
+                    flg = sub.getcol("FLAG", startrow=start, nrow=nr).astype(bool)
+                    vals = amp[(~flg) & (amp > 0)]
+                    reservoirs[spw].add(vals.ravel(), rng)
+            finally:
+                sub.close()
+
+    thresholds: dict[int, float] = {}
+    for spw, res in reservoirs.items():
+        st = res.stats()
+        if st is None:
+            warnings.append(f"SpW {spw} had no unflagged {col}; robust clip skipped for it.")
+            continue
+        thresholds[spw] = round(st["median"] + clip_sigma * st["robust_sigma"], 6)
+    return thresholds, warnings
+
 
 def _build_cmds_content(
     field: str,
@@ -38,15 +133,27 @@ def _build_cmds_content(
     drop_spw: str,
     datacolumn: str,
     clipmax: float | None,
+    clip_thresholds: dict[int, float] | None,
+    uvrange: str,
     timedevscale: float,
     freqdevscale: float,
     timecutoff: float,
     freqcutoff: float,
 ) -> str:
     lines: list[str] = []
-    if clipmax is not None:
+    uv_clause = f" uvrange={uvrange!r}" if uvrange else ""
+    if clip_thresholds:
+        # Per-SpW robust clip: median + clip_sigma*robust_sigma, computed per SpW.
+        # Emitted first so the autoflaggers compute their statistics on clipped data.
+        for spw_id in sorted(clip_thresholds):
+            thr = clip_thresholds[spw_id]
+            lines.append(
+                f"mode='clip' field={field!r} spw={str(spw_id)!r}{uv_clause} "
+                f"datacolumn={datacolumn!r} clipminmax=[0.0,{thr}] clipoutside=True"
+            )
+    elif clipmax is not None:
         lines.append(
-            f"mode='clip' field={field!r} datacolumn={datacolumn!r} "
+            f"mode='clip' field={field!r}{uv_clause} datacolumn={datacolumn!r} "
             f"clipminmax=[0.0,{clipmax}] clipoutside=True"
         )
     spw_clause = f" spw={keep_spw!r}" if keep_spw else ""
@@ -98,7 +205,9 @@ def run(
     keep_spw: str = "",
     drop_spw: str = "",
     datacolumn: str = "corrected",
+    clip_sigma: float | None = 5.0,
     clipmax: float | None = None,
+    uvrange: str = "",
     timedevscale: float = 5.0,
     freqdevscale: float = 5.0,
     timecutoff: float = 4.0,
@@ -121,9 +230,14 @@ def run(
                       manual command so downstream imaging/calibration respects it.
                       Empty = drop nothing.
         datacolumn:   Column to flag on (default 'corrected').
-        clipmax:      Optional ceiling on |CORRECTED| (clipminmax=[0, clipmax],
-                      clipoutside=True) applied first to remove egregious outliers
-                      before the autoflaggers compute statistics. None = no clip.
+        clip_sigma:   Per-SpW robust clip: ceiling = median + clip_sigma*1.4826*MAD,
+                      computed per kept SpW from the current data (default 5.0). This
+                      is the principled, dataset-adaptive replacement for a flat clip.
+                      Set None to disable (then clipmax is used if given).
+        clipmax:      Flat |data| ceiling fallback, used only when clip_sigma is None.
+        uvrange:      Optional CASA uvrange applied to the clip only (e.g. '>2klambda').
+                      The robust clip is uv-blind; on an extended source scope it to
+                      longer baselines so real short-spacing flux is not clipped.
         timedevscale: rflag time deviation threshold (default 5.0).
         freqdevscale: rflag frequency deviation threshold (default 5.0).
         timecutoff:   tfcrop time deviation threshold (default 4.0).
@@ -164,12 +278,36 @@ def run(
     cmds_path = str(workdir_path / "postcal_flag_cmds.txt")
     script_path = str(workdir_path / "postcal_flag.py")
 
+    # Per-SpW robust clip thresholds (median + clip_sigma*robust_sigma), computed
+    # from the current data. Takes precedence over the flat clipmax fallback.
+    clip_thresholds: dict[int, float] | None = None
+    if clip_sigma is not None:
+        keep_ids = _parse_spw_ids(keep_spw)
+        if not keep_ids:
+            warnings.append(
+                "clip_sigma set but keep_spw is empty or not a plain SpW-id list; "
+                "robust per-SpW clip skipped (use clipmax for a flat clip)."
+            )
+        else:
+            try:
+                clip_thresholds, clip_warn = _robust_clip_thresholds(
+                    ms_str, field, keep_ids, datacolumn, clip_sigma
+                )
+                warnings.extend(clip_warn)
+                casa_calls.append(
+                    f"robust clip: per-SpW median + {clip_sigma}*1.4826*MAD over {field!r}"
+                )
+            except Exception as exc:  # noqa: BLE001 - surface, do not abort script write
+                warnings.append(f"Robust clip computation failed ({exc}); no clip emitted.")
+
     cmds_content = _build_cmds_content(
         field,
         keep_spw,
         drop_spw,
         datacolumn,
         clipmax,
+        clip_thresholds,
+        uvrange,
         timedevscale,
         freqdevscale,
         timecutoff,
@@ -189,7 +327,10 @@ def run(
         "keep_spw": keep_spw,
         "drop_spw": drop_spw,
         "datacolumn": datacolumn,
+        "clip_sigma": clip_sigma,
+        "clip_thresholds": clip_thresholds,
         "clipmax": clipmax,
+        "uvrange": uvrange,
         "rflag_timedevscale": timedevscale,
         "rflag_freqdevscale": freqdevscale,
         "tfcrop_timecutoff": timecutoff,

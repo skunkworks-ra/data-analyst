@@ -91,6 +91,22 @@ For SpWs you keep, `estimated_discardable_frac` and per-channel
 (or run rflag/tfcrop on CORRECTED for the phase cal + target) rather than
 dropping the SpW — this preserves bandwidth and SNR.
 
+`ms_postcal_flag` applies, in one pass: a per-SpW robust clip
+(`clip_sigma`, default 5 → ceiling = median + 5·1.4826·MAD per SpW), then
+tfcrop + rflag, then the manual SpW drop. The robust clip is the principled
+replacement for a flat clip ceiling: it adapts to each SpW's own floor and
+removes the single strong outliers that imprint sinusoidal **ripples/striping**
+across the image (one bad uv sample = one 2-D sine wave). If you see regular
+stripes in a low-noise image, suspect a surviving strong-amplitude outlier and
+tighten the clip.
+
+> **Extended-source warning.** The robust clip is **uv-blind**. On an extended
+> source the per-SpW median is noise-dominated, so a 5σ ceiling can land near
+> the genuine short-spacing flux and clip real emission — watch the image peak
+> before/after. Scope the clip to long baselines with `uvrange` (e.g.
+> `'>2klambda'`) so the short spacings are left to rflag, or raise `clip_sigma`.
+> On a faint/compact field this caveat does not apply.
+
 ---
 
 ## Step 4 — Image, then revisit the grey tier

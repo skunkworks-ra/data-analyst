@@ -272,7 +272,7 @@ Functions are also callable directly by skills and scripts.
 | `ms_setjy_polcal` | `ms_modify/setjy_polcal.py` | Set polarisation angle models for pol calibrators |
 | `ms_initial_bandpass` | `ms_modify/initial_bandpass.py` | gaincal → bandpass → applycal; populates CORRECTED |
 | `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass; **requires** explicit `field` (only the field with valid CORRECTED) |
-| `ms_postcal_flag` | `ms_modify/postcal_flag.py` | Post-cal RFI flagging on phase cal + target CORRECTED in one list-mode pass: optional clip → tfcrop + rflag on kept SpWs → manual flag of drop-tier SpWs. Consumes `ms_spw_amp_severity` triage (skill 13); **requires** explicit `field` |
+| `ms_postcal_flag` | `ms_modify/postcal_flag.py` | Post-cal RFI flagging on phase cal + target CORRECTED in one list-mode pass: per-SpW robust clip (median + `clip_sigma`·1.4826·MAD, default 5σ; `uvrange`-scopable for extended sources) → tfcrop + rflag on kept SpWs → manual flag of drop-tier SpWs. Consumes `ms_spw_amp_severity` triage (skill 13); **requires** explicit `field` |
 | `ms_flag_caltable` | `ms_modify/flag_caltable.py` | Autoflag a caltable's solutions (mode auto-routed from VisCal: B→tfcrop, G/T/D→rflag, K refused) at a gentle sigma; reports flagged fraction before/after |
 | `ms_apply_rflag` | `ms_modify/rflag.py` | General-purpose rflag pass |
 | `ms_gaincal` | `ms_modify/gaincal.py` | Phase/amplitude/cross-hand delay gain calibration (supports gaintype='KCROSS' with smodel) |
