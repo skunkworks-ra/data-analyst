@@ -1414,6 +1414,13 @@ class TcleanInput(BaseModel):
     workdir: str = Field(
         ..., description="Existing directory for the generated script.", min_length=1
     )
+    spw: str = Field(
+        default="",
+        description=(
+            "CASA SPW selection (default '' = all SPWs). Use to exclude "
+            "RFI-dominated SPWs, e.g. '0~8,10~15' to drop SPW 9."
+        ),
+    )
     stokes: str = Field(
         default="I",
         description="Stokes products to image. Default 'I'. Also accepts 'IV', 'IQUV', 'RR', 'LL', etc.",
@@ -1544,6 +1551,7 @@ async def ms_tclean(params: TcleanInput) -> str:
         params.imagename:   Base path for image output (no suffix).
         params.field:       CASA field selection for science target(s).
         params.workdir:     Existing directory for the generated script.
+        params.spw:         CASA SPW selection (default '' = all SPWs).
         params.stokes:      Stokes products (default 'I').
         params.specmode:    'mfs' or 'cube'.
         params.deconvolver: 'hogbom' or 'mtmfs'.
@@ -1568,6 +1576,7 @@ async def ms_tclean(params: TcleanInput) -> str:
         params.imagename,
         params.field,
         params.workdir,
+        spw=params.spw,
         stokes=params.stokes,
         specmode=params.specmode,
         deconvolver=params.deconvolver,
