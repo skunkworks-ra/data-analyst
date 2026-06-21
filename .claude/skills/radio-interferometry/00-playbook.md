@@ -15,6 +15,7 @@ Find your current state in the left column. Run the right-column tool
 | Calibration solve done (G/B/K/fluxscale) | For pol: `/polcal` or read `09-polcal-execution.md`; else `/image` |
 | Polcal done | `/image` with stokes='IQUV' or read `11-imaging.md` |
 | First-pass image done | Read `12-selfcal.md` — one-pass phase selfcal with before/after assessment |
+| Final applycal done, RFI on target/phase cal | Read `13-postcal-rfi-flagging.md` — SpW severity triage + post-cal flagging |
 
 ## Unknown state? Use ms_workflow_status(ms_path, workdir) — it returns a next_recommended_step label.
 
@@ -31,5 +32,6 @@ Find your current state in the left column. Run the right-column tool
 - 10-precal-workflow.md — pre-calibration pipeline
 - 11-imaging.md — first-pass imaging
 - 12-selfcal.md — single-pass phase selfcal with before/after DR comparison
+- 13-postcal-rfi-flagging.md — SpW severity triage (drop vs salvage) + post-cal flagging on target/phase cal
 
 Read each file with the Read tool when you reach that stage — do not load everything up front.

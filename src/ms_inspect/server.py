@@ -48,6 +48,7 @@ from ms_inspect.tools import (
     scans,
     shadowing,
     spectral,
+    spw_amp_severity,
     verify_import,
     workflow_status,
 )
@@ -168,6 +169,31 @@ class RfiChannelStatsInput(BaseModel):
         default=1,
         description="Minimum contiguous bad channels to report as a range (default 1).",
         ge=1,
+    )
+
+
+class SpwAmpSeverityInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
+    datacolumn: str = Field(
+        default="CORRECTED_DATA",
+        description="Column to measure: 'CORRECTED_DATA' (default), 'DATA', or 'MODEL_DATA'.",
+    )
+    field: str = Field(default="", description="CASA field selection (empty = all fields).")
+    sigma: float = Field(
+        default=5.0,
+        description="N in elevation threshold band_floor + N*robust_sigma (drives discardable-fraction estimate).",
+        gt=0.0,
+    )
+    max_samples_per_chan: int = Field(
+        default=5000,
+        description="Reservoir sample size per channel (memory knob).",
+        ge=100,
+    )
+    row_chunk: int = Field(
+        default=20_000,
+        description="Rows read per block (memory knob; smaller = less RAM, slower).",
+        ge=1000,
     )
 
 
@@ -1063,6 +1089,53 @@ async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> str:
         JSON with per_spw array of bad channel ranges and RFI candidate annotations.
     """
     return await _run_tool(rfi.run, params.ms_path, params.flag_threshold, params.min_bad_chan_run)
+
+
+@mcp.tool(
+    name="ms_spw_amp_severity",
+    description=(
+        "Per-channel robust amplitude statistics (median, MAD, robust-sigma, min, max) "
+        "of a data column, aggregated per SpW across all fields. Estimates how much of "
+        "each SpW is RFI-dominated and discardable. Read-only; no verdict, no flagging."
+    ),
+    annotations={
+        "title": "SpW Amplitude Severity",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> str:
+    """
+    Robust per-channel/per-SpW amplitude statistics for RFI-severity assessment.
+
+    Single memory-bounded pass: reads the data column in row chunks, one DDID at
+    a time, keeping a uniform reservoir sample plus exact min/max/counts per
+    channel. Returns per-SpW band floor, fraction of elevated channels, peak-to-
+    floor, and an estimated discardable fraction. Run on two columns to compare
+    before/after a flagging or applycal step.
+
+    Args:
+        params.ms_path:              Path to the Measurement Set.
+        params.datacolumn:           'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA'.
+        params.field:                CASA field selection (empty = all).
+        params.sigma:                Elevation threshold multiplier (default 5.0).
+        params.max_samples_per_chan: Reservoir size per channel (default 5000).
+        params.row_chunk:            Rows per read block (default 20000).
+
+    Returns:
+        JSON with per_spw → per-channel robust stats and per-SpW severity aggregates.
+    """
+    return await _run_tool(
+        spw_amp_severity.run,
+        params.ms_path,
+        params.datacolumn,
+        params.field,
+        params.sigma,
+        params.max_samples_per_chan,
+        params.row_chunk,
+    )
 
 
 @mcp.tool(

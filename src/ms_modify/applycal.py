@@ -81,7 +81,7 @@ def run(
     interp: list[str] | None = None,
     spwmap: list[list[int]] | None = None,
     calwt: bool = False,
-    applymode: str = "calflagstrict",
+    applymode: str = "calonly",
     parang: bool = True,
     flagbackup: bool = False,
     execute: bool = False,
@@ -107,8 +107,10 @@ def run(
                     multiband-delay choice); not telescope-general.
         calwt:      Calibrate the weights (default False — VLA weights are not
                     properly normalised; use statwt before imaging instead).
-        applymode:  'calflagstrict' flags data with missing solutions (recommended).
-                    'calonly' applies without flagging.
+        applymode:  'calonly' (default) applies calibration without flagging, so
+                    post-calibration RFI flagging (ms_postcal_flag, skill 13) owns the
+                    FLAG column. Use 'calflagstrict' to additionally flag data with
+                    missing/flagged solutions at apply time.
         parang:     Apply parallactic angle correction (default True).
         flagbackup: Save a flag backup before applying (default False; set True
                     for the first applycal call on the flux calibrator).

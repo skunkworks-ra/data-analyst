@@ -227,6 +227,7 @@ Environment variable reference:
 |------|--------|-------------|
 | `ms_refant` | `tools/refant.py` | Ranked reference antenna list by geometry + flag fraction heuristics |
 | `ms_rfi_channel_stats` | `tools/rfi.py` | Per-channel flag fractions; identifies persistent RFI bands |
+| `ms_spw_amp_severity` | `tools/spw_amp_severity.py` | Robust per-channel amplitude stats (median/MAD/min/max) of any data column, aggregated per SpW. Severity = band_floor vs a clean-SpW anchor (RFI-dominated drop signal) + estimated_discardable_frac (localized-RFI magnitude). Memory-bounded reservoir sampling. |
 | `ms_pol_cal_feasibility` | `tools/pol_cal_feasibility.py` | Parallactic angle spread + D-term feasibility gate |
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | `tools/corrected_stats.py` | Per-field parallel-hand amplitude (median/robust-std/p95) + phase RMS of a data column, **vector-averaged over the channel range** (so faint sources are not noise-biased). Post-applycal calibration sanity check. |
@@ -271,6 +272,7 @@ Functions are also callable directly by skills and scripts.
 | `ms_setjy_polcal` | `ms_modify/setjy_polcal.py` | Set polarisation angle models for pol calibrators |
 | `ms_initial_bandpass` | `ms_modify/initial_bandpass.py` | gaincal → bandpass → applycal; populates CORRECTED |
 | `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass; **requires** explicit `field` (only the field with valid CORRECTED) |
+| `ms_postcal_flag` | `ms_modify/postcal_flag.py` | Post-cal RFI flagging on phase cal + target CORRECTED in one list-mode pass: optional clip → tfcrop + rflag on kept SpWs → manual flag of drop-tier SpWs. Consumes `ms_spw_amp_severity` triage (skill 13); **requires** explicit `field` |
 | `ms_flag_caltable` | `ms_modify/flag_caltable.py` | Autoflag a caltable's solutions (mode auto-routed from VisCal: B→tfcrop, G/T/D→rflag, K refused) at a gentle sigma; reports flagged fraction before/after |
 | `ms_apply_rflag` | `ms_modify/rflag.py` | General-purpose rflag pass |
 | `ms_gaincal` | `ms_modify/gaincal.py` | Phase/amplitude/cross-hand delay gain calibration (supports gaintype='KCROSS' with smodel) |
@@ -448,6 +450,7 @@ The skill is split into focused files to stay under the 200-line context limit:
 | `10-precal-workflow.md` | Pre-calibration pipeline (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
 | `11-imaging.md` | First-pass continuum/cube imaging with derived tclean parameters and ms_image_stats gate |
 | `12-selfcal.md` | Single-pass phase selfcal with before/after DR comparison and stop-and-recommend gate |
+| `13-postcal-rfi-flagging.md` | Post-cal RFI flagging on target/phase cal + SpW severity triage (drop vs salvage), thresholds read off the dataset's own distribution |
 
 ### MS simulator
 

@@ -27,6 +27,7 @@ from ms_modify import (
     initial_rflag,
     intents,
     polcal,
+    postcal_flag,
     preflag,
     priorcals,
     rflag,
@@ -565,6 +566,44 @@ class ApplyInitialRflagInput(BaseModel):
     )
 
 
+class PostcalFlagInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(
+        ..., description="Path to the MS (CORRECTED populated on the selected fields).", min_length=1
+    )
+    workdir: str = Field(..., description="Existing directory for generated scripts.", min_length=1)
+    field: str = Field(
+        ...,
+        description=(
+            "REQUIRED. The phase calibrator and/or science target whose CORRECTED column "
+            "is valid after the final applycal. An all-field pass over fields without valid "
+            "CORRECTED flags almost everything."
+        ),
+        min_length=1,
+    )
+    keep_spw: str = Field(
+        default="",
+        description="SpWs being KEPT — tfcrop + rflag run on these to salvage localized RFI. Empty = all.",
+    )
+    drop_spw: str = Field(
+        default="",
+        description="Drop-tier SpWs — fully flagged via manual command. Empty = drop nothing.",
+    )
+    datacolumn: str = Field(default="corrected", description="Column to flag on (default 'corrected').")
+    clipmax: float | None = Field(
+        default=None,
+        description="Optional |CORRECTED| ceiling (clipminmax=[0,clipmax]) applied first to kill egregious outliers.",
+    )
+    timedevscale: float = Field(default=5.0, description="rflag time deviation threshold.", gt=0.0)
+    freqdevscale: float = Field(default=5.0, description="rflag frequency deviation threshold.", gt=0.0)
+    timecutoff: float = Field(default=4.0, description="tfcrop time deviation threshold.", gt=0.0)
+    freqcutoff: float = Field(default=4.0, description="tfcrop frequency deviation threshold.", gt=0.0)
+    execute: bool = Field(
+        default=False,
+        description="If False (default), write scripts and return. If True, run flagdata(mode='list') in-process.",
+    )
+
+
 class FlagCaltableInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     caltable_path: str = Field(
@@ -859,6 +898,63 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
 
 
 @mcp.tool(
+    name="ms_postcal_flag",
+    description=(
+        "Post-calibration RFI flagging on the phase calibrator and science target. "
+        "One atomic flagdata(mode='list') pass on CORRECTED: optional clip, then "
+        "tfcrop + rflag on the kept SpWs (salvage localized RFI), then a manual flag "
+        "of the drop-tier SpWs. Consumes the SpW triage from ms_spw_amp_severity."
+    ),
+    annotations={
+        "title": "Post-Calibration RFI Flagging",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_postcal_flag(params: PostcalFlagInput) -> str:
+    """
+    Post-calibration RFI flagging on target + phase calibrator CORRECTED.
+
+    Extends flagging to the fields the pre-cal pipeline never cleaned and bakes
+    the SpW-triage decision into the FLAG column. Generates postcal_flag_cmds.txt
+    + postcal_flag.py; runs in-process when execute=True. flagbackup=True saves a
+    versioned backup before flagging.
+
+    Args:
+        params.ms_path:      Path to the MS (CORRECTED on the selected fields).
+        params.workdir:      Existing directory for generated scripts.
+        params.field:        REQUIRED. Phase cal and/or target with valid CORRECTED.
+        params.keep_spw:     SpWs to salvage (tfcrop + rflag). Empty = all.
+        params.drop_spw:     Drop-tier SpWs to fully flag. Empty = none.
+        params.datacolumn:   Column to flag on (default 'corrected').
+        params.clipmax:      Optional |CORRECTED| ceiling applied first.
+        params.timedevscale/freqdevscale: rflag thresholds (default 5.0).
+        params.timecutoff/freqcutoff:     tfcrop thresholds (default 4.0).
+        params.execute:      Generate scripts only (False) or run in-process (True).
+
+    Returns:
+        JSON with cmds_path, script_path, selections, and (if execute=True) flags_applied.
+    """
+    return _run_tool(
+        postcal_flag.run,
+        params.ms_path,
+        params.workdir,
+        params.field,
+        params.keep_spw,
+        params.drop_spw,
+        params.datacolumn,
+        params.clipmax,
+        params.timedevscale,
+        params.freqdevscale,
+        params.timecutoff,
+        params.freqcutoff,
+        params.execute,
+    )
+
+
+@mcp.tool(
     name="ms_flag_caltable",
     description=(
         "Autoflag a caltable's solutions (rflag/tfcrop, auto-routed from VisCal type) "
@@ -1069,10 +1165,11 @@ class ApplycalInput(BaseModel):
         ),
     )
     applymode: str = Field(
-        default="calflagstrict",
+        default="calonly",
         description=(
-            "'calflagstrict' flags data with missing solutions (recommended). "
-            "'calonly' applies without additional flagging."
+            "'calonly' (default) applies calibration without flagging, leaving the FLAG "
+            "column to post-cal RFI flagging (ms_postcal_flag, skill 13). 'calflagstrict' "
+            "additionally flags data with missing/flagged solutions at apply time."
         ),
     )
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
@@ -1333,8 +1430,8 @@ async def ms_fluxscale(params: FluxscaleInput) -> str:
     name="ms_applycal",
     description=(
         "Apply calibration tables to a field and populate CORRECTED_DATA. "
-        "Default applymode='calflagstrict' flags data with missing solutions. "
-        "calwt=False is correct for VLA."
+        "Default applymode='calonly' leaves flagging to post-cal RFI flagging "
+        "(ms_postcal_flag). calwt=False is correct for VLA."
     ),
     annotations={
         "title": "Apply Calibration",
@@ -1353,8 +1450,10 @@ async def ms_applycal(params: ApplycalInput) -> str:
       Phase cal:  gainfield=[..., phase_field], interp=[..., 'nearest']
       Target:     gainfield=[..., phase_field], interp=[..., 'linear']
 
-    Uses applymode='calflagstrict' by default — data with missing solutions
-    are flagged rather than left uncorrected. Set calwt=False for VLA data.
+    Uses applymode='calonly' by default — calibration is applied without
+    flagging, so post-cal RFI flagging (ms_postcal_flag, skill 13) owns the FLAG
+    column. Use 'calflagstrict' to flag missing-solution data at apply time.
+    Set calwt=False for VLA data.
 
     Args:
         params.ms_path:    Path to the Measurement Set.
@@ -1364,7 +1463,7 @@ async def ms_applycal(params: ApplycalInput) -> str:
         params.gainfield:  Per-table field selection for solution rows.
         params.interp:     Per-table interpolation mode.
         params.calwt:      Calibrate weights (default False for VLA).
-        params.applymode:  'calflagstrict' (default) or 'calonly'.
+        params.applymode:  'calonly' (default) or 'calflagstrict'.
         params.parang:     Parallactic angle correction (default True).
         params.flagbackup: Save flag backup first (default False).
         params.execute:    Generate script only (False) or run in-process (True).
