@@ -16,6 +16,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect.exceptions import RadioMSError
+from ms_inspect.util.formatting import compact_fields
 from ms_modify import (
     __version__,
     applycal,
@@ -180,9 +181,9 @@ def _run_tool(tool_fn, *args, **kwargs) -> str:
     """
     try:
         result = tool_fn(*args, **kwargs)
-        return json.dumps(result, indent=2, default=str)
+        return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
     except RadioMSError as e:
-        return json.dumps(e.to_dict(), indent=2)
+        return json.dumps(e.to_dict(), separators=(",", ":"))
 
 
 # ---------------------------------------------------------------------------

@@ -53,6 +53,7 @@ from ms_inspect.tools import (
     workflow_status,
 )
 from ms_inspect.util import phase_cal_catalog as _pcc
+from ms_inspect.util.formatting import compact_fields
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -362,8 +363,13 @@ class CalsolStatsInput(BaseModel):
         default=5.0, ge=0.0, description="Amplitude outlier threshold in sigma (default 5.0)."
     )
     verbosity: str = Field(
-        default="full",
-        description="'full' (default) or 'compact'. Compact strips field() wrappers.",
+        default="compact",
+        description=(
+            "'compact' (default) returns per-antenna scalar summaries (averaged over "
+            "spw/field) plus outliers — sufficient for gate decisions. 'full' returns the "
+            "complete [n_ant, n_spw, n_field] matrices inline (large). Full detail is always "
+            "written to the NPZ sidecar regardless and is queryable via ms_calsol_stats_detail."
+        ),
     )
 
 
@@ -469,9 +475,9 @@ def _run_tool_sync(tool_fn, *args, **kwargs) -> str:
     """Run tool_fn synchronously; called from a thread via _run_tool."""
     try:
         result = tool_fn(*args, **kwargs)
-        return json.dumps(result, indent=2, default=str)
+        return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
     except RadioMSError as e:
-        return json.dumps(e.to_dict(), indent=2)
+        return json.dumps(e.to_dict(), separators=(",", ":"))
 
 
 async def _run_tool(tool_fn, *args, **kwargs) -> str:
@@ -1736,7 +1742,7 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
                 + (f" at band {params.band_code}/{params.array_config}" if params.band_code else "")
             ],
         }
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=(",", ":"))
 
     e = match.entry
     band_data: dict | None = None
@@ -1768,7 +1774,7 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
         },
         "warnings": [],
     }
-    return json.dumps(result, indent=2)
+    return json.dumps(result, separators=(",", ":"))
 
 
 # ---------------------------------------------------------------------------
