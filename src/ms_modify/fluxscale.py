@@ -28,6 +28,29 @@ from ms_modify.exceptions import FluxscaleFailedError
 TOOL_NAME = "ms_fluxscale"
 
 
+def _resolve_field_ids(caltable: str, names: list[str]) -> list[str]:
+    """Map field names to the field IDs that actually carry solutions in caltable.
+
+    Guards the duplicate-name case (an empty placeholder field sharing a name
+    with the real one): only IDs present in the caltable's FIELD_ID are returned,
+    so fluxscale gets an unambiguous id selection instead of a colliding name.
+    """
+    from ms_inspect.util.casa_context import open_table
+
+    with open_table(str(Path(caltable) / "FIELD")) as tb:
+        id_to_name = {i: str(n) for i, n in enumerate(tb.getcol("NAME"))}
+    with open_table(caltable) as tb:
+        present = {int(x) for x in tb.getcol("FIELD_ID")}
+    out: list[str] = []
+    for nm in names:
+        ids = [fid for fid, fn in id_to_name.items() if fn == nm and fid in present]
+        if ids:
+            out.extend(str(fid) for fid in ids)
+        else:
+            out.append(nm)
+    return out
+
+
 def _table_exists(path: str) -> bool:
     p = Path(path)
     return p.exists() and p.is_dir() and any(p.iterdir())
@@ -117,6 +140,10 @@ def run(
             f"Input caltable not found: {caltable}. Run ms_gaincal first.",
             ms_path=ms_path,
         )
+
+    # Resolve names → field IDs present in the caltable (handles duplicate names).
+    reference = _resolve_field_ids(caltable, [reference])[0]
+    transfer = _resolve_field_ids(caltable, transfer)
 
     script_path = str(workdir_path / "fluxscale.py")
     Path(script_path).write_text(
