@@ -26,7 +26,8 @@ Find your current state in the left column. Run the right-column tool
 - 04-diagnostic-reasoning.md — report template, go/no-go
 - 05-calibrator-science.md — flux standards, resolved sources
 - 06-failure-modes.md — recovery paths
-- 07-calibration-execution.md — solve sequence (728 lines — read only when you reach calibration)
+- 07-calibration-execution.md — solve sequence (read only when you reach calibration)
+- 07b-gaincal-recovery.md — gaincal recovery trees + escalation (read only when a Step 4b post-flight check fails)
 - 08-pband-specifics.md — VLA P-band
 - 09-polcal-execution.md — polarization
 - 10-precal-workflow.md — pre-calibration pipeline
