@@ -149,6 +149,57 @@ highest-power coefficient — a silent correctness bug.
 
 ---
 
+## Phase calibrator catalog lookup
+
+The bundled NRAO VLA Calibrator Manual (`PhaseCalList.txt`, 1861 sources) is
+accessible via `ms_phase_cal_lookup`. Use it to:
+
+1. **Confirm a field is a known phase cal** — cross-match its J2000 position
+   against the catalog. A match within 0.5° with pos_accuracy A or B is reliable.
+2. **Check viability at your band and array config** — quality codes P/S are
+   usable; W is phase-only; X means do not use.
+3. **Get UV limits** — if `uvmax_kl` is set, the source is resolved at long
+   baselines. Pass this to `gaincal(uvrange='<N>klambda')`.
+
+### Typical call pattern
+
+```
+ms_phase_cal_lookup(
+    ra_deg=<field RA from ms_field_list>,
+    dec_deg=<field Dec from ms_field_list>,
+    band_code='L',          # from ms_spectral_window_list centre frequency
+    array_config='B',       # from ms_observation_info or antenna spacing
+    max_sep_deg=0.5,
+    min_quality='S',        # raise to 'P' for amplitude calibration
+)
+```
+
+### Reading the result
+
+- `status=NOT_FOUND` — the field is not a known VLA phase calibrator at this
+  band/config. Check whether it is a target field mislabelled as a calibrator,
+  or a southern-hemisphere source not in the VLA catalog.
+- `quality_at_config='P'` — excellent. Use for phase and amplitude calibration.
+- `quality_at_config='S'` — good. Use for both phase and amplitude calibration
+  but expect 3–10% closure errors; inspect solutions after `gaincal`.
+- `quality_at_config='W'` — phase-only. Do not use for amplitude calibration
+  (`gaincal(calmode='p')` only). `fluxscale` will not give reliable results.
+- `quality_at_config='X'` — do not use. Too resolved or too weak. The source
+  may still be usable with a component model if one is available.
+- `uvmin_kl` set — confused at short spacings (extended structure). Pass
+  `uvrange='>Nklambda'` to `gaincal`.
+- `uvmax_kl` set — resolved at long spacings. Pass `uvrange='<Nklambda'`
+  to `gaincal`. Critical at A-config and X/K/Q bands.
+
+### When to call this
+
+During Phase 1 orientation (after `ms_field_list`), for every field whose
+`calibrator_role` or `calibrator_match` suggests it is a phase calibrator.
+Do this before recommending a calibration strategy — a W-quality source
+at A-config changes the entire calibration approach.
+
+---
+
 ## Identifying which calibrator to use for which step
 
 In a standard VLA L-band/S-band reduction:
