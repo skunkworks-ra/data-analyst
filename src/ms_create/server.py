@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ms_create import __version__, import_asdm, reduction_log, sdm_summary
 from ms_inspect.exceptions import RadioMSError
+from ms_inspect.util.formatting import compact_fields
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -37,7 +38,7 @@ mcp = FastMCP(
 def _run_tool(tool_fn, *args, **kwargs) -> str:
     try:
         result = tool_fn(*args, **kwargs)
-        return json.dumps(result, indent=2)
+        return json.dumps(compact_fields(result), separators=(",", ":"))
     except RadioMSError as exc:
         return json.dumps(
             {
@@ -45,7 +46,7 @@ def _run_tool(tool_fn, *args, **kwargs) -> str:
                 "error_type": exc.error_type,
                 "message": str(exc),
             },
-            indent=2,
+            separators=(",", ":"),
         )
     except Exception as exc:
         return json.dumps(
@@ -54,7 +55,7 @@ def _run_tool(tool_fn, *args, **kwargs) -> str:
                 "error_type": "UNEXPECTED_ERROR",
                 "message": str(exc),
             },
-            indent=2,
+            separators=(",", ":"),
         )
 
 

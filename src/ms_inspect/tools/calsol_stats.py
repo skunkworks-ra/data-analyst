@@ -348,7 +348,7 @@ def _save_raw_npz(
 
 
 def run(
-    caltable_path: str, snr_min: float = 3.0, amp_sigma: float = 5.0, verbosity: str = "full"
+    caltable_path: str, snr_min: float = 3.0, amp_sigma: float = 5.0, verbosity: str = "compact"
 ) -> dict:
     """
     Inspect a CASA calibration table and return per-(antenna, SPW, field) stats.

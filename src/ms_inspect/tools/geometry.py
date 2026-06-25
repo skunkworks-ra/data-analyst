@@ -23,7 +23,7 @@ from typing import Any
 
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import ecef_to_geodetic, mjd_seconds_to_unix
-from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.formatting import field, offload_detail, response_envelope
 
 TOOL_EL = "ms_elevation_vs_time"
 TOOL_PA = "ms_parallactic_angle_vs_time"
@@ -284,13 +284,42 @@ def run_elevation_vs_time(ms_path: str, threshold_deg: float = DEFAULT_EL_THRESH
             }
         )
 
+    # Per-field elevation summary (the gate-relevant numbers) kept inline;
+    # the full per-scan table is offloaded to a JSON sidecar.
+    fields_summary: list[dict] = []
+    for f in fields_out:
+        scans_field = f.get("scans", {})
+        scans_val = scans_field.get("value") if isinstance(scans_field, dict) else None
+        if not scans_val:
+            fields_summary.append(
+                {
+                    "field_id": f["field_id"],
+                    "field_name": f["field_name"],
+                    "scans_available": False,
+                }
+            )
+            continue
+        el_mins = [s["el_min_deg"]["value"] for s in scans_val]
+        fields_summary.append(
+            {
+                "field_id": f["field_id"],
+                "field_name": f["field_name"],
+                "n_scans": len(scans_val),
+                "el_min_deg": round(min(el_mins), 2),
+                "el_max_deg": round(max(el_mins), 2),
+                "n_scans_below_threshold": sum(1 for s in scans_val if s["below_threshold"]),
+            }
+        )
+
     data = {
         "array_lat_deg": round(lat, 6),
         "array_lon_deg": round(lon, 6),
         "computation": "astropy AltAz frame",
         "threshold_deg": threshold_deg,
+        "fields_summary": fields_summary,
         "fields": fields_out,
     }
+    data = offload_detail(data, ["fields"], ms_str + ".elevation_vs_time.json")
 
     return response_envelope(
         tool_name=TOOL_EL,

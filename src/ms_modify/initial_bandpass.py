@@ -8,14 +8,7 @@ CASA call sequence (adapted from evla_pipe/stages/initial_bp.py):
 
   Step 1 — gaincal(solint='int', calmode='p')  → init_gain.g
   Step 2 — bandpass(solint='inf', combine='scan', fillgaps=62) → BP0.b
-  Step 3 — applycal(field=applycal_field)       → CORRECTED column written
-
-Step 3 applies only to the caller-supplied ``applycal_field`` — there is no
-all-field default. At this stage gains were solved on the bandpass calibrator
-only, so applying to other fields under a strict flag mode flags them for
-lack of a matching solution. Pass the bandpass calibrator field here; pass ''
-(all fields) only deliberately. ``applymode`` defaults to 'calflagstrict';
-fall back to 'calflag' if strict flagging is too aggressive.
+  Step 3 — applycal(bp_field, calonly)         → CORRECTED written on bp_field
 
 Hard fails if either caltable is not produced on disk.
 
@@ -126,19 +119,22 @@ bandpass_kwargs = dict(
 )
 bandpass(**bandpass_kwargs)
 
-# Step 3 — applycal (field={applycal_field!r})
+# Step 3 — applycal (bandpass calibrator only)
+# Apply ONLY to bp_field: the BP/gain solutions are solved on bp_field, and
+# applying them to other fields makes CASA extrapolate them in time onto other
+# calibrators' scans (heavy flagging when bp_field is observed mid-session).
 applycal_gaintable = priorcals + [init_gain_table, bp_table]
 n_tables = len(applycal_gaintable)
 applycal(
     vis=ms_str,
-    field={applycal_field!r},
+    field={bp_field!r},
     spw={all_spw!r},
     gaintable=applycal_gaintable,
     calwt=[False] * n_tables,
-    applymode={applymode!r},
-    flagbackup=False,
+    applymode="calonly",
+    flagbackup=True,
 )
-print("Done. CORRECTED column populated.")
+print("Done. CORRECTED column populated on bp_field.")
 """
 
 
@@ -374,25 +370,31 @@ def run(
         )
 
     # ------------------------------------------------------------------
-    # Step 3 — applycal (field=applycal_field)
+    # Step 3 — applycal (bandpass calibrator only)
     # ------------------------------------------------------------------
+    # Apply ONLY to bp_field. The bandpass (and init_gain) solutions are solved
+    # on bp_field alone; applying them to other fields makes CASA extrapolate the
+    # bp_field solution in time onto scans of other calibrators, and for EBs where
+    # bp_field is observed mid-session those earlier scans get ~90% flagged. Other
+    # fields are fully calibrated later (skill 07 Step 7). applymode='calonly' +
+    # flagbackup=True ensure this inspection step can never silently flag.
     applycal_gaintable = priorcals + [init_gain_table, bp_table]
     n_tables = len(applycal_gaintable)
 
     casa_calls.append(
-        f"casatasks.applycal(field='{applycal_field}', gaintable=[...{n_tables} tables], "
-        f"calwt=[False]*{n_tables}, applymode='{applymode}') → CORRECTED column populated"
+        f"casatasks.applycal(field={bp_field!r}, gaintable=[...{n_tables} tables], "
+        f"calwt=[False]*{n_tables}, applymode='calonly') → CORRECTED on bp_field"
     )
 
     try:
         applycal(
             vis=ms_str,
-            field=applycal_field,
+            field=bp_field,
             spw=all_spw,
             gaintable=applycal_gaintable,
             calwt=[False] * n_tables,
-            applymode=applymode,
-            flagbackup=False,
+            applymode="calonly",
+            flagbackup=True,
         )
     except Exception as e:
         warnings.append(

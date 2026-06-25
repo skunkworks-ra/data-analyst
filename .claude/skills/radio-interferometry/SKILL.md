@@ -48,6 +48,7 @@ Read each file with the Read tool only when you reach that stage:
 - `.claude/skills/radio-interferometry/05-calibrator-science.md`
 - `.claude/skills/radio-interferometry/06-failure-modes.md`
 - `.claude/skills/radio-interferometry/07-calibration-execution.md`
+- `.claude/skills/radio-interferometry/07b-gaincal-recovery.md` (only when a 07 Step 4b check fails)
 - `.claude/skills/radio-interferometry/08-pband-specifics.md`
 - `.claude/skills/radio-interferometry/09-polcal-execution.md`
 - `.claude/skills/radio-interferometry/10-precal-workflow.md`

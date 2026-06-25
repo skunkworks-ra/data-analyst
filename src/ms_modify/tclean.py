@@ -361,7 +361,12 @@ def run(
             ms_path=ms_path,
         ) from exc
 
-    image_path = imagename + ".image"
+    # mtmfs (nterms>1) writes Taylor-term images: .image.tt0, .image.tt1, ...
+    # There is no plain .image in that case, so check the tt0 product.
+    if deconvolver == "mtmfs" and nterms is not None:
+        image_path = imagename + ".image.tt0"
+    else:
+        image_path = imagename + ".image"
     completed = Path(image_path).exists()
     if not completed:
         raise TcleanFailedError(

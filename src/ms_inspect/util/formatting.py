@@ -126,6 +126,71 @@ def error_envelope(
     }
 
 
+def compact_fields(obj: Any) -> Any:
+    """
+    Recursively collapse information-free field() wrappers for wire output.
+
+    A field() wrapper is exactly {"value": x, "flag": "COMPLETE"} with no "note".
+    Such a wrapper carries no information beyond x itself, so it is replaced by x.
+    Wrappers with a non-COMPLETE flag or a note are preserved (their value is still
+    recursed into). All other structures are recursed and returned unchanged.
+
+    This runs at the serialization boundary only — internal tool code continues to
+    operate on the full field() dicts, so it is safe regardless of how a tool reads
+    its own intermediate structures. Reversible: removing the call restores verbose output.
+    """
+    if isinstance(obj, dict):
+        keys = set(obj.keys())
+        if keys == {"value", "flag"} and obj.get("flag") == "COMPLETE":
+            return compact_fields(obj["value"])
+        return {k: compact_fields(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [compact_fields(item) for item in obj]
+    return obj
+
+
+def offload_detail(
+    data: dict,
+    heavy_keys: list[str],
+    sidecar_path: str,
+) -> dict:
+    """
+    Offload large per-element tables to a JSON sidecar, returning a slimmed dict.
+
+    The complete `data` dict (summary + heavy detail) is written to `sidecar_path`
+    as compact JSON — the full, on-disk record analogous to the calsol_stats NPZ
+    sidecar. The returned dict drops `heavy_keys` from the wire payload and adds:
+        detail_path:  field() path to the JSON sidecar (read on demand with the
+                      filesystem; no dedicated MCP tool needed since it is text)
+        detail_keys:  the keys whose full content lives in the sidecar
+        detail_note:  one-line pointer
+
+    Rationale: orientation tools (antennas, spws, elevation, baselines) are re-run
+    every time a reduction is resumed in a new session. Keeping the per-element
+    tables out of the wire payload — but on disk and recoverable — cuts that
+    recurring cost while preserving the full record. The sidecar persists across
+    sessions, so a resumed session can read it without recomputing.
+
+    On write failure the full `data` is returned unchanged (graceful degradation).
+    """
+    import json as _json
+
+    try:
+        with open(sidecar_path, "w") as fh:
+            _json.dump(data, fh, separators=(",", ":"), default=str)
+    except OSError:
+        return data  # could not write sidecar — keep full payload inline
+
+    slim = {k: v for k, v in data.items() if k not in heavy_keys}
+    slim["detail_path"] = field(sidecar_path)
+    slim["detail_keys"] = heavy_keys
+    slim["detail_note"] = (
+        "Full per-element detail for detail_keys written to detail_path (compact JSON). "
+        "Read it directly from the filesystem when a gate needs a specific element."
+    )
+    return slim
+
+
 def _collect_flags(obj: Any) -> list[CompletionFlag]:
     """
     Recursively collect all 'flag' values from a nested dict/list structure.

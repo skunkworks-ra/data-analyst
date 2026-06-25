@@ -25,7 +25,7 @@ from ms_inspect.util.conversions import (
     ecef_to_geodetic,
     largest_angular_scale_arcsec,
 )
-from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.formatting import field, offload_detail, response_envelope
 
 TOOL_ANT = "ms_antenna_list"
 TOOL_BASELINES = "ms_baseline_lengths"
@@ -194,6 +194,11 @@ def run_antenna_list(ms_path: str) -> dict:
         "antennas": ants_out,
     }
 
+    # Offload the per-antenna table to a JSON sidecar (recoverable on demand).
+    # Summary (counts, completeness, array centre) stays inline; warnings already
+    # flag any SUSPECT positions, so gate decisions need not read the full table.
+    data = offload_detail(data, ["antennas"], ms_str + ".antenna_list.json")
+
     return response_envelope(
         tool_name=TOOL_ANT,
         ms_path=ms_path,
@@ -317,6 +322,12 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
             "Actual UV coverage depends on source declination and hour angle coverage."
         ),
     }
+
+    # Inline resolution range across SPWs, then offload the full per-SPW table.
+    res_vals = [e["resolution_arcsec"]["value"] for e in per_spw] if per_spw else []
+    if res_vals:
+        data["resolution_arcsec_range"] = [min(res_vals), max(res_vals)]
+    data = offload_detail(data, ["per_spw_derived"], ms_str + ".baseline_lengths.json")
 
     return response_envelope(
         tool_name=TOOL_BASELINES,
