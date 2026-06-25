@@ -33,9 +33,9 @@ ms_verify_priorcals(workdir)             → confirm all required tables exist
 ms_setjy(execute=False, ...)             → generate setjy.py
   → run setjy.py as background job; wait for completion however long it takes
 
-ms_refant(calibrators.ms, field=bp_field) → ranked reference antenna list
-ms_initial_bandpass(execute=False,        → generate initial_bandpass.py
-    bp_field=bp_field, applycal_field=bp_field, ...)
+ms_refant(calibrators.ms, field=bp_field)    → refant ranked on BP cal
+ms_refant(calibrators.ms, field=phase_field) → refant ranked on phase cal (pick antenna healthy on both)
+ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
   → run initial_bandpass.py as background job; wait for completion however long it takes
 ms_verify_caltables(...)                  → confirm init_gain.g + BP0.b valid
 ms_plot_caltable_library(               → plot both caltables; review before proceeding
@@ -156,17 +156,38 @@ scale. Set it consistently from the start. See skill 09 Step 1 and skill 07 Step
 
 ## Step 5 — Reference antenna selection
 
-`ms_refant` returns a full ranked list. Use the top-ranked antenna unless:
+**Score the refant on every calibrator it must serve, not just the bandpass
+calibrator.** `ms_refant`'s flag heuristic is computed only over the `field` you
+pass it. An antenna can rank top on the bandpass cal yet be heavily flagged on
+the phase cal — different scans, elevation, and RFI — and scoring on the BP field
+alone is blind to that. The same refant is used for all solves (G0, K, B, and the
+gain solve over flux+phase cals), so it must be well populated on all of them. The
+phase cal especially: the science target inherits its gain solutions, so a refant
+weak on the phase cal corrupts the target even when the bandpass looks perfect.
+
+Run `ms_refant` once per calibrator field and choose the antenna that ranks well
+on **all** of them:
+
+```
+ms_refant(calibrators.ms, field=bp_field)      → ranked list scored on the BP cal
+ms_refant(calibrators.ms, field=phase_field)   → ranked list scored on the phase cal
+```
+
+A `flag_score` near 0 means the antenna is fully flagged on that field — never
+pick it, however high it ranks on another. Prefer the highest-ranked antenna with
+a healthy `flag_score` in every list over the top pick of any single list.
 
 | Condition | Action |
 |-----------|--------|
+| Candidate `flag_score` near 0 on *any* calibrator field | Disqualify — dead on that field; drop to the next antenna healthy on all fields |
 | Top-ranked antenna flagged > 30% (from `ms_flag_summary`) | Use rank-2 antenna |
 | Top-ranked antenna has `flag_score` ≫ `geo_score` (periphery of array) | Note this — peripheral refants can cause phase-wrapping on long baselines at high freq |
 | Only one heuristic used (completeness flag `INFERRED`) | Accept result but note lower confidence |
 | Fewer than 3 antennas scored (`n_antennas` < 3) | Escalate — array is too sparse for reliable refant selection |
 
-The `refant_list` field contains the full ranked list. Record the top 3 — if
-the initial bandpass fails, try rank-2 before changing other parameters.
+Record the top 3 cross-field candidates. If a solve fails or a gain solve flags
+heavily, first check whether the refant is weak on that solve's field, then try
+the next cross-field candidate before changing other parameters.
 
 For 3C84 observations: pass `uvrange='>5klambda'` to `ms_initial_bandpass`
 regardless of refant choice. The extended emission contaminates solutions on

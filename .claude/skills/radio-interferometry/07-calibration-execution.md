@@ -809,14 +809,10 @@ gain solutions are interpolated correctly for each.
 - `gainfield`: selects which rows from `gain.fluxscaled` apply to each field
 - `interp`: `'nearest'` for calibrators; `'linear'` for target (interpolate between adjacent cal scans)
 - `calwt=False`: VLA data weights are not properly calibrated; calibrating them produces nonsensical results
-- `applymode`: calibrators use `'calflag'`; science target uses `'calflag'` if
-  per-calibrator flag fraction in `calibrators.ms` post-rflag is < 50%, otherwise `'calonly'`.
-  Use `'calflag'`, not `'calflagstrict'` — `calflagstrict` additionally flags visibilities whose
-  applicable solution is only *partially* flagged (one polarization out, an edge-channel gap, a
-  marginal interpolation), which on AB1345 helped collapse the applied antenna set. `calflag`
-  flags only where there is no usable solution at all.
-  `calonly` leaves data without a matching gain solution uncalibrated but unflagged — prefer it
-  for the target when calibrator flagging was heavy.
+- `applymode`: default `'calonly'` for all fields — apply calibration without flagging, so
+  post-calibration RFI flagging (skill 13, `ms_postcal_flag`) owns the FLAG column. Use
+  `'calflagstrict'` only when you deliberately want apply-time flagging of missing/flagged
+  solutions (e.g. a quick-look without a post-cal flag pass).
 
 ### 7a — Flux calibrator
 
@@ -828,7 +824,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {FLUX_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
-    applymode  = 'calflag',
+    applymode  = 'calonly',
     flagbackup = True,
     workdir    = {WORKDIR},
     execute    = False,
@@ -845,7 +841,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
-    applymode  = 'calflag',
+    applymode  = 'calonly',
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,
@@ -862,7 +858,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'],
     calwt      = False,
-    applymode  = 'calonly',        # or 'calflag' if calibrator flag fraction < 50%
+    applymode  = 'calonly',        # post-cal RFI flagging (skill 13) owns FLAG
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,

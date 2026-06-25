@@ -32,6 +32,7 @@ def _build_script(
     ms_str: str,
     imagename: str,
     field: str,
+    spw: str,
     stokes: str,
     specmode: str,
     deconvolver: str,
@@ -53,6 +54,8 @@ def _build_script(
     outframe: str | None,
 ) -> str:
     optional_lines = ""
+    if spw:
+        optional_lines += f"    spw          = {spw!r},\n"
     if deconvolver == "mtmfs" and nterms is not None:
         optional_lines += f"    nterms       = {nterms},\n"
     if wprojplanes is not None:
@@ -120,6 +123,7 @@ def run(
     imagename: str,
     field: str,
     workdir: str,
+    spw: str = "",
     stokes: str = "I",
     specmode: str = "mfs",
     deconvolver: str = "hogbom",
@@ -152,6 +156,8 @@ def run(
         imagename:   Base name for all output image products (no suffix).
         field:       CASA field selection for science target(s).
         workdir:     Existing directory for script and image output.
+        spw:         CASA SPW selection (default '' = all SPWs). Use to drop
+                     RFI-dominated SPWs, e.g. '0~8,10~15' to exclude SPW 9.
         stokes:      Stokes products to image (default 'I').
         specmode:    'mfs', 'cube', or 'mvc' (default 'mfs'). Use 'mvc' with
                      gridder='awp2' — awp2 does not implement conjbeams, and
@@ -258,6 +264,7 @@ def run(
         ms_str=ms_str,
         imagename=imagename,
         field=field,
+        spw=spw,
         stokes=stokes,
         specmode=specmode,
         deconvolver=deconvolver,
@@ -315,6 +322,7 @@ def run(
         imagename=imagename,
         field=field,
         stokes=stokes,
+        spw=spw,
         specmode=specmode,
         deconvolver=deconvolver,
         gridder=gridder,

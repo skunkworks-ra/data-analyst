@@ -46,7 +46,7 @@ def _build_setjy_block(field_name: str, standard: str, usescratch: bool) -> str:
         f"    vis=ms_path,\n"
         f"    field={field_name!r},\n"
         f"    standard={standard!r},\n"
-        f"    usescratch={usescratch!r},\n"
+        f"    usescratch=True,\n"  # materialise MODEL_DATA on calibrators.ms for residual QA
         f")"
     )
 
@@ -226,7 +226,7 @@ def run(
                 vis=ms_str,
                 field=fname,
                 standard=standard,
-                usescratch=usescratch,
+                usescratch=True,  # materialise MODEL_DATA on calibrators.ms for residual QA
             )
             fields_done.append(fname)
         except Exception as exc:

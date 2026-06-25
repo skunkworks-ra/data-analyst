@@ -36,10 +36,12 @@ from ms_inspect.util.pol_calibrators import (
 
 TOOL_NAME = "ms_pol_cal_feasibility"
 
-# Default PA spread threshold for leakage calibration feasibility.
-# 45° is sufficient for Df+QU (which recovers Q,U simultaneously).
-# Below 45° the D-term solution becomes degenerate regardless of poltype.
-DEFAULT_PA_SPREAD_THRESHOLD_DEG = 45.0
+# Default PA spread threshold for the Df+QU (unknown-pol) leakage path only.
+# NRAO recommends ≥60°, but that is conservative: a Df+QU solve can succeed with
+# as little as ~30° of parallactic coverage on a bright source. 30° is the
+# practical floor; below it the D-term/QU separation becomes degenerate.
+# (Irrelevant to Xf and to known-pol / zero-pol Df, which need no PA coverage.)
+DEFAULT_PA_SPREAD_THRESHOLD_DEG = 30.0
 
 # Pol epoch used for property lookup
 POL_DATA_EPOCH = "2019"
@@ -174,6 +176,41 @@ def _pa_spread_deg(
     return max(pa_values) - min(pa_values)
 
 
+# Polarisation calibrators are "low polarization" — and thus usable as zero-pol
+# leakage calibrators where a single scan suffices — only where their fractional
+# polarization is below this level. NRAO VLA polarisation guide wording:
+# 3C84 "low polarization (<1%)"; 3C147 "low polarization below 10 GHz".
+LOW_POL_FRAC_PCT = 1.0
+
+
+def _effective_role_at_band(
+    entry: PolCalEntry | None,
+    band_ghz: float,
+    epoch: str = POL_DATA_EPOCH,
+) -> str:
+    """Effective polcal role of a source AT the observing band (frequency-dependent).
+
+    A source's role is not fixed: it depends on its polarization where you observe.
+      'leakage_zero_pol' — frac_pol < 1% (NRAO low-pol): usable as a zero-pol
+                           leakage cal, single scan suffices for Df.
+      'angle_known_pol'  — frac_pol >= 1% with a defined PA: it has crossed into
+                           the angle-calibrator regime (known polarization); not a
+                           zero-pol leakage cal here. e.g. 3C147/3C84 above ~10 GHz.
+      'known_pol'        — polarized with frac known but PA undefined at this band.
+      'unknown'          — not in the catalogue or out of the tabulated range.
+    """
+    if entry is None or math.isnan(band_ghz):
+        return "unknown"
+    props = pol_properties_at_freq(entry, band_ghz, epoch=epoch)
+    if props is None or props.frac_pol_pct is None:
+        return "unknown"
+    if props.frac_pol_upper_limit or props.frac_pol_pct < LOW_POL_FRAC_PCT:
+        return "leakage_zero_pol"
+    if props.pol_angle_deg is not None:
+        return "angle_known_pol"
+    return "known_pol"
+
+
 # ---------------------------------------------------------------------------
 # Verdict logic
 # ---------------------------------------------------------------------------
@@ -182,54 +219,51 @@ def _pa_spread_deg(
 def _compute_verdict(
     has_angle_cal: bool,
     angle_cal_degraded: bool,
-    leakage_meets_threshold: bool,
-    has_low_pol_source: bool,
+    xf_feasible: bool,
+    df_feasible: bool,
 ) -> tuple[str, str | None]:
     """
     Return (verdict_str, blocker_str | None).
 
-    Verdicts:
-      FULL         — angle cal + leakage cal meets PA threshold
-      ANGLE_ONLY   — angle cal present (Kcross+Xf feasible), no leakage cal with PA coverage
-      LEAKAGE_ONLY — no usable angle cal, but leakage cal present
-      DEGRADED     — angle cal present but variability warning
-      NOT_FEASIBLE — no pol cal sources found at all
-    """
-    if has_angle_cal and not angle_cal_degraded and leakage_meets_threshold:
-        return "FULL", None
+    Feasibility model (NRAO VLA polarisation guide):
+      - Xf (absolute angle) needs only a Category A pol standard with a known
+        EVPA model. It is ALWAYS feasible when such a standard is present —
+        parallactic-angle coverage is irrelevant to Xf.
+      - Df (leakage) is feasible via any of: a zero-pol primary leakage cal
+        (single scan), a known-pol source incl. the angle cal itself (≥2 scans),
+        or an unknown-pol source with sufficient PA coverage (Df+QU). PA coverage gates
+        ONLY the unknown-pol (Df+QU) path.
 
-    if has_angle_cal and angle_cal_degraded and leakage_meets_threshold:
+    Verdicts:
+      FULL         — angle cal present → Xf always feasible, and Df feasible
+                     (the angle cal's known model makes it a valid Df source)
+      DEGRADED     — angle cal present but flagged variable / in flare
+      LEAKAGE_ONLY — no angle cal (no Xf), but a Df-capable leakage cal exists
+      NOT_FEASIBLE — neither Xf nor Df feasible
+    """
+    if has_angle_cal and angle_cal_degraded:
         return "DEGRADED", (
             "Angle calibrator flagged as variable or in active flare — "
-            "verify current monitoring data before proceeding"
+            "verify current monitoring data before proceeding. Xf and Df remain "
+            "feasible but annotate outputs with the variability warning."
         )
 
-    if not has_angle_cal and (leakage_meets_threshold or has_low_pol_source):
+    if has_angle_cal:
+        # Xf always feasible on the primary standard; Df feasible on it via its
+        # known model even without separate PA coverage.
+        return "FULL", None
+
+    if df_feasible:
         return "LEAKAGE_ONLY", (
-            "No pol angle calibrator observed — R-L phase calibration not possible. "
-            "Leakage (D-term) calibration may proceed."
+            "No pol angle calibrator observed — absolute angle (Xf) calibration "
+            "not possible. Leakage (D-term) calibration may proceed."
         )
 
-    if has_angle_cal and not leakage_meets_threshold:
-        return "ANGLE_ONLY", (
-            "Pol angle calibrator present — Kcross and Xf (R-L delay + angle) "
-            "calibration is feasible. "
-            "However no leakage calibrator with sufficient PA spread was found for D-term "
-            "calibration. The phase calibrator (if observed throughout the track) is the "
-            "natural leakage cal candidate — verify its PA coverage with "
-            "ms_parallactic_angle_vs_time."
-        )
-
-    if not has_angle_cal and not leakage_meets_threshold and not has_low_pol_source:
-        # Leakage cal may be present but PA spread is too small, or no pol cals at all
-        return "NOT_FEASIBLE", (
-            "Leakage calibrator found but PA spread is insufficient "
-            "for a reliable D-term solution, and no low-polarisation source "
-            "with catalogued properties at this frequency was found. "
-            "Observe the calibrator at more hour angles."
-        )
-
-    return "NOT_FEASIBLE", ("No recognised polarisation calibrators found in the field list.")
+    return "NOT_FEASIBLE", (
+        "No usable polarisation calibrator: no Category A angle standard for Xf, "
+        "and no Df-capable leakage source (need a zero-pol primary leakage cal, a "
+        "known-pol source, or an unknown-pol source with ≥30° parallactic coverage)."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +278,7 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
     Inputs:
         ms_path:                  Path to the Measurement Set.
         pa_spread_threshold_deg:  Minimum PA spread (deg) needed for D-term
-                                  calibration (default 60°).
+                                  calibration (default 30°; NRAO suggests 60°).
 
     Returns:
         Standard response envelope with data fields:
@@ -395,6 +429,12 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
     leakage_source_name = leakage_cal_name or angle_cal_name  # fallback
     leakage_source_entry = leakage_cal_entry or angle_cal_entry
 
+    # Effective role of the leakage source AT the observing band — this, not the
+    # static catalogue role, decides whether a single scan suffices. 3C147/3C84
+    # are zero-pol leakage cals only where frac_pol < 1% (below ~10 GHz); above
+    # that they become polarized (angle-cal regime) and need PA coverage / a model.
+    leakage_role_at_band = _effective_role_at_band(leakage_source_entry, band_ghz)
+
     if leakage_cal_field_id is not None:
         t_mids, sc_calls = _scan_times_for_field(ms_str, leakage_cal_field_id)
         casa_calls.extend(sc_calls)
@@ -413,10 +453,11 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             except Exception as e:
                 warnings.append(f"PA spread computation failed: {e}")
 
-        if leakage_source_entry and leakage_source_entry.single_scan_sufficient:
-            # Category C: known low-pol source, one scan is enough for D-terms
+        if leakage_role_at_band == "leakage_zero_pol":
+            # Low polarization (<1%) at this band — one scan is enough for Df.
             meets_threshold = n_cal_scans >= 1
         else:
+            # Polarized or unknown at this band — needs PA coverage for Df+QU.
             meets_threshold = pa_spread_val is not None and pa_spread_val >= pa_spread_threshold_deg
 
     # --- Fallback: if primary leakage cal fails PA threshold, search other fields ---
@@ -478,20 +519,37 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             n_cal_scans = best["n_scans"]
             meets_threshold = True
 
-    # --- Leakage cal pol properties ---
-    has_low_pol_source = False
-    if leakage_source_entry is not None and not math.isnan(band_ghz):
-        lp = pol_properties_at_freq(leakage_source_entry, band_ghz, epoch=POL_DATA_EPOCH)
-        if lp is not None and lp.frac_pol_pct is not None:
-            has_low_pol_source = lp.frac_pol_pct < 1.0 or lp.frac_pol_upper_limit
+    # --- Effective role of the leakage source at the observing band ---
+    # Recompute after the fallback may have reassigned the leakage source.
+    leakage_role_at_band = _effective_role_at_band(leakage_source_entry, band_ghz)
+    has_low_pol_source = leakage_role_at_band == "leakage_zero_pol"
+
+    # --- Feasibility booleans ---
+    has_angle_cal = angle_cal_entry is not None
+
+    # Xf needs only a known-EVPA Category A standard; PA coverage is irrelevant.
+    xf_feasible = has_angle_cal
+
+    # Df strategies (NRAO pol guide):
+    #   'Df'    — known-pol source: a zero-pol (<1%) leakage cal (single scan),
+    #             or the angle cal via its known model (≥2 scans).
+    #   'Df+QU' — unknown-pol source with ≥ threshold PA coverage.
+    df_known_pol = has_angle_cal or has_low_pol_source
+    df_qu_unknown = (not df_known_pol) and meets_threshold
+    df_feasible = df_known_pol or df_qu_unknown
+    if df_known_pol:
+        recommended_df_poltype = "Df"
+    elif df_qu_unknown:
+        recommended_df_poltype = "Df+QU"
+    else:
+        recommended_df_poltype = None
 
     # --- Verdict ---
-    has_angle_cal = angle_cal_entry is not None
     verdict, blocker = _compute_verdict(
         has_angle_cal=has_angle_cal,
         angle_cal_degraded=angle_degraded,
-        leakage_meets_threshold=meets_threshold,
-        has_low_pol_source=has_low_pol_source,
+        xf_feasible=xf_feasible,
+        df_feasible=df_feasible,
     )
 
     # --- Build output ---
@@ -520,19 +578,25 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             "available": leakage_cal_field_id is not None,
             "source": leakage_source_name,
             "category": leakage_source_entry.category if leakage_source_entry else None,
-            "single_scan_sufficient": leakage_source_entry.single_scan_sufficient if leakage_source_entry else False,
+            "effective_role_at_band": leakage_role_at_band,
+            "single_scan_sufficient": leakage_role_at_band == "leakage_zero_pol",
             "pa_spread_deg": pa_spread_field,
             "pa_spread_note": (
                 "Delta computed via astropy sky-frame PA; "
                 "CASA feed-frame differs by -90° for ALT-AZ mounts "
                 "but delta is identical in both conventions. "
-                "PA spread is irrelevant for Category C sources (single_scan_sufficient=true)."
+                "PA spread is irrelevant for a zero-pol (<1%) leakage cal at this "
+                "band (effective_role_at_band='leakage_zero_pol'); it gates only the "
+                "Df+QU path for polarized/unknown sources."
             ),
             "n_calibrator_scans": n_cal_scans,
             "meets_threshold": meets_threshold,
             "threshold_deg": pa_spread_threshold_deg,
             "leakage_cal_alternatives": leakage_cal_alternatives,
         },
+        "xf_feasible": xf_feasible,
+        "df_feasible": df_feasible,
+        "recommended_df_poltype": recommended_df_poltype,
         "verdict": verdict,
         "blocker": blocker,
         "pol_cal_data_epoch": POL_DATA_EPOCH,

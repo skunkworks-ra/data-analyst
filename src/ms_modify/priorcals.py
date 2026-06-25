@@ -103,15 +103,20 @@ if "gain_curves.gc" not in skip_reasons:
         skip_reasons["gain_curves.gc"] = "gencal returned 0-row table"
         print("  gc: empty — skipped")
 
-# 2 — Opacities (per-SPW zenith opacity from the WEATHER subtable)
-# gencal(caltype='opac') is a *manual* caltype: it writes whatever values are
-# passed via parameter=. Called with no parameter it produces a 0-row table,
-# so the zenith opacities must be computed first (plotweather reads the WEATHER
-# subtable). Genuinely skipped only when there is no WEATHER subtable.
+# 2 — Opacities
+# gencal(caltype='opac') does NOT compute tau; it only writes the values passed
+# in parameter=. Derive per-SPW zenith opacities from the WEATHER table with
+# plotweather(doPlot=False), then feed them to gencal with a matching spw list.
 print("Generating opacities...")
 if os.path.exists(opac_table):
     shutil.rmtree(opac_table)
-if _table_nrows(ms_path + "/WEATHER") == 0:
+try:
+    _tau = list(plotweather(vis=ms_path, doPlot=False))
+    _spw = ",".join(str(_i) for _i in range(len(_tau)))
+    gencal(vis=ms_path, caltable=opac_table, caltype="opac", spw=_spw, parameter=_tau)
+    print(f"  opac: tau per spw = {{_tau}}")
+except Exception as _exc:
+    print(f"  opac: plotweather/gencal raised {{_exc!r}} — skipped")
     skipped.append("opacities.opac")
     skip_reasons["opacities.opac"] = "no WEATHER subtable — cannot compute zenith opacity"
     print("  opac: skipped (no WEATHER subtable)")

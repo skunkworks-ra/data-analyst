@@ -17,6 +17,11 @@ from pathlib import Path
 import numpy as np
 
 from ms_inspect.tools import calsol_stats
+from ms_inspect.tools.calsol_stats import (
+    _is_complex_type,
+    _is_delay_type,
+    _is_freq_dependent_type,
+)
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 
@@ -69,16 +74,12 @@ def _save_npz(npz_path: str, data: dict, table_type: str) -> None:
         if a is not None:
             arrays[key] = a
 
-    if table_type == "B":
-        a = _arr(data, "amp_array")
+    # Optional arrays — present depending on table class (freq-dependent amp cube,
+    # delay tables). Attempt all; _arr returns None when absent.
+    for key in ("amp_array", "delay_ns", "delay_rms_ns"):
+        a = _arr(data, key)
         if a is not None:
-            arrays["amp_array"] = a
-
-    if table_type == "K":
-        for key in ("delay_ns", "delay_rms_ns"):
-            a = _arr(data, key)
-            if a is not None:
-                arrays[key] = a
+            arrays[key] = a
 
     np.savez(npz_path, **arrays)
 
@@ -458,15 +459,22 @@ def run(caltable_path: str, output_dir: str) -> dict:
     _save_npz(npz_path, data, table_type)
 
     # --- build dashboard ---
-    if table_type == "G":
-        layout = _build_g_dashboard(data)
-        title = f"Gain solutions — {stem}"
-    elif table_type == "B":
-        layout = _build_b_dashboard(data)
-        title = f"Bandpass solutions — {stem}"
-    elif table_type == "K":
+    # Route by behaviour so the polcal tables reuse the existing dashboards:
+    #   delay (K, Kcross)            → delay dashboard
+    #   frequency-dependent (B, Df, Xf) → amp-vs-channel dashboard
+    #   scalar complex (G, D, X)     → gain (amp/phase per spw/field) dashboard
+    if _is_delay_type(table_type):
         layout = _build_k_dashboard(data)
-        title = f"Delay solutions — {stem}"
+        kind = "Cross-hand delay" if table_type != "K" else "Delay"
+        title = f"{kind} solutions — {stem}"
+    elif _is_freq_dependent_type(table_type):
+        layout = _build_b_dashboard(data)
+        kind = {"B": "Bandpass"}.get(table_type, f"{table_type} (per-channel)")
+        title = f"{kind} solutions — {stem}"
+    elif _is_complex_type(table_type) and table_type:
+        layout = _build_g_dashboard(data)
+        kind = {"G": "Gain"}.get(table_type, f"{table_type}")
+        title = f"{kind} solutions — {stem}"
     else:
         warnings.append(
             f"Table type '{table_type}' has no dashboard template; producing flagged fraction heatmap only."

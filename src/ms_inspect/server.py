@@ -25,11 +25,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect import __version__
 from ms_inspect.exceptions import RadioMSError
+from ms_inspect.util import phase_cal_catalog as _pcc
 from ms_inspect.tools import (
     antennas,
     calsol_plot,
     calsol_plot_library,
     calsol_stats,
+    calsol_stats_detail,
     caltables,
     corrected_stats,
     fields,
@@ -47,6 +49,7 @@ from ms_inspect.tools import (
     scans,
     shadowing,
     spectral,
+    spw_amp_severity,
     verify_import,
     workflow_status,
 )
@@ -120,7 +123,7 @@ class PolCalFeasibilityInput(BaseModel):
         default=60.0,
         description=(
             "Minimum parallactic angle spread (degrees) required for a reliable "
-            "D-term leakage solution (default 60°). Lower values relax the criterion."
+            "Df+QU (unknown-pol) leakage solution (default 30°; NRAO suggests 60°). Irrelevant to Xf and known-pol Df."
         ),
         ge=0.0,
         le=180.0,
@@ -167,6 +170,31 @@ class RfiChannelStatsInput(BaseModel):
         default=1,
         description="Minimum contiguous bad channels to report as a range (default 1).",
         ge=1,
+    )
+
+
+class SpwAmpSeverityInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
+    datacolumn: str = Field(
+        default="CORRECTED_DATA",
+        description="Column to measure: 'CORRECTED_DATA' (default), 'DATA', or 'MODEL_DATA'.",
+    )
+    field: str = Field(default="", description="CASA field selection (empty = all fields).")
+    sigma: float = Field(
+        default=5.0,
+        description="N in elevation threshold band_floor + N*robust_sigma (drives discardable-fraction estimate).",
+        gt=0.0,
+    )
+    max_samples_per_chan: int = Field(
+        default=5000,
+        description="Reservoir sample size per channel (memory knob).",
+        ge=100,
+    )
+    row_chunk: int = Field(
+        default=20_000,
+        description="Rows read per block (memory knob; smaller = less RAM, slower).",
+        ge=1000,
     )
 
 
@@ -337,6 +365,27 @@ class CalsolStatsInput(BaseModel):
     verbosity: str = Field(
         default="full",
         description="'full' (default) or 'compact'. Compact strips field() wrappers.",
+    )
+
+
+class CalsolStatsDetailInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    npz_path: str = Field(
+        ...,
+        description="Path to the {caltable}.calsol_stats.npz sidecar written by ms_calsol_stats.",
+        min_length=1,
+    )
+    kind: str = Field(
+        default="low_snr",
+        description="'low_snr', 'amp_outliers', or 'antenna' (all quantities for one antenna).",
+    )
+    antenna: str = Field(
+        default="", description="Restrict to this antenna name (required for kind='antenna')."
+    )
+    spw: int | None = Field(default=None, description="Restrict to this SPW id.")
+    field: str = Field(default="", description="Restrict to this field name.")
+    max_rows: int = Field(
+        default=300, ge=1, description="Row cap (hard-limited to 300)."
     )
 
 
@@ -1044,6 +1093,53 @@ async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> str:
 
 
 @mcp.tool(
+    name="ms_spw_amp_severity",
+    description=(
+        "Per-channel robust amplitude statistics (median, MAD, robust-sigma, min, max) "
+        "of a data column, aggregated per SpW across all fields. Estimates how much of "
+        "each SpW is RFI-dominated and discardable. Read-only; no verdict, no flagging."
+    ),
+    annotations={
+        "title": "SpW Amplitude Severity",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> str:
+    """
+    Robust per-channel/per-SpW amplitude statistics for RFI-severity assessment.
+
+    Single memory-bounded pass: reads the data column in row chunks, one DDID at
+    a time, keeping a uniform reservoir sample plus exact min/max/counts per
+    channel. Returns per-SpW band floor, fraction of elevated channels, peak-to-
+    floor, and an estimated discardable fraction. Run on two columns to compare
+    before/after a flagging or applycal step.
+
+    Args:
+        params.ms_path:              Path to the Measurement Set.
+        params.datacolumn:           'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA'.
+        params.field:                CASA field selection (empty = all).
+        params.sigma:                Elevation threshold multiplier (default 5.0).
+        params.max_samples_per_chan: Reservoir size per channel (default 5000).
+        params.row_chunk:            Rows per read block (default 20000).
+
+    Returns:
+        JSON with per_spw → per-channel robust stats and per-SpW severity aggregates.
+    """
+    return await _run_tool(
+        spw_amp_severity.run,
+        params.ms_path,
+        params.datacolumn,
+        params.field,
+        params.sigma,
+        params.max_samples_per_chan,
+        params.row_chunk,
+    )
+
+
+@mcp.tool(
     name="ms_flag_summary",
     description=(
         "flagdata(mode='summary') wrapper: per-field/SpW/antenna/scan flag fractions. "
@@ -1113,7 +1209,7 @@ async def ms_pol_cal_feasibility(params: PolCalFeasibilityInput) -> str:
 
     Args:
         params.ms_path:                Path to the Measurement Set.
-        params.pa_spread_threshold_deg: PA spread threshold for D-term feasibility (default 60°).
+        params.pa_spread_threshold_deg: PA spread threshold for the Df+QU path (default 30°).
 
     Returns:
         JSON with band_centre_ghz, pol_angle_calibrator (source, frac_pol, PA, stable_pa),
@@ -1325,6 +1421,50 @@ async def ms_calsol_stats(params: CalsolStatsInput) -> str:
 
 
 @mcp.tool(
+    name="ms_calsol_stats_detail",
+    description=(
+        "Deep-dive reader over the {caltable}.calsol_stats.npz sidecar written by "
+        "ms_calsol_stats. Returns the full per-(antenna, SpW, field) detail that the "
+        "stats response caps: kind='low_snr'|'amp_outliers'|'antenna', filterable by "
+        "antenna/spw/field. Use when a gate needs detail beyond the bounded summary."
+    ),
+    annotations={
+        "title": "Calibration Solution Detail",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_calsol_stats_detail(params: CalsolStatsDetailInput) -> str:
+    """
+    Slice the raw NPZ sidecar from ms_calsol_stats for full outlier/antenna detail.
+
+    The stats tool returns a bounded summary (worst-N rows + per-antenna rollups);
+    this tool returns the complete enumeration from disk for a requested slice, so
+    drilling into a flagged antenna or SPW needs no re-solve and no generated script.
+
+    Args:
+        params.npz_path: Path to the {caltable}.calsol_stats.npz sidecar.
+        params.kind: 'low_snr', 'amp_outliers', or 'antenna'.
+        params.antenna / params.spw / params.field: optional filters.
+        params.max_rows: row cap (hard-limited to 300).
+
+    Returns:
+        JSON with kind, filters, n_total, n_returned, truncated, rows, thresholds.
+    """
+    return await _run_tool(
+        calsol_stats_detail.run,
+        params.npz_path,
+        kind=params.kind,
+        antenna=params.antenna,
+        spw=params.spw,
+        field=params.field,
+        max_rows=params.max_rows,
+    )
+
+
+@mcp.tool(
     name="ms_calsol_plot",
     description=(
         "Bokeh HTML dashboard + NPZ export for a caltable. "
@@ -1516,6 +1656,125 @@ async def ms_image_stats(params: ImageStatsInput) -> str:
 # Phase calibrator catalog lookup
 # ---------------------------------------------------------------------------
 
+
+class PhaseCalLookupInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ra_deg: float = Field(..., description="Target RA in decimal degrees (J2000).")
+    dec_deg: float = Field(..., description="Target Dec in decimal degrees (J2000).")
+    band_code: str | None = Field(
+        None,
+        description="VLA band code: P, L, C, X, U, K, Q. Omit for position-only match.",
+    )
+    array_config: str | None = Field(
+        None,
+        description="Array configuration: A, B, C, or D. Omit to skip quality filter.",
+    )
+    max_sep_deg: float = Field(
+        0.5,
+        description="Search radius in degrees (default 0.5).",
+    )
+    min_quality: str = Field(
+        "W",
+        description="Minimum quality code: P (best), S, W, C, X (unusable). Default W.",
+    )
+
+
+@mcp.tool(
+    name="ms_phase_cal_lookup",
+    description=(
+        "Cross-match a sky position against the NRAO VLA phase calibrator catalog. "
+        "Returns the nearest qualifying source within max_sep_deg, with its position "
+        "accuracy, flux density, UV limits, and quality codes (P/S/W/C/X) per array "
+        "configuration at the requested band. "
+        "Use to assess whether an observed field is a known usable phase calibrator."
+    ),
+    annotations={
+        "title": "Phase Calibrator Lookup",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
+    """
+    Cross-match a J2000 sky position against the bundled VLA phase calibrator catalog.
+
+    Returns the nearest source within max_sep_deg that meets the band/config quality
+    filter (if specified).  The quality codes follow the NRAO convention:
+      P = <3% closure errors (best), S = 3-10%, W = 10%+ (phase-only),
+      C = confused, X = do not use.
+
+    Args:
+        params.ra_deg:       Target RA in decimal degrees.
+        params.dec_deg:      Target Dec in decimal degrees.
+        params.band_code:    VLA band code (L, C, X, …).  None = position match only.
+        params.array_config: Array config (A/B/C/D).  None = skip quality filter.
+        params.max_sep_deg:  Search radius in degrees (default 0.5).
+        params.min_quality:  Minimum quality code (default W).
+
+    Returns:
+        JSON envelope.  data contains: iau_name, alt_name, ra_deg, dec_deg,
+        separation_deg, pos_accuracy, band (if requested) with quality_A/B/C/D,
+        flux_jy, uvmin_kl, uvmax_kl.  status=NOT_FOUND if no match.
+    """
+    match = _pcc.lookup_nearest(
+        ra_deg=params.ra_deg,
+        dec_deg=params.dec_deg,
+        band_code=params.band_code,
+        array_config=params.array_config,
+        max_sep_deg=params.max_sep_deg,
+        min_quality=params.min_quality,
+    )
+
+    if match is None:
+        result = {
+            "status": "NOT_FOUND",
+            "data": None,
+            "warnings": [
+                f"No qualifying phase calibrator within {params.max_sep_deg}° "
+                f"of RA={params.ra_deg:.4f} Dec={params.dec_deg:.4f}"
+                + (f" at band {params.band_code}/{params.array_config}" if params.band_code else "")
+            ],
+        }
+        return json.dumps(result, indent=2)
+
+    e = match.entry
+    band_data: dict | None = None
+    if match.band:
+        b = match.band
+        band_data = {
+            "band_code": b.band_code,
+            "wavelength": b.wavelength,
+            "quality_A": b.quality_A,
+            "quality_B": b.quality_B,
+            "quality_C": b.quality_C,
+            "quality_D": b.quality_D,
+            "quality_at_config": match.quality,
+            "flux_jy": b.flux_jy,
+            "uvmin_kl": b.uvmin_kl,
+            "uvmax_kl": b.uvmax_kl,
+        }
+
+    result = {
+        "status": "OK",
+        "data": {
+            "iau_name": e.iau_name,
+            "alt_name": e.alt_name,
+            "ra_deg": e.ra_deg,
+            "dec_deg": e.dec_deg,
+            "separation_deg": round(match.separation_deg, 6),
+            "pos_accuracy": e.pos_accuracy,
+            "band": band_data,
+        },
+        "warnings": [],
+    }
+    return json.dumps(result, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Phase calibrator catalog lookup
+# ---------------------------------------------------------------------------
 
 class PhaseCalLookupInput(BaseModel):
     model_config = ConfigDict(extra="forbid")

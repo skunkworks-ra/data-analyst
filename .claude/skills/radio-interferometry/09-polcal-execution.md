@@ -9,37 +9,53 @@ science target needs polarimetric imaging (Stokes Q, U, V).
 Prerequisites:
 - `delay.K`, `bandpass.B`, `gain.G` tables must already exist in the workdir
 - The polarisation angle calibrator model must be set via `ms_setjy_polcal`
-- `ms_pol_cal_feasibility` must have confirmed the observation has sufficient
-  parallactic angle coverage for D-term solving
+- `ms_pol_cal_feasibility` should be run to identify the available calibrators
+  and the appropriate D-term strategy
 
 ---
 
 ## Feasibility gate — read before proceeding
 
-Always run `ms_pol_cal_feasibility` before any polarisation calibration step.
-The verdict determines which steps are possible.
+Run `ms_pol_cal_feasibility` to identify the calibrators and strategy. Xf and Df
+are **independent** capabilities — read `xf_feasible`, `df_feasible` and
+`recommended_df_poltype` directly; do not infer them from PA coverage.
+
+### Xf (absolute position angle) — ALWAYS do it when a pol standard is present
+
+Xf solves the R–L phase against the **known EVPA** of a Category A pol standard
+(3C286 / 3C138 / 3C48) whose model was set by `ms_setjy_polcal`. It needs only
+that known model. **Parallactic-angle coverage is irrelevant to Xf** — never gate
+Xf on PA spread. If `xf_feasible` is true (a Cat A standard is present), run Step 4.
+The earlier rule that skipped Xf without PA coverage was wrong.
+
+### Df (leakage) — PA coverage gates only the unknown-QU case
+
+Three strategies (NRAO VLA pol guide). The tool picks one in `recommended_df_poltype`:
+
+| Source type | poltype | PA coverage | Notes |
+|-------------|---------|-------------|-------|
+| Zero-pol **primary leakage cal** (Cat C: 3C84, 3C147, OQ208, J0713+4349, J2355+4950) | `Df` | not needed — single scan suffices | Cleanest D-term solve |
+| **Known-pol source** (Cat A/B, incl. the angle cal via its known model) | `Df` | not needed — ≥2 scans | The primary angle cal is itself a valid Df source |
+| **Unknown-pol source** (e.g. the phase cal) | `Df+QU` | **required**: ≥3 scans over ≥30° (NRAO suggests 60°) | Solves Q,U simultaneously; the only path that needs PA spread |
+
+### Verdicts
 
 | Verdict | Meaning | Action |
 |---------|---------|--------|
-| `FULL` | Angle calibrator present + PA coverage meets threshold | Proceed through all steps (1–5) |
-| `LEAKAGE_ONLY` | No angle calibrator, but PA coverage sufficient for D-terms | Skip Steps 1 and 4 (no setjy_polcal, no Xf solve); proceed with Steps 2–3 and 5 |
-| `DEGRADED` | Angle calibrator present but flagged as variable or in active flare | Proceed with caution; annotate all outputs with the variability warning; check `variability_note` field for source and dates |
-| `NOT_FEASIBLE` | No pol calibrators found, or PA spread below threshold | Do not proceed; report `blocker` field verbatim in the summary |
+| `FULL` | Angle (Cat A) standard present | All steps 1–5. Xf always; Df via the angle cal's known model (or a dedicated leakage cal if better) |
+| `LEAKAGE_ONLY` | No angle standard, but a Df-capable leakage cal exists | Skip Steps 1 and 4 (no Xf — absolute EVPA uncalibrated); do Steps 2–3 and 5 |
+| `DEGRADED` | Angle standard present but variable / in flare | Proceed (Xf + Df both feasible); annotate outputs with `variability_note` (source + dates) |
+| `NOT_FEASIBLE` | Neither Xf nor Df feasible | Do not proceed; report `blocker` verbatim |
 
-**For `LEAKAGE_ONLY`:** D-term solutions will correct instrumental leakage but
-the absolute position angle of the polarisation will be uncalibrated. Science
-targets requiring absolute EVPA accuracy cannot use this dataset for that purpose.
-Document this constraint explicitly.
+**For `LEAKAGE_ONLY`:** D-terms correct instrumental leakage but absolute EVPA is
+uncalibrated. Targets needing absolute EVPA cannot use this dataset for that purpose.
 
-**For `DEGRADED`:** The specific flaring sources and affected bands are encoded
-in `variability_note`. If the observation predates the flare period by > 6 months,
-the degradation may be negligible — note the observation date and the flare dates.
+**For `DEGRADED`:** If the observation predates the flare period by > 6 months the
+degradation may be negligible — note the observation and flare dates.
 
-**PA spread threshold:** The default threshold is 60°. The `meets_threshold`
-field in the response tells you whether the observed spread meets it. If
-`pa_spread_deg` is between 45° and 60° and the source is bright, a D-term
-solve may still succeed — use `poltype='Df+QU'` which is more robust at lower
-PA coverage. Document the reduced coverage in the output summary.
+**PA spread threshold (Df+QU only):** default 30° (practical floor; NRAO suggests 60°). Only consult `pa_spread_deg` /
+`meets_threshold` when `recommended_df_poltype` is `Df+QU`; they do not affect Xf
+or known-source `Df`.
 
 ---
 
@@ -51,8 +67,8 @@ The following table maps each polcal step to the exact MCP tool and key paramete
 |------|------|----------------|------|
 | Angle model setup | `ms_setjy_polcal` | `field`, `reffreq_ghz`, `polindex_deg=3`, `polangle_deg=4` | Run once per angle cal; populates MODEL for Df/Xf solves |
 | Cross-hand delay | `ms_gaincal` | `gaintype='KCROSS'`, `smodel=[1,0,1,0]`, `combine='scan,spw'` | Must run before D-terms; wideband combine recommended |
-| D-term leakage | `ms_polcal` | `poltype='Df'` or `'Df+QU'`, `solint='inf'`, `combine='scan'` | Df: source pol known; Df+QU: solves Q,U simultaneously (preferred) |
-| Position angle | `ms_polcal` | `poltype='Xf'`, `solint='inf'`, `combine='scan'` | Only when verdict is FULL or DEGRADED; requires D-terms in gaintable |
+| D-term leakage | `ms_polcal` | `poltype='Df'` or `'Df+QU'`, `solint='inf'`, `combine='scan'` | `Df` for known-pol/zero-pol sources (no PA needed); `Df+QU` only for unknown-pol sources (needs ≥30° PA) |
+| Position angle | `ms_polcal` | `poltype='Xf'`, `solint='inf'`, `combine='scan'` | Run whenever a Cat A pol standard is present (`xf_feasible`); independent of PA coverage; requires D-terms in gaintable |
 | Apply all tables | `ms_applycal` | Pass all 7 tables: priorcals → K → B → G → Kcross → D → X | Table order is required by RIME; `parang=True` mandatory |
 
 ---
@@ -112,6 +128,12 @@ order-of-magnitude low).
 before (or together with) `ms_setjy_polcal` so the entire MS uses one consistent
 physical `MODEL_DATA`. See skill 07 Step 6 (fluxscale) for the sanity check.
 
+> **Before editing or debugging a setjy model, read `09b-polcal-reference.md`.**
+> Stokes I (`spix`), `polindex` and `polangle` use *three different* polynomial
+> forms and variables, and all three are **per-band** local expansions about
+> `reffreq` — not global wideband fits. Conflating these is the most common
+> setjy-manual error.
+
 ---
 
 ## Step 2 — Cross-hand delay (Kcross)
@@ -126,7 +148,7 @@ gaincal(
     field='{ANGLE_CAL_FIELD}',
     gaintype='KCROSS',
     solint='inf',
-    combine='scan,spw',       # combine across spws for wideband SNR
+    combine='scan',           # per-SPW (default); add ',spw' only for multiband
     refant='{REFANT}',
     smodel=[1, 0, 1, 0],      # [I, Q, U, V] — non-zero U to force cross-hand signal
     gaintable=['{PRIORCALS}', 'delay.K', 'bandpass.B', 'gain.G'],
@@ -134,9 +156,20 @@ gaincal(
 )
 ```
 
-**Multiband (combine='scan,spw') is preferred** over per-SPW solutions because
-Kcross is a single instrumental delay, not a frequency-dependent effect. Per-SPW
-solutions will have lower SNR and may absorb real D-term signal.
+**Per-SPW vs multiband — a deliberate choice, not a default.** Two valid options:
+
+- **Per-SPW** (`combine='scan'`): one Kcross solution per SPW. No spwmap needed at
+  apply. Simplest; use unless you have a specific reason to combine.
+- **Multiband** (`combine='scan,spw'`): one solution across all SPWs for higher SNR,
+  treating the cross-hand delay as a single instrumental term. **VLA-specific** (it
+  relies on the VLA's discrete-SPW structure; it does not transfer to MeerKAT/uGMRT).
+  The combined table holds a single SPW, so **every downstream use must pass
+  `spwmap=[[0,0,…0]]`** (length = n_spw) — in the `ms_polcal` Df/Xf solves that take
+  it as a prior, and in the final `ms_applycal`. Omitting spwmap silently leaves
+  SPWs 1..N uncorrected. The `spwmap` argument on `ms_gaincal`/`ms_polcal`/
+  `ms_applycal` exists for exactly this; it defaults to identity (per-SPW behaviour).
+
+Do not assume multiband; decide per dataset.
 
 **Expected value:** Kcross amplitude should be < 2 ns for VLA. Larger values
 indicate a real feed misalignment or a calibration error earlier in the chain.
@@ -149,26 +182,29 @@ D-terms quantify leakage between the two polarisation feeds per antenna per freq
 
 ### Df vs Df+QU — decision table
 
-| Situation | Use |
-|---|---|
-| Angle calibrator is 3C286 or 3C138, PA coverage ≥ 45° | `poltype='Df'` |
-| Angle calibrator is 3C48 at S-band (model from fit_from_catalogue), PA ≥ 45° | `poltype='Df'` |
-| PA coverage ≥ 45° AND calibrator Q,U unknown or uncertain | `poltype='Df+QU'` |
-| Phase calibrator with PA coverage ≥ 45° (polarisation unknown) | `poltype='Df+QU'` |
-| PA coverage < 45° | D-term solve is unreliable — flag this; do not proceed |
+Pick the strategy by what is **known** about the source, not by PA coverage. PA
+coverage is required **only** for the unknown-pol (`Df+QU`) path. Use the tool's
+`recommended_df_poltype` directly.
+
+| Situation | Use | PA coverage |
+|---|---|---|
+| Zero-pol primary leakage cal (Cat C: 3C84, 3C147, OQ208, J0713+4349, J2355+4950) | `poltype='Df'` | not needed (single scan) |
+| Angle cal with known model — 3C286 / 3C138 / 3C48 (model from `fit_from_catalogue`) | `poltype='Df'` | not needed (≥2 scans) |
+| Any catalogue source with known Q,U | `poltype='Df'` | not needed |
+| Source of **unknown** Q,U (e.g. the phase cal) | `poltype='Df+QU'` | **required**: ≥ threshold (default 30°; NRAO suggests 60°), ≥3 scans |
+| Unknown-pol source **below** the PA threshold | neither — flag; pick a known-pol source instead | — |
 
 `poltype='Df'` solves for D-terms assuming the source Q,U are known from the
-`setjy(standard='manual')` model. Use only when the model is well-established.
+`setjy(standard='manual')` model (or that the source is unpolarised). This is the
+default for the primary angle cal and for zero-pol leakage cals — **no parallactic
+coverage is required**.
 
-`poltype='Df+QU'` simultaneously solves for D-terms and the source Q,U — safe
-to use on **any source with PA coverage ≥ 45°**, including sources of unknown
-polarisation. The recovered Q and U provide a built-in sanity check:
+`poltype='Df+QU'` simultaneously solves for D-terms and the source Q,U, for a
+source whose polarisation is unknown. This is the **only** path that needs PA
+coverage (≥ threshold). The recovered Q and U provide a built-in sanity check:
 - If the source is unpolarised: recovered Q/U ≈ noise per SPW — solution is valid
-- If the source is polarised: Q/U show a coherent frequency structure — the
-  recovered values are the true source polarisation and can be inspected per SPW
-
-This means `Df+QU` can be used on the phase calibrator even if it is not in the
-polarisation catalogue, as long as it has ≥ 45° of parallactic angle coverage.
+- If the source is polarised: Q/U show coherent frequency structure — the
+  recovered values are the true source polarisation, inspectable per SPW
 
 ```python
 polcal(
@@ -206,6 +242,10 @@ rest of the array is clean. An array-wide D-term above 10% is a systematic probl
 
 Xf calibrates the absolute orientation of the polarisation angle on the sky.
 It uses a source with a well-known and stable EVPA.
+
+**Always run this step when a Category A pol standard is present** (`xf_feasible`
+is true). Xf solves the R–L phase against that source's known EVPA model — it does
+**not** require parallactic-angle coverage. Do not skip Xf for lack of PA spread.
 
 **Preferred sources (VLA):**
 - 3C286 — stable PA ~33° at all bands; preferred
@@ -290,7 +330,7 @@ These are written alongside `delay.K`, `bandpass.B`, `gain.G` in `/data/jobs/{WO
 
 | Check | Good | Action if not good |
 |---|---|---|
-| PA coverage (leakage cal) | ≥ 45° | Do not attempt D-term solve; flag in summary |
+| PA coverage (Df+QU only) | ≥ 30° (NRAO: 60°) | Below floor: don't attempt Df+QU; use a known-pol/zero-pol source with plain Df instead |
 | Kcross amplitude | < 2 ns | Flag in summary; check if earlier calibration is correct |
 | D-term amplitude (median) | < 5% | Flag in summary; if < 10%, proceed with caution |
 | D-term outlier antennas | 0–1 | Flag affected antennas; exclude from applycal if > 20% |

@@ -36,7 +36,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from ms_inspect.exceptions import ComputationError
-from ms_inspect.util.casa_context import validate_ms_path
+from ms_inspect.util.casa_context import open_table, validate_ms_path
+from ms_inspect.util.conversions import mjd_seconds_to_unix
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.polcal_setjy_fit import (
@@ -49,17 +50,42 @@ TOOL_NAME = "ms_setjy_polcal"
 _PB_STANDARD = "Perley-Butler 2017"
 _DEFAULT_MIN_CHUNK_MHZ = 32.0
 
+def _read_band_range_ghz(ms_str: str) -> tuple[float, float]:
+    """Return (lo, hi) GHz spanning all channels of all spectral windows.
 
-def _build_script(
-    ms_str: str,
-    field: str,
-    calibrator: str,
-    reffreq_ghz: float,
-    polindex: list[float],
-    polangle: list[float],
-    min_chunk_mhz: float,
-) -> str:
-    """Return a self-contained probe→fit→apply CASA script."""
+    setjy spix/polindex/polangle are per-band local expansions, so the fits must
+    be restricted to the observed band — not the catalogue's full 1–48 GHz span.
+    """
+    import numpy as np
+
+    los: list[float] = []
+    his: list[float] = []
+    with open_table(ms_str + "/SPECTRAL_WINDOW") as tb:
+        for i in range(tb.nrows()):
+            cf = tb.getcell("CHAN_FREQ", i)
+            los.append(float(np.min(cf)))
+            his.append(float(np.max(cf)))
+    return min(los) / 1e9, max(his) / 1e9
+
+
+def _read_obs_year(ms_str: str) -> float | None:
+    """Return the decimal observation year from OBSERVATION.TIME_RANGE, or None."""
+    from datetime import datetime, timezone
+
+    try:
+        with open_table(ms_str + "/OBSERVATION") as tb:
+            tr = tb.getcell("TIME_RANGE", 0)  # MJD seconds [start, end]
+        mid_unix = mjd_seconds_to_unix((float(tr[0]) + float(tr[1])) / 2.0)
+        dt = datetime.fromtimestamp(mid_unix, tz=timezone.utc)
+        y0 = datetime(dt.year, 1, 1, tzinfo=timezone.utc)
+        y1 = datetime(dt.year + 1, 1, 1, tzinfo=timezone.utc)
+        return dt.year + (dt - y0).total_seconds() / (y1 - y0).total_seconds()
+    except Exception:
+        return None
+
+
+def _build_script(ms_str: str, field: str, params: SetjyPolParams) -> str:
+    """Return a self-contained CASA setjy script for polarization model setting."""
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -158,13 +184,13 @@ print(f"Probed {{freqs.size}} freq points; I@{{reffreq_ghz}}GHz = {{flux_at_ref:
 # --- Apply the full polarized manual model ---
 setjy(
     vis=ms_path,
-    field=field,
-    standard="manual",
-    fluxdensity=[flux_at_ref, 0, 0, 0],
-    spix=spix,
-    reffreq=f"{{reffreq_ghz}}GHz",
-    polindex=polindex,
-    polangle=polangle,
+    field={field!r},
+    standard='manual',
+    fluxdensity=[{params.flux_jy:.6f}, 0, 0, 0],
+    spix={params.spix!r},
+    reffreq='{params.reffreq_ghz}GHz',
+    polindex={params.polindex!r},
+    polangle={params.polangle!r},
     scalebychan=True,
     usescratch=True,
 )
@@ -229,7 +255,7 @@ def run(
     workdir: str,
     reffreq_ghz: float,
     calibrator_name: str | None = None,
-    epoch: str = "2019",
+    epoch: str | None = None,
     pol_freq_range_lo_ghz: float | None = None,
     pol_freq_range_hi_ghz: float | None = None,
     polindex_deg: int = 3,
@@ -245,12 +271,14 @@ def run(
     catalogue. See module docstring for the rationale.
 
     Args:
-        ms_path:               Path to the Measurement Set.
-        field:                 CASA field selection string (e.g. '3C286').
-        workdir:               Existing directory to write setjy_polcal.py into.
-        reffreq_ghz:           Reference frequency (GHz) for the polynomial expansion.
-        calibrator_name:       Catalogue name to look up (defaults to field if None).
-        epoch:                 Catalogue epoch key for the pol terms (default '2019').
+        ms_path:              Path to the Measurement Set.
+        field:                CASA field selection string (e.g. '3C48').
+        workdir:              Existing directory to write setjy_polcal.py into.
+        reffreq_ghz:          Reference frequency (GHz) for the polynomial expansion.
+        calibrator_name:      Catalogue name to look up (defaults to field if None).
+        epoch:                Catalogue epoch key. Default None auto-selects the
+                              epoch nearest the observation date (latest if no
+                              obs date is supplied).
         pol_freq_range_lo_ghz: Lower bound (GHz) to restrict pol fits.
         pol_freq_range_hi_ghz: Upper bound (GHz) to restrict pol fits.
         polindex_deg:          Degree of polindex polynomial (default 3).
@@ -278,11 +306,36 @@ def run(
         )
 
     lookup_name = calibrator_name or field
-    pol_freq_range = (
-        (pol_freq_range_lo_ghz, pol_freq_range_hi_ghz)
-        if pol_freq_range_lo_ghz is not None and pol_freq_range_hi_ghz is not None
-        else None
-    )
+
+    # Restrict all fits to the observed band (spix/polindex/polangle are per-band
+    # local expansions about reffreq, not global wideband fits).
+    try:
+        band_lo, band_hi = _read_band_range_ghz(ms_str)
+        casa_calls.append("tb.open(SPECTRAL_WINDOW) → CHAN_FREQ (band range)")
+    except Exception as exc:
+        band_lo = band_hi = None
+        warnings.append(
+            f"Could not read spectral window band range ({exc}); "
+            "fits will use the full catalogue range (NOT per-band)."
+        )
+
+    flux_freq_range = (band_lo, band_hi) if band_lo is not None else None
+
+    # Explicit caller override for the pol fits; otherwise default to the band.
+    if pol_freq_range_lo_ghz is not None and pol_freq_range_hi_ghz is not None:
+        pol_freq_range: tuple[float, float] | None = (pol_freq_range_lo_ghz, pol_freq_range_hi_ghz)
+    else:
+        pol_freq_range = flux_freq_range
+
+    if band_lo is not None and not (band_lo <= reffreq_ghz <= band_hi):
+        warnings.append(
+            f"reffreq {reffreq_ghz} GHz is outside the observed band "
+            f"({band_lo:.3f}–{band_hi:.3f} GHz); spix is extrapolated."
+        )
+
+    obs_year = _read_obs_year(ms_str)
+    if obs_year is not None:
+        casa_calls.append("tb.open(OBSERVATION) → TIME_RANGE (obs epoch)")
 
     # --- Pol terms from the catalogue (no CASA) ---
     try:
@@ -290,9 +343,11 @@ def run(
             lookup_name,
             reffreq_ghz=reffreq_ghz,
             epoch=epoch,
+            flux_freq_range_ghz=flux_freq_range,
             pol_freq_range_ghz=pol_freq_range,
             polindex_deg=polindex_deg,
             polangle_deg=polangle_deg,
+            obs_epoch_year=obs_year,
         )
     except KeyError as exc:
         raise ComputationError(f"Calibrator lookup failed: {exc}", ms_path=ms_path) from exc
@@ -368,11 +423,11 @@ def run(
         vis=ms_str,
         field=field,
         standard="manual",
-        fluxdensity=[flux_at_ref, 0, 0, 0],
-        spix=spix,
-        reffreq=f"{reffreq_ghz}GHz",
-        polindex=polindex,
-        polangle=polangle,
+        fluxdensity=[params.flux_jy, 0, 0, 0],
+        spix=params.spix,
+        reffreq=f"{params.reffreq_ghz}GHz",
+        polindex=params.polindex,
+        polangle=params.polangle,
         scalebychan=True,
         usescratch=True,
     )
