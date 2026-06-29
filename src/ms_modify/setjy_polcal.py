@@ -43,6 +43,7 @@ from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.polcal_setjy_fit import (
     fit_pol_terms_from_catalogue,
     fit_stokes_i_adaptive,
+    resolve_epoch,
 )
 
 TOOL_NAME = "ms_setjy_polcal"
@@ -84,7 +85,15 @@ def _read_obs_year(ms_str: str) -> float | None:
         return None
 
 
-def _build_script(ms_str: str, field: str, params: SetjyPolParams) -> str:
+def _build_script(
+    ms_str: str,
+    field: str,
+    calibrator: str,
+    reffreq_ghz: float,
+    polindex: list[float],
+    polangle: list[float],
+    min_chunk_mhz: float,
+) -> str:
     """Return a self-contained CASA setjy script for polarization model setting."""
     return f"""\
 #!/usr/bin/env python
@@ -185,12 +194,12 @@ print(f"Probed {{freqs.size}} freq points; I@{{reffreq_ghz}}GHz = {{flux_at_ref:
 setjy(
     vis=ms_path,
     field={field!r},
-    standard='manual',
-    fluxdensity=[{params.flux_jy:.6f}, 0, 0, 0],
-    spix={params.spix!r},
-    reffreq='{params.reffreq_ghz}GHz',
-    polindex={params.polindex!r},
-    polangle={params.polangle!r},
+    standard="manual",
+    fluxdensity=[flux_at_ref, 0, 0, 0],
+    spix=spix,
+    reffreq=f"{{reffreq_ghz}}GHz",
+    polindex=polindex,
+    polangle=polangle,
     scalebychan=True,
     usescratch=True,
 )
@@ -338,12 +347,19 @@ def run(
         casa_calls.append("tb.open(OBSERVATION) → TIME_RANGE (obs epoch)")
 
     # --- Pol terms from the catalogue (no CASA) ---
+    # Resolve epoch to the concrete catalogue key actually used (so the response
+    # reports e.g. '2019' rather than the caller's None). Leave epoch untouched
+    # when the calibrator is absent — the fitter raises the clean lookup KeyError.
+    from ms_inspect.util.pol_calibrators import lookup_pol
+
+    _entry = lookup_pol(lookup_name)
+    if _entry is not None:
+        epoch = resolve_epoch(_entry, epoch, obs_year)
     try:
         polindex, polangle = fit_pol_terms_from_catalogue(
             lookup_name,
             reffreq_ghz=reffreq_ghz,
             epoch=epoch,
-            flux_freq_range_ghz=flux_freq_range,
             pol_freq_range_ghz=pol_freq_range,
             polindex_deg=polindex_deg,
             polangle_deg=polangle_deg,
@@ -423,11 +439,11 @@ def run(
         vis=ms_str,
         field=field,
         standard="manual",
-        fluxdensity=[params.flux_jy, 0, 0, 0],
-        spix=params.spix,
-        reffreq=f"{params.reffreq_ghz}GHz",
-        polindex=params.polindex,
-        polangle=params.polangle,
+        fluxdensity=[flux_at_ref, 0, 0, 0],
+        spix=spix,
+        reffreq=f"{reffreq_ghz}GHz",
+        polindex=polindex,
+        polangle=polangle,
         scalebychan=True,
         usescratch=True,
     )

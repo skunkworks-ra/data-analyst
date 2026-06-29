@@ -260,13 +260,35 @@ def fit_stokes_i_adaptive(
     return flux_at_ref, spix
 
 
+def resolve_epoch(entry, epoch: str | None, obs_epoch_year: float | None) -> str:
+    """Resolve a catalogue epoch key, auto-selecting when ``epoch`` is None.
+
+    Epoch keys carry a 4-digit year (e.g. '2019'); pick the one nearest
+    ``obs_epoch_year``, or the latest year when no observation date is given.
+    A non-None ``epoch`` is returned unchanged (validated downstream).
+    """
+    if epoch is not None:
+        return epoch
+
+    import re
+
+    def _epoch_year(key: str) -> int:
+        m = re.search(r"(\d{4})", key)
+        return int(m.group(1)) if m else 0
+
+    if obs_epoch_year is not None:
+        return min(entry.epochs, key=lambda k: abs(_epoch_year(k) - obs_epoch_year))
+    return max(entry.epochs, key=_epoch_year)
+
+
 def fit_pol_terms_from_catalogue(
     calibrator_name: str,
     reffreq_ghz: float,
-    epoch: str = "2019",
+    epoch: str | None = None,
     pol_freq_range_ghz: tuple[float, float] | None = None,
     polindex_deg: int = 3,
     polangle_deg: int = 4,
+    obs_epoch_year: float | None = None,
 ) -> tuple[list[float], list[float]]:
     """Fit only the polarization terms (polindex, polangle) from the catalogue.
 
@@ -286,6 +308,7 @@ def fit_pol_terms_from_catalogue(
     entry = lookup_pol(calibrator_name)
     if entry is None:
         raise KeyError(f"Calibrator {calibrator_name!r} not found in pol catalogue.")
+    epoch = resolve_epoch(entry, epoch, obs_epoch_year)
     rows = entry.epochs.get(epoch)
     if not rows:
         raise KeyError(
@@ -387,21 +410,7 @@ def fit_from_catalogue(
     if entry is None:
         raise KeyError(f"Calibrator {calibrator_name!r} not found in pol catalogue.")
 
-    if epoch is None:
-        # Select the pol reference epoch nearest the observation date. Epoch keys
-        # carry a 4-digit year (e.g. '2019'); pick the one closest to
-        # obs_epoch_year, or the latest year when no obs date is given.
-        import re
-
-        def _epoch_year(key: str) -> int:
-            m = re.search(r"(\d{4})", key)
-            return int(m.group(1)) if m else 0
-
-        if obs_epoch_year is not None:
-            epoch = min(entry.epochs, key=lambda k: abs(_epoch_year(k) - obs_epoch_year))
-        else:
-            epoch = max(entry.epochs, key=_epoch_year)
-
+    epoch = resolve_epoch(entry, epoch, obs_epoch_year)
     rows = entry.epochs.get(epoch)
     if not rows:
         raise KeyError(
