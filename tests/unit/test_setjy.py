@@ -170,7 +170,7 @@ class TestSetjyRun:
         script = (workdir / "setjy.py").read_text()
         assert "Perley-Butler 2017" in script
 
-    def test_usescratch_defaults_false_in_script(self, tmp_path):
+    def test_usescratch_defaults_true_in_script(self, tmp_path):
         from ms_modify.setjy import run
 
         ms = self._make_ms(tmp_path)
@@ -179,8 +179,9 @@ class TestSetjyRun:
         with patch("ms_modify.setjy._get_field_names", return_value=["3C286"]):
             result = run(str(ms), str(workdir), execute=False)
         script = (workdir / "setjy.py").read_text()
-        assert "usescratch=False" in script
-        assert result["data"]["usescratch"] is False
+        assert "usescratch=True" in script
+        assert "usescratch=False" not in script
+        assert result["data"]["usescratch"] is True
 
     def test_usescratch_true_threads_into_script_and_response(self, tmp_path):
         from ms_modify.setjy import run

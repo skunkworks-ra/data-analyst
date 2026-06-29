@@ -46,7 +46,7 @@ def _build_setjy_block(field_name: str, standard: str, usescratch: bool) -> str:
         f"    vis=ms_path,\n"
         f"    field={field_name!r},\n"
         f"    standard={standard!r},\n"
-        f"    usescratch=True,\n"  # materialise MODEL_DATA on calibrators.ms for residual QA
+        f"    usescratch={usescratch},\n"
         f")"
     )
 
@@ -92,7 +92,7 @@ def run(
     ms_path: str,
     workdir: str,
     standard: str = _DEFAULT_STANDARD,
-    usescratch: bool = False,
+    usescratch: bool = True,
     execute: bool = False,
 ) -> dict:
     """
@@ -102,8 +102,9 @@ def run(
         ms_path:    Path to calibrators.ms (or full MS).
         workdir:    Existing output directory for setjy.py script.
         standard:   Flux standard (default 'Perley-Butler 2017').
-        usescratch: If False (default), write a virtual model (no MODEL_DATA
-                    column). If True, fill the physical MODEL_DATA column.
+        usescratch: If True (default), fill the physical MODEL_DATA column (so
+                    ms_residual_stats and polarization calibration work). If
+                    False, write a virtual model (no MODEL_DATA column).
                     Must be consistent across ALL setjy calls on one MS: if
                     polarization calibration is in scope, ms_setjy_polcal forces
                     usescratch=True (virtual models fail on source models with
@@ -226,7 +227,7 @@ def run(
                 vis=ms_str,
                 field=fname,
                 standard=standard,
-                usescratch=True,  # materialise MODEL_DATA on calibrators.ms for residual QA
+                usescratch=usescratch,
             )
             fields_done.append(fname)
         except Exception as exc:
