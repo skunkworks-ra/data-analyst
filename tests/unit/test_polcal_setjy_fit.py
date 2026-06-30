@@ -389,3 +389,34 @@ class TestFitPolTermsFromCatalogue:
     def test_unknown_epoch_raises(self):
         with pytest.raises(KeyError, match="Epoch"):
             fit_pol_terms_from_catalogue("3C286", reffreq_ghz=1.5, epoch="nope")
+
+    def test_lband_restriction_clamps_degree(self, caplog):
+        """A band restriction can leave too few nodes for the default degrees.
+
+        3C286 restricted to L-band (1-2 GHz) exposes only 3 pol nodes
+        (1.02/1.47/1.87 GHz). The default deg 3/4 would need 4/5 nodes; rather
+        than raising (the AB1345 G55.7+3.4 trap), the fit must clamp each degree
+        to (n_nodes - 1) = 2 and warn.
+        """
+        with caplog.at_level("WARNING"):
+            polindex, polangle = fit_pol_terms_from_catalogue(
+                "3C286",
+                reffreq_ghz=1.5,
+                pol_freq_range_ghz=(1.0, 2.0),
+            )
+        # deg 2 → 3 ascending coefficients each.
+        assert len(polindex) == 3
+        assert len(polangle) == 3
+        # c0 still tracks the in-band values (~9.8% pol, PA ~33°).
+        assert polindex[0] == pytest.approx(0.098, abs=0.01)
+        assert polangle[0] == pytest.approx(math.radians(33.0), abs=0.02)
+        assert "clamping fit degree" in caplog.text
+
+    def test_floor_of_two_nodes_enforced(self):
+        """Fewer than 2 in-band nodes carries no slope info → must still raise."""
+        with pytest.raises(ValueError, match="≥2 in-band nodes"):
+            fit_pol_terms_from_catalogue(
+                "3C286",
+                reffreq_ghz=1.0,
+                pol_freq_range_ghz=(1.0, 1.1),  # only the 1.02 GHz node
+            )

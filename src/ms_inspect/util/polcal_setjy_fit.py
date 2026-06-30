@@ -26,9 +26,12 @@ No CASA dependency. Requires numpy only.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Output type
@@ -194,6 +197,13 @@ def fit_setjy_params(
             f"polindex fit needs ≥2 in-band nodes; got {mask_p.sum()} after filtering."
         )
     eff_polindex_deg = min(polindex_deg, int(mask_p.sum()) - 1)
+    if eff_polindex_deg < polindex_deg:
+        logger.warning(
+            "polindex: only %d in-band node(s); clamping fit degree %d → %d.",
+            int(mask_p.sum()),
+            polindex_deg,
+            eff_polindex_deg,
+        )
     polindex_coeffs = fit_polindex(freq[mask_p], pf[mask_p], reffreq_ghz, deg=eff_polindex_deg)
 
     # --- Pol angle ---
@@ -208,6 +218,13 @@ def fit_setjy_params(
             f"polangle fit needs ≥2 in-band nodes; got {mask_a.sum()} after filtering."
         )
     eff_polangle_deg = min(polangle_poly_deg, int(mask_a.sum()) - 1)
+    if eff_polangle_deg < polangle_poly_deg:
+        logger.warning(
+            "polangle: only %d in-band node(s); clamping fit degree %d → %d.",
+            int(mask_a.sum()),
+            polangle_poly_deg,
+            eff_polangle_deg,
+        )
     polangle_coeffs = fit_polangle(freq[mask_a], pa_rad[mask_a], reffreq_ghz, deg=eff_polangle_deg)
 
     return SetjyPolParams(
@@ -340,21 +357,38 @@ def fit_pol_terms_from_catalogue(
             mask &= (freq >= lo) & (freq <= hi)
         return mask
 
+    # Try the requested degree first; when the in-band node count cannot support
+    # it, clamp the degree down to (n_nodes - 1) and warn rather than failing. A
+    # hard floor of 2 nodes is kept — a single node carries no frequency
+    # information so no slope is determinable. (3C286 restricted to L-band has
+    # only 3 pol nodes at 1.02/1.47/1.87 GHz, below the default deg 3/4.)
+    n_p = int(_band_mask(pf).sum())
+    if n_p < 2:
+        raise ValueError(f"polindex fit needs ≥2 in-band nodes; got {n_p}.")
+    eff_polindex_deg = min(polindex_deg, n_p - 1)
+    if eff_polindex_deg < polindex_deg:
+        logger.warning(
+            "polindex: only %d in-band node(s); clamping fit degree %d → %d.",
+            n_p,
+            polindex_deg,
+            eff_polindex_deg,
+        )
     mask_p = _band_mask(pf)
-    if mask_p.sum() < polindex_deg + 1:
-        raise ValueError(
-            f"polindex fit (deg {polindex_deg}) needs ≥{polindex_deg + 1} valid nodes; "
-            f"got {mask_p.sum()}."
-        )
-    polindex = fit_polindex(freq[mask_p], pf[mask_p], reffreq_ghz, deg=polindex_deg)
+    polindex = fit_polindex(freq[mask_p], pf[mask_p], reffreq_ghz, deg=eff_polindex_deg)
 
-    mask_a = _band_mask(pa)
-    if mask_a.sum() < polangle_deg + 1:
-        raise ValueError(
-            f"polangle fit (deg {polangle_deg}) needs ≥{polangle_deg + 1} valid nodes; "
-            f"got {mask_a.sum()}."
+    n_a = int(_band_mask(pa).sum())
+    if n_a < 2:
+        raise ValueError(f"polangle fit needs ≥2 in-band nodes; got {n_a}.")
+    eff_polangle_deg = min(polangle_deg, n_a - 1)
+    if eff_polangle_deg < polangle_deg:
+        logger.warning(
+            "polangle: only %d in-band node(s); clamping fit degree %d → %d.",
+            n_a,
+            polangle_deg,
+            eff_polangle_deg,
         )
-    polangle = fit_polangle(freq[mask_a], pa[mask_a], reffreq_ghz, deg=polangle_deg)
+    mask_a = _band_mask(pa)
+    polangle = fit_polangle(freq[mask_a], pa[mask_a], reffreq_ghz, deg=eff_polangle_deg)
 
     return polindex, polangle
 

@@ -33,6 +33,7 @@ CASA coefficient convention (ascending order):
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 
 from ms_inspect.exceptions import ComputationError
@@ -71,15 +72,15 @@ def _read_band_range_ghz(ms_str: str) -> tuple[float, float]:
 
 def _read_obs_year(ms_str: str) -> float | None:
     """Return the decimal observation year from OBSERVATION.TIME_RANGE, or None."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     try:
         with open_table(ms_str + "/OBSERVATION") as tb:
             tr = tb.getcell("TIME_RANGE", 0)  # MJD seconds [start, end]
         mid_unix = mjd_seconds_to_unix((float(tr[0]) + float(tr[1])) / 2.0)
-        dt = datetime.fromtimestamp(mid_unix, tz=timezone.utc)
-        y0 = datetime(dt.year, 1, 1, tzinfo=timezone.utc)
-        y1 = datetime(dt.year + 1, 1, 1, tzinfo=timezone.utc)
+        dt = datetime.fromtimestamp(mid_unix, tz=UTC)
+        y0 = datetime(dt.year, 1, 1, tzinfo=UTC)
+        y1 = datetime(dt.year + 1, 1, 1, tzinfo=UTC)
         return dt.year + (dt - y0).total_seconds() / (y1 - y0).total_seconds()
     except Exception:
         return None
@@ -377,6 +378,19 @@ def run(
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
 
+    # The fitter clamps each degree down to (in-band node count - 1) when the
+    # requested degree exceeds the available nodes; the returned coefficient list
+    # length encodes the effective degree. Surface it so a clamp is visible.
+    eff_polindex_deg = len(polindex) - 1
+    eff_polangle_deg = len(polangle) - 1
+    if eff_polindex_deg < polindex_deg or eff_polangle_deg < polangle_deg:
+        warnings.append(
+            f"Fit degree clamped to in-band node count: "
+            f"polindex {polindex_deg}→{eff_polindex_deg}, "
+            f"polangle {polangle_deg}→{eff_polangle_deg} "
+            f"(requested degree exceeded available nodes in band {pol_freq_range})."
+        )
+
     base_data: dict = {
         "script_path": fmt_field(script_path),
         "calibrator": fmt_field(lookup_name),
@@ -385,8 +399,10 @@ def run(
         "min_chunk_mhz": min_chunk_mhz,
         "polindex": fmt_field(polindex),
         "polindex_c0": round(polindex[0], 6),
+        "polindex_deg_used": eff_polindex_deg,
         "polangle": fmt_field(polangle),
         "polangle_c0_rad": round(polangle[0], 6),
+        "polangle_deg_used": eff_polangle_deg,
         "stokes_i_source": "Perley-Butler 2017 (probed at run time)",
     }
 
