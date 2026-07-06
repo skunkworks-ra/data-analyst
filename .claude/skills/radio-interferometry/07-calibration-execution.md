@@ -42,6 +42,17 @@ Fill every `{PLACEHOLDER}` from Phase 1–2 tool outputs before calling any solv
 
 ---
 
+## Field selection: names, never numeric IDs
+
+Pass field **names** to every `field`, `reference`, `transfer`, and `gainfield`
+argument — never numeric IDs. `split()` re-indexes fields (a `split(field='0,1,2,4')`
+renumbers to `0,1,2,3`), so an ID correct on the parent MS silently selects the
+wrong source on the split, corrupting the transfer with no error. Names survive
+`split()` unchanged. Use the `{*_FIELD}` placeholders; if a tool warns of numeric
+IDs, convert to names before proceeding.
+
+---
+
 ## Flux standards by band
 
 | Band | Frequency range | Standard | CASA name |
