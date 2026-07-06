@@ -22,6 +22,36 @@ from ms_modify.exceptions import TcleanFailedError
 
 TOOL_NAME = "ms_tclean"
 
+# Global tclean stopcodes (casatasks imager_deconvolver). Converged = {2, 8}.
+_STOPCODE_DESC = {
+    1: "iteration limit reached before threshold",
+    2: "threshold reached",
+    3: "force stop",
+    4: "no change in peak residual across two major cycles",
+    5: "peak residual diverging (>3x previous major cycle)",
+    6: "peak residual diverging (>3x minimum reached)",
+    7: "zero mask (nothing to deconvolve)",
+    8: "n-sigma / combined exit criterion",
+}
+_CONVERGED_STOPCODES = {2, 8}
+
+
+def _convergence(summary: object) -> tuple[int | None, str, bool, str | None]:
+    """(stopcode, description, converged, warning) from a tclean summary dict."""
+    if not isinstance(summary, dict) or "stopcode" not in summary:
+        return None, "unknown", False, (
+            "tclean returned no summary dict; convergence could not be verified."
+        )
+    code = int(summary["stopcode"])
+    desc = _STOPCODE_DESC.get(code, f"unrecognized stopcode {code}")
+    if code in _CONVERGED_STOPCODES:
+        return code, desc, True, None
+    return code, desc, False, (
+        f"tclean did NOT converge: stopcode {code} ({desc}). Restored image is "
+        "likely deconvolution/sidelobe-limited, not a clean detection — inspect "
+        "before reporting."
+    )
+
 
 def _script_path(workdir: Path, imagename: str) -> Path:
     stem = Path(imagename).name.replace(".", "_")
@@ -96,7 +126,7 @@ for p in glob.glob(imagename + ".*"):
     elif os.path.isfile(p):
         os.remove(p)
 
-tclean(
+summary = tclean(
     vis          = ms_path,
     imagename    = imagename,
     field        = {field!r},
@@ -113,8 +143,20 @@ tclean(
     pbcor        = True,
     pblimit      = {pblimit},
     savemodel    = {savemodel!r},
+    fullsummary  = False,
 )
-print("tclean complete. Images written with base name:", imagename)
+_code = summary.get("stopcode") if isinstance(summary, dict) else None
+_desc = {{
+    1: "iteration limit reached before threshold", 2: "threshold reached",
+    3: "force stop", 4: "no change in peak residual",
+    5: "diverging (>3x prev major cycle)", 6: "diverging (>3x minimum)",
+    7: "zero mask", 8: "n-sigma / combined",
+}}.get(_code, "unknown")
+if _code in (2, 8):
+    print(f"tclean CONVERGED (stopcode={{_code}}: {{_desc}}):", imagename)
+else:
+    print(f"tclean DID NOT CONVERGE (stopcode={{_code}}: {{_desc}}) -- image likely "
+          "deconvolution-limited, not a clean detection:", imagename)
 """
 
 
@@ -335,6 +377,7 @@ def run(
         pbcor=True,
         pblimit=pblimit,
         savemodel=savemodel,
+        fullsummary=False,
     )
     if deconvolver == "mtmfs" and nterms is not None:
         tclean_kwargs["nterms"] = nterms
@@ -354,7 +397,7 @@ def run(
 
     casa_calls.append(f"casatasks.tclean(imagename={imagename!r}, ...)")
     try:
-        _tclean(**tclean_kwargs)
+        summary = _tclean(**tclean_kwargs)
     except Exception as exc:
         raise TcleanFailedError(
             f"tclean raised: {exc}",
@@ -374,10 +417,21 @@ def run(
             ms_path=ms_path,
         )
 
+    # Existence of the image is not success: a clean that stopped on the
+    # iteration limit (or diverged) is deconvolution-limited, not a detection.
+    stopcode, stop_reason, converged, conv_warn = _convergence(summary)
+    if conv_warn:
+        warnings.append(conv_warn)
+
     data = {
         "script_path": fmt_field(str(script_file)),
         "imagename": fmt_field(imagename),
         "completed": fmt_field(completed),
+        "converged": fmt_field(
+            converged, flag="COMPLETE" if stopcode is not None else "UNAVAILABLE"
+        ),
+        "stopcode": fmt_field(stopcode),
+        "stop_reason": fmt_field(stop_reason),
     }
     return response_envelope(
         tool_name=TOOL_NAME,

@@ -101,3 +101,24 @@ class TestCubeArgs:
         assert "start" not in script
         assert "width" not in script
         assert "outframe" not in script
+
+
+class TestConvergence:
+    def test_script_requests_compact_summary_and_checks_convergence(self, tmp_path):
+        script, _ = _run(tmp_path)
+        assert "fullsummary  = False" in script
+        assert "summary = tclean(" in script
+        assert 'summary.get("stopcode")' in script
+        assert "DID NOT CONVERGE" in script
+
+    def test_convergence_classifier(self):
+        from ms_modify.tclean import _convergence
+
+        code, _desc, converged, warn = _convergence({"stopcode": 2})
+        assert code == 2 and converged and warn is None
+
+        code, _desc, converged, warn = _convergence({"stopcode": 1})
+        assert code == 1 and not converged and "did NOT converge" in warn
+
+        code, _desc, converged, warn = _convergence(None)
+        assert code is None and not converged and "no summary dict" in warn
