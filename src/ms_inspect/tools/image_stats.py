@@ -32,6 +32,24 @@ TOOL_NAME = "ms_image_stats"
 
 _MAD_TO_SIGMA = 1.4826
 
+# Peak-to-noise (dynamic range) verdict thresholds.
+#   <= 5        : marginal detection, FAIL
+#   > 5, < 10   : marginal detection, pass
+#   >= 10       : detection, pass
+_P2N_FAIL = 5.0
+_P2N_MARGINAL = 10.0
+
+
+def _classify_detection(dr: float | None) -> tuple[str, bool]:
+    """(label, passed) from a peak-to-noise (dynamic range) value."""
+    if dr is None:
+        return "unknown", False
+    if dr <= _P2N_FAIL:
+        return "marginal", False
+    if dr < _P2N_MARGINAL:
+        return "marginal", True
+    return "detection", True
+
 
 def _plane_labels(
     remaining_axes: list[int],
@@ -149,10 +167,13 @@ def _per_plane_stats(ia, casa_calls: list[str], warnings: list[str]) -> list[dic
         rms_v = _MAD_TO_SIGMA * float(mad_v)
         peak_v = float(max_v)
         dr = abs(peak_v) / rms_v if rms_v > 0 else None
+        det_label, det_pass = _classify_detection(dr)
         entry = dict(lab)
         entry["rms_jy"] = round(rms_v, 9)
         entry["peak_jy"] = round(peak_v, 9)
         entry["dynamic_range"] = round(dr, 1) if dr is not None else None
+        entry["detection"] = det_label
+        entry["detection_pass"] = det_pass
         planes.append(entry)
     return planes
 
@@ -266,6 +287,14 @@ def run(
     # ------------------------------------------------------------------
     # Build response
     # ------------------------------------------------------------------
+    det_label, det_pass = _classify_detection(dynamic_range)
+    if dynamic_range is not None and not det_pass:
+        warnings.append(
+            f"peak-to-noise {round(dynamic_range, 1)} <= {_P2N_FAIL:g}: marginal "
+            "detection, FAIL. The peak is consistent with a residual/sidelobe "
+            "spike, not a source — do not report this as a detection."
+        )
+
     data: dict = {
         "image_path": fmt_field(str(Path(image_path).expanduser().resolve())),
         "rms_jy": fmt_field(round(rms_val, 9)),
@@ -273,6 +302,10 @@ def run(
         "dynamic_range": fmt_field(
             round(dynamic_range, 1) if dynamic_range is not None else None,
             flag="COMPLETE" if dynamic_range is not None else "UNAVAILABLE",
+        ),
+        "detection": fmt_field(det_label),
+        "detection_pass": fmt_field(
+            det_pass, flag="COMPLETE" if dynamic_range is not None else "UNAVAILABLE"
         ),
     }
 

@@ -96,6 +96,18 @@ class TestPlaneLabels:
         assert labels[1] == {"stokes_index": 1}
 
 
+class TestClassifyDetection:
+    def test_thresholds(self):
+        from ms_inspect.tools.image_stats import _classify_detection
+
+        assert _classify_detection(3.0) == ("marginal", False)
+        assert _classify_detection(5.0) == ("marginal", False)  # boundary: fail
+        assert _classify_detection(7.0) == ("marginal", True)
+        assert _classify_detection(10.0) == ("detection", True)  # boundary: pass
+        assert _classify_detection(120.0) == ("detection", True)
+        assert _classify_detection(None) == ("unknown", False)
+
+
 class TestRunPathValidation:
     def test_missing_image_raises(self):
         from ms_inspect.exceptions import MSNotFoundError
