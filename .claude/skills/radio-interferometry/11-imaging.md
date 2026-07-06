@@ -53,6 +53,27 @@ Record confirmed values as `{TARGET_FIELD}`, `{IS_MOSAIC}`, and `{STOKES}`.
 
 ---
 
+## Step 0.5 — CORRECTED coherence gate (mandatory, before any tclean)
+
+Imaging cannot rescue incoherent CORRECTED data — it yields noise whose brightest
+residual spike mimics a source. Gate on `ms_corrected_stats` first, using the same
+in-band `chan_start/chan_end` as the gain/delay solves:
+
+```
+ms_corrected_stats(field='{PHASE_FIELD},{TARGET_FIELD}', chan_start=..., chan_end=...)
+```
+
+| Field | Check | Fail → action |
+|---|---|---|
+| phase cal | `phase_rms_deg` < 30° | calibration didn't take — do NOT image; re-solve (skill 07) |
+| phase cal | `amp_robust_std` < ~20% of `amp_median` | bad gains — fix first |
+| target | `amp_median` > 0, `amp_robust_std` not ≫ `amp_median` | decorrelated — imaging will be noise |
+
+A failed gate means the Step 9 verdict will read `marginal`/FAIL: that is
+calibration failure, not a faint source. Do not report the peak as a detection.
+
+---
+
 ## Step 1 — Choose imaging mode
 
 Determine `specmode` before deriving any other parameter.
@@ -253,6 +274,10 @@ Quality gates:
 If `rms_jy` is > 3× the radiometer estimate, run `ms_residual_stats` on the
 CORRECTED column before re-imaging — the problem is likely in the calibration,
 not the imaging parameters.
+
+A `detection_pass`=false verdict (peak-to-noise < 10; fail ≤ 5) means no reliable
+source — cross-check Step 0.5. If that gate failed, it's calibration decorrelation,
+not imaging.
 
 ---
 
