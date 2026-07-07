@@ -142,6 +142,14 @@ class InitialBandpassInput(BaseModel):
             "Fall back to 'calflag' if strict flagging is too aggressive."
         ),
     )
+    target_fields: str = Field(
+        default="",
+        description=(
+            "Optional CASA field selection for the science-target / transfer fields, "
+            "used only for the SpW-coverage guardrail. Empty infers them from intents; "
+            "the tool raises if it cannot infer them."
+        ),
+    )
     execute: bool = Field(
         default=False,
         description=(
@@ -312,6 +320,7 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
         params.min_bl_per_ant,
         params.uvrange,
         params.applymode,
+        params.target_fields,
         params.execute,
     )
 
@@ -552,6 +561,14 @@ class PolcalInput(BaseModel):
     parang: bool = Field(
         default=True,
         description="Apply parallactic angle correction (default True, critical for polcal).",
+    )
+    target_fields: str = Field(
+        default="",
+        description=(
+            "Optional CASA field selection for the science-target / transfer fields, "
+            "used only for the SpW-coverage guardrail. Empty infers them from intents; "
+            "the tool raises if it cannot infer them."
+        ),
     )
     execute: bool = Field(
         default=False,
@@ -1109,6 +1126,14 @@ class GaincalInput(BaseModel):
         ),
     )
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
+    target_fields: str = Field(
+        default="",
+        description=(
+            "Optional CASA field selection for the science-target / transfer fields, "
+            "used only for the SpW-coverage guardrail. Empty infers them from intents; "
+            "the tool raises if it cannot infer them."
+        ),
+    )
     execute: bool = Field(
         default=False,
         description="If False (default), write script and return. If True, run in-process.",
@@ -1142,6 +1167,14 @@ class BandpassInput(BaseModel):
     gaintable: list[str] = Field(default_factory=list, description="Prior caltables to apply.")
     interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
+    target_fields: str = Field(
+        default="",
+        description=(
+            "Optional CASA field selection for the science-target / transfer fields, "
+            "used only for the SpW-coverage guardrail. Empty infers them from intents; "
+            "the tool raises if it cannot infer them."
+        ),
+    )
     execute: bool = Field(
         default=False,
         description="If False (default), write script and return. If True, run in-process.",
@@ -1311,6 +1344,7 @@ async def ms_gaincal(params: GaincalInput) -> str:
         params.spwmap or None,
         params.parang,
         params.smodel,
+        params.target_fields,
         params.execute,
     )
 
@@ -1370,6 +1404,7 @@ async def ms_polcal(params: PolcalInput) -> str:
         params.interp or None,
         params.spwmap or None,
         params.parang,
+        params.target_fields,
         params.execute,
     )
 
@@ -1431,6 +1466,7 @@ async def ms_bandpass(params: BandpassInput) -> str:
         params.gaintable,
         params.interp,
         params.parang,
+        params.target_fields,
         params.execute,
     )
 

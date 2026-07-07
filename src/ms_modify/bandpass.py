@@ -104,6 +104,7 @@ def run(
     gaintable: list[str] | None = None,
     interp: list[str] | None = None,
     parang: bool = True,
+    target_fields: str = "",
     execute: bool = False,
 ) -> dict:
     """
@@ -127,6 +128,9 @@ def run(
         gaintable:    Prior caltables to apply on-the-fly.
         interp:       Interpolation mode per gaintable entry.
         parang:       Apply parallactic angle correction (default True).
+        target_fields: Optional CASA field selection for the science-target /
+                      transfer fields, used only for the SpW-coverage guardrail.
+                      Empty (default) infers them from intents; raises if it cannot.
         execute:      If False (default), write script and return.
                       If True, run bandpass in-process.
 
@@ -141,6 +145,10 @@ def run(
     casa_calls: list[str] = []
     warnings: list[str] = []
     warnings.extend(describe_numeric_fields(ms_path, field))
+
+    from ms_inspect.util.spw_coverage import check_spw_coverage
+
+    warnings.extend(check_spw_coverage(ms_str, field, spw, target_fields))
 
     if gaintable is None:
         gaintable = []

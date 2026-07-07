@@ -109,6 +109,7 @@ def run(
     spwmap: list[list[int]] | None = None,
     parang: bool = True,
     smodel: list[float] | None = None,
+    target_fields: str = "",
     execute: bool = False,
 ) -> dict:
     """
@@ -136,6 +137,9 @@ def run(
                       combine='spw' (a VLA multiband-delay choice).
         parang:       Apply parallactic angle correction (default True).
         smodel:       Scratch model [I, Q, U, V] for gaintype='KCROSS' (default None).
+        target_fields: Optional CASA field selection for the science-target /
+                      transfer fields, used only for the SpW-coverage guardrail.
+                      Empty (default) infers them from intents; raises if it cannot.
         execute:      If False (default), write script and return.
                       If True, run gaincal in-process.
 
@@ -150,6 +154,10 @@ def run(
     casa_calls: list[str] = []
     warnings: list[str] = []
     warnings.extend(describe_numeric_fields(ms_path, field))
+
+    from ms_inspect.util.spw_coverage import check_spw_coverage
+
+    warnings.extend(check_spw_coverage(ms_str, field, spw, target_fields))
 
     if gaintable is None:
         gaintable = []

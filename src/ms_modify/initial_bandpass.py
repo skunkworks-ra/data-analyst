@@ -150,6 +150,7 @@ def run(
     min_bl_per_ant: int = 4,
     uvrange: str = "",
     applymode: str = "calflagstrict",
+    target_fields: str = "",
     execute: bool = False,
 ) -> dict:
     """
@@ -172,6 +173,10 @@ def run(
         uvrange:        UV range restriction (set for 3C84 to exclude extended emission).
         applymode:      applycal mode for Step 3 (default 'calflagstrict').
                         Fall back to 'calflag' if strict flagging is too aggressive.
+        target_fields:  Optional CASA field selection for the science-target /
+                        transfer fields, used only for the SpW-coverage guardrail.
+                        Empty (default) infers them from intents; the tool raises
+                        if it cannot, so pass them explicitly when intents are absent.
         execute:        If False (default), write script and return immediately.
                         If True, run CASA calibration in-process (may take minutes).
 
@@ -208,6 +213,13 @@ def run(
                 f"Prior calibration table not found: {pc}",
                 ms_path=ms_path,
             )
+
+    # SpW-coverage guardrail: warn if the bandpass solve field does not carry the
+    # SpWs the science target / transfer fields need (raises if the target cannot
+    # be inferred from intents and target_fields was not supplied).
+    from ms_inspect.util.spw_coverage import check_spw_coverage
+
+    warnings.extend(check_spw_coverage(ms_str, bp_field, all_spw, target_fields))
 
     init_gain_table = str(workdir_path / "init_gain.g")
     bp_table = str(workdir_path / "BP0.b")

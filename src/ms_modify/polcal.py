@@ -88,6 +88,7 @@ def run(
     interp: list[str] | None = None,
     spwmap: list[list[int]] | None = None,
     parang: bool = True,
+    target_fields: str = "",
     execute: bool = False,
 ) -> dict:
     """
@@ -108,6 +109,9 @@ def run(
                       gaintable), e.g. [[], [0,0,0,0]] to fan an spw-combined prior
                       (a VLA multiband-delay Kcross) across all SPWs. Default None →
                       CASA identity. Only needed if a prior used combine='spw'.
+        target_fields: Optional CASA field selection for the science-target /
+                      transfer fields, used only for the SpW-coverage guardrail.
+                      Empty (default) infers them from intents; raises if it cannot.
         execute:      If False (default), write script and return.
                       If True, run polcal in-process.
 
@@ -121,6 +125,13 @@ def run(
     casa_calls: list[str] = []
     warnings: list[str] = []
     warnings.extend(describe_numeric_fields(ms_path, field))
+
+    # SpW-coverage guardrail: polcal solves on the pol calibrator and the table is
+    # applied to the target/transfer fields. polcal has no spw selection (solves all
+    # SpWs), so pass '' for the selection.
+    from ms_inspect.util.spw_coverage import check_spw_coverage
+
+    warnings.extend(check_spw_coverage(ms_str, field, "", target_fields))
 
     if poltype not in ("Df", "Df+QU", "Xf"):
         from ms_inspect.exceptions import ComputationError
