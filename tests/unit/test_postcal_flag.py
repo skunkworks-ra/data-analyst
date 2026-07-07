@@ -56,6 +56,12 @@ def test_per_spw_robust_clip_lines():
 def test_parse_spw_ids():
     assert _parse_spw_ids("0,1,2,4,10") == [0, 1, 2, 4, 10]
     assert _parse_spw_ids("0:5~10,1") == [1]  # channel syntax skipped
+    # inclusive ranges are expanded, mixable with plain ids, sorted + de-duped
+    assert _parse_spw_ids("0~7") == [0, 1, 2, 3, 4, 5, 6, 7]
+    assert _parse_spw_ids("0~7,9~15") == [0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15]
+    assert _parse_spw_ids("16,20~28") == [16, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+    assert _parse_spw_ids("9~15,8") == [8, 9, 10, 11, 12, 13, 14, 15]
+    assert _parse_spw_ids("") == []
 
 
 def test_no_clip_no_drop_omits_those_lines():

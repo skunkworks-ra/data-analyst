@@ -39,17 +39,29 @@ _DATACOL_MAP = {
 
 
 def _parse_spw_ids(spw_sel: str) -> list[int]:
-    """Parse a plain comma-separated SpW selection into ints.
+    """Parse a comma-separated SpW selection into whole-SpW ints.
 
-    Channel/range syntax ('0:5~10', '0~3') is not supported here — the robust
-    clip is computed per whole SpW. Returns the ints it could parse.
+    Supports plain ids ('0,3,5') and inclusive ranges ('0~7', '20~28'); the two
+    may be mixed ('16,20~28'). Channel syntax ('0:5~10') is NOT supported — the
+    robust clip is computed per whole SpW, so any token carrying a ':channel'
+    selection is skipped entirely rather than silently widened to the whole SpW.
+    Returns sorted, de-duplicated ids.
     """
-    ids: list[int] = []
-    for tok in spw_sel.split(","):
-        tok = tok.strip()
-        if tok.isdigit():
-            ids.append(int(tok))
-    return ids
+    ids: set[int] = set()
+    for raw in spw_sel.split(","):
+        tok = raw.strip()
+        if not tok or ":" in tok:
+            continue
+        if "~" in tok:
+            lo_s, _, hi_s = tok.partition("~")
+            lo_s, hi_s = lo_s.strip(), hi_s.strip()
+            if lo_s.isdigit() and hi_s.isdigit():
+                lo, hi = int(lo_s), int(hi_s)
+                if lo <= hi:
+                    ids.update(range(lo, hi + 1))
+        elif tok.isdigit():
+            ids.add(int(tok))
+    return sorted(ids)
 
 
 def _robust_clip_thresholds(
