@@ -7,11 +7,12 @@ ms_scan_list:          Time-ordered scan sequence with field, duration, intents.
 ms_scan_intent_summary: Time fractions per intent across the full observation.
 
 CASA access: msmd.scansforfield(), msmd.timesforscans(),
-             msmd.intentsforscans(), msmd.fieldsforscan(),
-             msmd.exposuretime()
+             msmd.intentsforscans(), msmd.fieldsforscan()
 """
 
 from __future__ import annotations
+
+import numpy as np
 
 from ms_inspect.util.casa_context import open_msmd, validate_ms_path
 from ms_inspect.util.conversions import mjd_seconds_to_utc, seconds_to_human
@@ -78,26 +79,30 @@ def run_scan_list(ms_path: str) -> dict:
 
             # Time range
             try:
-                times = msmd.timesforscans([scan_num])  # MJD seconds array
-                t_start = float(min(times))
-                t_end = float(max(times))
+                # Sorted unique integration centres (MJD seconds)
+                times = np.unique(np.asarray(msmd.timesforscans([scan_num]), dtype=float))
+                t_start = float(times.min())
+                t_end = float(times.max())
                 duration_s = t_end - t_start
-                # Add half an integration to end time (times are centres of integrations)
-                # We correct this below using exposure time
+                # times are centres of integrations; corrected below by one dump.
             except Exception as e:
                 warnings.append(f"Could not get times for scan {scan_num}: {e}")
+                times = None
                 t_start = t_end = duration_s = float("nan")
 
-            # Integration (dump) time for this scan
+            # Integration (dump) time for this scan — derived from the times
+            # array itself. NOTE: msmd.exposuretime(scan=...) hard-segfaults
+            # CASA 6.7.x on some MSs (G55/AB1345), taking the whole process down
+            # (uncatchable), so we never call it. Median positive step is robust.
+            integration_s = float("nan")
             try:
-                exp_times = msmd.exposuretime(scan=scan_num)
-                # Returns dict {'value': float, 'unit': 'sec'}
-                if isinstance(exp_times, dict):
-                    integration_s = float(exp_times.get("value", float("nan")))
-                else:
-                    integration_s = float(exp_times)
+                if times is not None and times.size >= 2:
+                    steps = np.diff(times)
+                    steps = steps[steps > 0]
+                    if steps.size:
+                        integration_s = float(np.median(steps))
                 # Correct duration: add one integration to account for last sample
-                if duration_s == duration_s:  # nan check
+                if integration_s == integration_s and duration_s == duration_s:
                     duration_s += integration_s
             except Exception:
                 integration_s = float("nan")

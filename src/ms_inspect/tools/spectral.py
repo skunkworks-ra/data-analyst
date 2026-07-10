@@ -9,7 +9,7 @@ ms_correlator_config:    Dump time and polarization basis summary.
 CASA access:
   msmd.nspw(), msmd.chanfreqs(), msmd.chanwidths(), msmd.bandwidths()
   tb → POLARIZATION, DATA_DESCRIPTION subtables
-  msmd.exposuretime()
+  msmd.timesforscans()
 """
 
 from __future__ import annotations
@@ -276,15 +276,22 @@ def run_correlator_config(ms_path: str) -> dict:
         n_spw = msmd.nspw()
         casa_calls.append("msmd.fieldnames(), msmd.scannumbers(), msmd.nspw()")
 
-        # Try to get dump time from first scan
+        # Try to get dump time from first scan.
+        # NOTE: msmd.exposuretime(scan=...) hard-segfaults CASA 6.7.x on some
+        # MSs (G55/AB1345), taking the whole process down (uncatchable), so we
+        # derive the dump time from the times array instead.
         try:
             scan_nums = sorted(msmd.scannumbers())
-            exp = msmd.exposuretime(scan=scan_nums[0])
-            casa_calls.append(f"msmd.exposuretime(scan={scan_nums[0]})")
-            if isinstance(exp, dict):
-                dump_time_s = float(exp.get("value", float("nan")))
+            times = np.unique(np.asarray(msmd.timesforscans([scan_nums[0]]), dtype=float))
+            casa_calls.append(f"msmd.timesforscans([{scan_nums[0]}])")
+            steps = np.diff(times)
+            steps = steps[steps > 0]
+            if steps.size:
+                dump_time_s = float(np.median(steps))
             else:
-                dump_time_s = float(exp)
+                dump_flag = "UNAVAILABLE"
+                dump_note = "Only one integration timestamp in first scan; cannot derive dump time."
+                warnings.append(dump_note)
         except Exception as e:
             dump_flag = "UNAVAILABLE"
             dump_note = f"Could not retrieve dump time: {e}"
