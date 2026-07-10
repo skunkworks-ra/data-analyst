@@ -617,8 +617,8 @@ class ApplyInitialRflagInput(BaseModel):
     execute: bool = Field(
         default=False,
         description=(
-            "If False (default), write initial_rflag_cmds.txt + initial_rflag.py and return. "
-            "If True, run flagdata(mode='list') in-process."
+            "If False (default), write initial_rflag.py and return. "
+            "If True, run the rflag + tfcrop passes in-process."
         ),
     )
 
@@ -955,7 +955,7 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
         params.execute:      Generate scripts only (False) or run in-process (True).
 
     Returns:
-        JSON with cmds_path, script_path, thresholds, and (if execute=True) flags_applied.
+        JSON with script_path, thresholds, and (if execute=True) flags_applied.
     """
     return _run_tool(
         initial_rflag.run,
@@ -974,9 +974,9 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
     name="ms_postcal_flag",
     description=(
         "Post-calibration RFI flagging on the phase calibrator and science target. "
-        "One atomic flagdata(mode='list') pass on CORRECTED: optional clip, then "
-        "tfcrop + rflag on the kept SpWs (salvage localized RFI), then a manual flag "
-        "of the drop-tier SpWs. Consumes the SpW triage from ms_spw_amp_severity."
+        "Ordered direct flagdata(action='apply') passes on CORRECTED: optional clip, "
+        "then tfcrop + rflag on the kept SpWs (salvage localized RFI), then a manual "
+        "flag of the drop-tier SpWs. Consumes the SpW triage from ms_spw_amp_severity."
     ),
     annotations={
         "title": "Post-Calibration RFI Flagging",
@@ -991,9 +991,9 @@ async def ms_postcal_flag(params: PostcalFlagInput) -> str:
     Post-calibration RFI flagging on target + phase calibrator CORRECTED.
 
     Extends flagging to the fields the pre-cal pipeline never cleaned and bakes
-    the SpW-triage decision into the FLAG column. Generates postcal_flag_cmds.txt
-    + postcal_flag.py; runs in-process when execute=True. flagbackup=True saves a
-    versioned backup before flagging.
+    the SpW-triage decision into the FLAG column. Generates postcal_flag.py; runs
+    in-process when execute=True. A single flagmanager save captures the pre-flag
+    state; the passes run as direct flagdata calls (not mode='list').
 
     Args:
         params.ms_path:      Path to the MS (CORRECTED on the selected fields).
@@ -1008,7 +1008,7 @@ async def ms_postcal_flag(params: PostcalFlagInput) -> str:
         params.execute:      Generate scripts only (False) or run in-process (True).
 
     Returns:
-        JSON with cmds_path, script_path, selections, and (if execute=True) flags_applied.
+        JSON with script_path, selections, and (if execute=True) flags_applied.
     """
     return _run_tool(
         postcal_flag.run,

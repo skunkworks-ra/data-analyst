@@ -605,19 +605,22 @@ class TestApplyInitialRflagReal:
         assert result["status"] == "ok"
         import os
 
-        assert os.path.exists(os.path.join(str(tmp_path), "initial_rflag_cmds.txt"))
         assert os.path.exists(os.path.join(str(tmp_path), "initial_rflag.py"))
+        # cmds file is retired — the script issues two direct flagdata calls
+        assert not os.path.exists(os.path.join(str(tmp_path), "initial_rflag_cmds.txt"))
 
-    def test_cmds_file_has_two_lines(self, tmp_path):
+    def test_script_has_two_direct_passes(self, tmp_path):
         import os
 
         from ms_modify.initial_rflag import run
 
         run(_TEST_MS, str(tmp_path), "0", execute=False)
-        with open(os.path.join(str(tmp_path), "initial_rflag_cmds.txt")) as fh:
-            cmds = fh.read()
-        lines = [ln for ln in cmds.splitlines() if ln.strip()]
-        assert len(lines) == 2
+        with open(os.path.join(str(tmp_path), "initial_rflag.py")) as fh:
+            script = fh.read()
+        assert 'mode="list"' not in script
+        # one rflag pass + one tfcrop pass
+        assert script.count("flagdata(") == 2
+        assert 'mode="rflag"' in script and 'mode="tfcrop"' in script
 
 
 @_SKIP

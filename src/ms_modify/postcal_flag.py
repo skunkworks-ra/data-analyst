@@ -6,18 +6,24 @@ the final applycal. The pre-cal pipeline flags calibrators only; this routine
 extends flagging to the fields that were never cleaned, and bakes the SpW-triage
 decision (from ms_spw_amp_severity, reasoned in skill 13) into the FLAG column.
 
-One atomic flagdata(mode='list') pass over the CORRECTED column:
+An ordered sequence of direct flagdata(action='apply') passes over the
+CORRECTED column, preceded by a single flagmanager save:
   1. clip      — optional ceiling on |CORRECTED| to kill egregious outliers
                  before the autoflaggers compute their statistics
   2. tfcrop    — on the SpWs being KEPT (salvage localized RFI, preserve bandwidth)
   3. rflag     — likewise
   4. manual    — fully flag the drop-tier SpWs (so all downstream steps respect it)
 
+Why direct passes, not flagdata(mode='list'): CASA 6.7.5 aborts the list-mode
+report-aggregation path with KeyError 'nreport' after the flags are computed
+(notably when an agent's report is empty). This bit the initial-rflag step on
+two separate runs; the same list-mode path underlies this tool, so it issues
+one flagdata call per command instead. Single agent per call, no report merge.
+
 field is REQUIRED. Flagging CORRECTED on fields whose calibration is not valid
 flags almost everything; the caller scopes this to the phase cal + target.
 
 Script output:
-  workdir/postcal_flag_cmds.txt — the flagcmd list (complete audit record)
   workdir/postcal_flag.py       — self-contained driver script
 """
 
@@ -30,6 +36,8 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, response_envelope
 
 TOOL_NAME = "ms_postcal_flag"
+
+_FLAG_VERSION = "before_postcal_flag"
 
 _DATACOL_MAP = {
     "corrected": "CORRECTED_DATA",
@@ -139,7 +147,7 @@ def _robust_clip_thresholds(
     return thresholds, warnings
 
 
-def _build_cmds_content(
+def _build_flag_calls(
     field: str,
     keep_spw: str,
     drop_spw: str,
@@ -151,38 +159,83 @@ def _build_cmds_content(
     freqdevscale: float,
     timecutoff: float,
     freqcutoff: float,
-) -> str:
-    lines: list[str] = []
-    uv_clause = f" uvrange={uvrange!r}" if uvrange else ""
+) -> list[dict]:
+    """Build the ordered list of flagdata call kwargs (one dict per pass).
+
+    Order is significant: clip(s) first so tfcrop/rflag compute statistics on
+    clipped data, then the manual drop-tier flag last. Every call carries
+    action='apply' and flagbackup=False (one shared flagmanager save is issued
+    by the caller). Rendered to script text and executed from the same spec.
+    """
+    calls: list[dict] = []
     if clip_thresholds:
         # Per-SpW robust clip: median + clip_sigma*robust_sigma, computed per SpW.
-        # Emitted first so the autoflaggers compute their statistics on clipped data.
         for spw_id in sorted(clip_thresholds):
             thr = clip_thresholds[spw_id]
-            lines.append(
-                f"mode='clip' field={field!r} spw={str(spw_id)!r}{uv_clause} "
-                f"datacolumn={datacolumn!r} clipminmax=[0.0,{thr}] clipoutside=True"
-            )
+            kw = {
+                "mode": "clip",
+                "field": field,
+                "spw": str(spw_id),
+                "datacolumn": datacolumn,
+                "clipminmax": [0.0, thr],
+                "clipoutside": True,
+            }
+            if uvrange:
+                kw["uvrange"] = uvrange
+            calls.append(kw)
     elif clipmax is not None:
-        lines.append(
-            f"mode='clip' field={field!r}{uv_clause} datacolumn={datacolumn!r} "
-            f"clipminmax=[0.0,{clipmax}] clipoutside=True"
-        )
-    spw_clause = f" spw={keep_spw!r}" if keep_spw else ""
-    lines.append(
-        f"mode='tfcrop' field={field!r}{spw_clause} datacolumn={datacolumn!r} "
-        f"timecutoff={timecutoff} freqcutoff={freqcutoff}"
-    )
-    lines.append(
-        f"mode='rflag' field={field!r}{spw_clause} datacolumn={datacolumn!r} "
-        f"timedevscale={timedevscale} freqdevscale={freqdevscale}"
-    )
+        kw = {
+            "mode": "clip",
+            "field": field,
+            "datacolumn": datacolumn,
+            "clipminmax": [0.0, clipmax],
+            "clipoutside": True,
+        }
+        if uvrange:
+            kw["uvrange"] = uvrange
+        calls.append(kw)
+
+    tfcrop = {
+        "mode": "tfcrop",
+        "field": field,
+        "datacolumn": datacolumn,
+        "timecutoff": timecutoff,
+        "freqcutoff": freqcutoff,
+    }
+    if keep_spw:
+        tfcrop["spw"] = keep_spw
+    calls.append(tfcrop)
+
+    rflag = {
+        "mode": "rflag",
+        "field": field,
+        "datacolumn": datacolumn,
+        "timedevscale": timedevscale,
+        "freqdevscale": freqdevscale,
+    }
+    if keep_spw:
+        rflag["spw"] = keep_spw
+    calls.append(rflag)
+
     if drop_spw:
-        lines.append(f"mode='manual' field={field!r} spw={drop_spw!r}")
-    return "\n".join(lines) + "\n"
+        calls.append({"mode": "manual", "field": field, "spw": drop_spw})
+
+    return calls
 
 
-def _build_script(ms_str: str, cmds_path: str) -> str:
+def _render_call(kw: dict) -> str:
+    """Render one flagdata call spec to a Python source snippet."""
+    parts = ["    vis=ms_path"]
+    for k, v in kw.items():
+        parts.append(f"    {k}={v!r}")
+    parts.append("    action='apply'")
+    parts.append("    flagbackup=False")
+    body = ",\n".join(parts)
+    return f"flagdata(\n{body},\n)"
+
+
+def _build_script(ms_str: str, flag_calls: list[dict]) -> str:
+    call_blocks = "\n\n".join(_render_call(kw) for kw in flag_calls)
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -192,19 +245,21 @@ Run with: python postcal_flag.py
 Requires: CORRECTED populated on the selected fields (final applycal done).
 For the SpW-drop decisions to be honoured everywhere, run applycal with
 applymode='calonly' so caltable flags do not pre-empt these decisions.
-flagbackup=True saves a versioned backup automatically before flagging.
+
+Direct flagdata(action='apply') passes rather than one mode='list' pass:
+CASA 6.7.5 aborts list mode with KeyError 'nreport'. A single flagmanager
+save captures the pre-flag state; flagbackup=False on each pass avoids
+redundant per-call backups.
 \"\"\"
-from casatasks import flagdata
+from casatasks import flagdata, flagmanager
 
 ms_path = {ms_str!r}
-cmds_file = {cmds_path!r}
 
-flagdata(
-    vis=ms_path,
-    mode="list",
-    inpfile=cmds_file,
-    flagbackup=True,
-)
+# One versioned backup of the pre-flag FLAG state.
+flagmanager(vis=ms_path, mode="save", versionname={_FLAG_VERSION!r})
+
+{call_blocks}
+
 print("Post-calibration flagging complete.")
 print("Use ms_flag_summary for the flag delta and ms_spw_amp_severity to re-measure.")
 """
@@ -258,7 +313,7 @@ def run(
                       If True, run flagdata(mode='list') in-process.
 
     Returns:
-        Standard envelope. Always includes cmds_path and script_path.
+        Standard envelope. Always includes script_path.
     """
     field = normalize_field_sel(field)
     keep_spw = normalize_spw_sel(keep_spw)
@@ -287,7 +342,6 @@ def run(
             ms_path=ms_path,
         )
 
-    cmds_path = str(workdir_path / "postcal_flag_cmds.txt")
     script_path = str(workdir_path / "postcal_flag.py")
 
     # Per-SpW robust clip thresholds (median + clip_sigma*robust_sigma), computed
@@ -312,7 +366,7 @@ def run(
             except Exception as exc:  # noqa: BLE001 - surface, do not abort script write
                 warnings.append(f"Robust clip computation failed ({exc}); no clip emitted.")
 
-    cmds_content = _build_cmds_content(
+    flag_calls = _build_flag_calls(
         field,
         keep_spw,
         drop_spw,
@@ -325,15 +379,12 @@ def run(
         timecutoff,
         freqcutoff,
     )
-    Path(cmds_path).write_text(cmds_content)
-    casa_calls.append(f"write_cmds → {cmds_path}")
 
-    script_content = _build_script(ms_str, cmds_path)
+    script_content = _build_script(ms_str, flag_calls)
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
 
     base_data: dict = {
-        "cmds_path": fmt_field(cmds_path),
         "script_path": fmt_field(script_path),
         "field": fmt_field(field),
         "keep_spw": keep_spw,
@@ -351,7 +402,7 @@ def run(
 
     if not execute:
         warnings.append(
-            f"Scripts written to {workdir}. Ensure the final applycal has populated "
+            f"Script written to {workdir}. Ensure the final applycal has populated "
             "CORRECTED on the selected fields (run applycal with applymode='calonly' so "
             "these SpW-drop decisions own the FLAG column). Then run postcal_flag.py "
             "externally and call ms_flag_summary to capture the delta."
@@ -365,7 +416,7 @@ def run(
         )
 
     try:
-        from casatasks import flagdata  # type: ignore[import]
+        from casatasks import flagdata, flagmanager  # type: ignore[import]
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 
@@ -374,19 +425,21 @@ def run(
             ms_path=ms_path,
         ) from None
 
-    casa_calls.append(f"casatasks.flagdata(mode='list', inpfile='{cmds_path}', flagbackup=True)")
-    try:
-        flagdata(
-            vis=ms_str,
-            mode="list",
-            inpfile=cmds_path,
-            flagbackup=True,
-        )
-    except Exception as exc:
-        from ms_inspect.exceptions import ComputationError
+    from ms_inspect.exceptions import ComputationError
 
+    try:
+        # One versioned backup, then a direct action='apply' pass per command —
+        # never mode='list' (CASA 6.7.5 aborts it with KeyError 'nreport').
+        casa_calls.append(f"flagmanager(mode='save', versionname={_FLAG_VERSION!r})")
+        flagmanager(vis=ms_str, mode="save", versionname=_FLAG_VERSION)
+        for kw in flag_calls:
+            casa_calls.append(
+                f"flagdata(mode={kw['mode']!r}, field={field!r}, action='apply')"
+            )
+            flagdata(vis=ms_str, action="apply", flagbackup=False, **kw)
+    except Exception as exc:
         raise ComputationError(
-            f"flagdata(mode='list') for post-cal flagging failed: {exc}",
+            f"post-cal flagging failed: {exc}",
             ms_path=ms_path,
         ) from exc
 
