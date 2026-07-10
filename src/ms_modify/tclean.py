@@ -259,6 +259,31 @@ def run(
             "wprojplanes=1 (no W-projection). Pass wprojplanes explicitly if "
             "W-terms are significant (Fresnel < 0.9)."
         )
+
+    # awproject-family full-polarization guardrails (warn-only). Both are real
+    # CASA 6.7.5 costs/limits seen across three reduction runs, not tool bugs —
+    # the value is steering the parameter choice, so tclean still emits exactly
+    # what was asked.
+    _is_awp = gridder in ("awp2", "awproject")
+    _is_fullpol = bool(set(stokes.upper()) & {"Q", "U", "V"})
+    if _is_awp and _is_fullpol and deconvolver == "mtmfs" and specmode == "mvc":
+        warnings.append(
+            f"gridder='{gridder}' + stokes='{stokes}' + deconvolver='mtmfs' + "
+            "specmode='mvc' trips a CASA 6.7.5 shape assertion "
+            "(AlwaysAssert shapeIn.isEqual(shapeOut), Lattice.tcc) in the "
+            "mtmfs-via-cube PSF Taylor-term path — it dies during PSF creation "
+            "before any cleaning. To keep multi-term (Taylor) deconvolution, set "
+            "specmode='mfs' with deconvolver='mtmfs'."
+        )
+    if _is_awp and _is_fullpol:
+        warnings.append(
+            f"gridder='{gridder}' + stokes='{stokes}': the per-frequency A-term "
+            "convolution-function computation (full Mueller CF for full-pol) can "
+            "be intractable on a large unaveraged MS — e.g. ~1 h to reach 20% of "
+            "just the PSF on a ~160 GB MS. Consider split/time-averaging to a "
+            "compact MS first, or gridder='wproject' (image-plane pbcor) for a "
+            "near-axis single pointing."
+        )
     if cfcache is not None and gridder != "awproject":
         warnings.append(f"cfcache is only used by gridder='awproject'; ignored for '{gridder}'.")
     if gridder == "awproject" and cfcache is None:

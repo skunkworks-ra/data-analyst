@@ -61,6 +61,49 @@ class TestWprojplanesWarning:
         assert not any("wprojplanes" in w for w in warnings)
 
 
+class TestAwpFullPolGuardrails:
+    def test_mvc_mtmfs_iquv_warns_shape_assert(self, tmp_path):
+        _, warnings = _run(
+            tmp_path,
+            gridder="awp2",
+            wprojplanes=16,
+            stokes="IQUV",
+            deconvolver="mtmfs",
+            nterms=2,
+            specmode="mvc",
+        )
+        assert any("shapeIn.isEqual" in w for w in warnings)
+        assert any("specmode='mfs'" in w for w in warnings)
+
+    def test_mfs_mtmfs_iquv_no_shape_warning(self, tmp_path):
+        # The steered-to combo must NOT emit the crash warning.
+        _, warnings = _run(
+            tmp_path,
+            gridder="awp2",
+            wprojplanes=16,
+            stokes="IQUV",
+            deconvolver="mtmfs",
+            nterms=2,
+            specmode="mfs",
+        )
+        assert not any("shapeIn.isEqual" in w for w in warnings)
+
+    def test_awp_fullpol_warns_aterm_cost(self, tmp_path):
+        _, warnings = _run(
+            tmp_path, gridder="awp2", wprojplanes=16, stokes="IQUV", specmode="mfs"
+        )
+        assert any("A-term" in w for w in warnings)
+
+    def test_stokes_i_no_fullpol_warnings(self, tmp_path):
+        _, warnings = _run(tmp_path, gridder="awp2", wprojplanes=16, stokes="I")
+        assert not any("A-term" in w for w in warnings)
+        assert not any("shapeIn.isEqual" in w for w in warnings)
+
+    def test_standard_gridder_no_fullpol_warnings(self, tmp_path):
+        _, warnings = _run(tmp_path, gridder="standard", stokes="IQUV")
+        assert not any("A-term" in w for w in warnings)
+
+
 class TestSpecmodeMvc:
     def test_mvc_rendered(self, tmp_path):
         script, _ = _run(tmp_path, gridder="awp2", wprojplanes=32, specmode="mvc")
