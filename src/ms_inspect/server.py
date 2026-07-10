@@ -51,6 +51,7 @@ from ms_inspect.tools import (
     spectral,
     spw_amp_severity,
     verify_import,
+    verify_model,
     workflow_status,
 )
 from ms_inspect.util import phase_cal_catalog as _pcc
@@ -308,6 +309,49 @@ class CorrectedStatsInput(BaseModel):
     max_rows: int = Field(
         default=500_000,
         description="Per-field row cap; rows sampled uniformly above this (default 500 000).",
+        ge=1,
+    )
+
+
+class VerifyModelInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(
+        ..., description="Path to the MS with MODEL_DATA (usescratch=True).", min_length=1
+    )
+    field: str = Field(
+        default="",
+        description="CASA field-name selection (comma-separated) or '' for all fields.",
+    )
+    polcal_fields: str = Field(
+        default="",
+        description=(
+            "Field names expected to carry a POLARIZED model (pol-angle cals set via "
+            "ms_setjy_polcal). Only these get the cross-hand polarization-presence "
+            "check; Stokes-I flux/phase cals are never flagged for missing polarization."
+        ),
+    )
+    default_amp_tol: float = Field(
+        default=0.05,
+        description="|par_amp − 1.0| ≤ this AND flat phase ⇒ pinned at MODEL=1 Jy default.",
+        ge=0.0,
+    )
+    default_phase_rms_deg: float = Field(
+        default=1.0, description="Phase RMS ≤ this counts as 'flat' for the default check.", ge=0.0
+    )
+    plausible_min_jy: float = Field(
+        default=0.1, description="Lower physical amplitude bound; below ⇒ SUSPECT.", ge=0.0
+    )
+    plausible_max_jy: float = Field(
+        default=100.0, description="Upper physical amplitude bound; above ⇒ SUSPECT.", gt=0.0
+    )
+    crosshand_ratio_thresh: float = Field(
+        default=0.001,
+        description="cross_amp / par_amp ≥ this ⇒ polarization present.",
+        ge=0.0,
+    )
+    max_rows: int = Field(
+        default=200_000,
+        description="Per-field row cap; rows sampled uniformly above this (default 200 000).",
         ge=1,
     )
 
@@ -1342,6 +1386,56 @@ async def ms_corrected_stats(params: CorrectedStatsInput) -> str:
         params.chan_start,
         params.chan_end,
         params.datacolumn,
+        params.max_rows,
+    )
+
+
+@mcp.tool(
+    name="ms_verify_model",
+    description=(
+        "Per-field sanity probe of MODEL_DATA after setjy / setjy_polcal. Flags "
+        "models pinned at the MODEL=1 Jy default (unwritten → flux-scale trap), "
+        "amplitudes outside a physical Jy band, and — for fields named in "
+        "polcal_fields — missing polarization (zero cross-hands, i.e. a Stokes-I "
+        "model or a polarized model clobbered by a later plain setjy). Requires "
+        "the physical MODEL_DATA column (usescratch=True). Measures only."
+    ),
+    annotations={
+        "title": "Verify MODEL_DATA",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_verify_model(params: VerifyModelInput) -> str:
+    """
+    Probe MODEL_DATA for untouched-default, out-of-band, and missing-polarization
+    models after a setjy / setjy_polcal step.
+
+    Args:
+        params.ms_path:        Path to the MS (MODEL_DATA / usescratch=True).
+        params.field:          CASA field-name selection or '' for all.
+        params.polcal_fields:  Fields expected to carry a polarized model.
+        params.default_amp_tol / default_phase_rms_deg: default-pinned thresholds.
+        params.plausible_min_jy / plausible_max_jy:      physical amplitude band.
+        params.crosshand_ratio_thresh:                   polarization-present cut.
+        params.max_rows:       Per-field row cap (default 200 000).
+
+    Returns:
+        JSON with per_field par_amp, par_phase_rms_deg, cross_amp, crosshand_ratio,
+        and a status field flagged COMPLETE / SUSPECT / UNAVAILABLE.
+    """
+    return await _run_tool(
+        verify_model.run,
+        params.ms_path,
+        params.field,
+        params.polcal_fields,
+        params.default_amp_tol,
+        params.default_phase_rms_deg,
+        params.plausible_min_jy,
+        params.plausible_max_jy,
+        params.crosshand_ratio_thresh,
         params.max_rows,
     )
 

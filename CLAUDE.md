@@ -95,6 +95,7 @@ ms-inspect/
 │       │   ├── flag_summary.py    ← ms_flag_summary
 │       │   ├── online_flags.py    ← ms_online_flag_stats
 │       │   ├── verify_import.py   ← ms_verify_import
+│       │   ├── verify_model.py    ← ms_verify_model
 │       │   ├── priorcals_check.py ← ms_verify_priorcals
 │       │   ├── caltables.py       ← ms_verify_caltables
 │       │   ├── calsol_stats.py    ← ms_calsol_stats
@@ -216,6 +217,7 @@ Environment variable reference:
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_verify_import` | `tools/verify_import.py` | Filesystem check: MS exists + table.info valid + .flagonline.txt non-empty |
+| `ms_verify_model` | `tools/verify_model.py` | Per-field MODEL_DATA sanity probe after setjy/setjy_polcal: flags default-pinned (MODEL=1 Jy → flux-scale trap), out-of-band amplitude, and — for `polcal_fields` — missing polarization (zero cross-hands = Stokes-I clobber). Requires usescratch=True |
 | `ms_online_flag_stats` | `tools/online_flags.py` | Parse .flagonline.txt — n_commands, antennas flagged, reason breakdown, time range |
 | `ms_flag_summary` | `tools/flag_summary.py` | Per-field/SPW flag fractions from flagdata summary mode |
 | `ms_verify_priorcals` | `tools/priorcals_check.py` | Check prior caltables (gc, opac, rq, ap) exist and are non-empty |
@@ -268,7 +270,7 @@ Functions are also callable directly by skills and scripts.
 | `ms_set_intents` | `ms_modify/intents.py` | Populate STATE subtable and STATE_ID from calibrator catalogue matching |
 | `ms_apply_preflag` | `ms_modify/preflag.py` | Deterministic pre-cal flagging (online + shadow + clip + tfcrop) + calibrator split |
 | `ms_generate_priorcals` | `ms_modify/priorcals.py` | Generate gc/opac/rq/ap prior caltables via gencal |
-| `ms_setjy` | `ms_modify/setjy.py` | Set Perley-Butler 2017 flux models for standard calibrators |
+| `ms_setjy` | `ms_modify/setjy.py` | Set Perley-Butler 2017 flux models for standard calibrators. `exclude_fields` omits a field from the Stokes-I pass (use for a pol-angle cal that overlaps a flux/BP cal — its polarized model is set by `ms_setjy_polcal`, and a plain setjy would clobber it) |
 | `ms_setjy_polcal` | `ms_modify/setjy_polcal.py` | Set polarisation angle models for pol calibrators |
 | `ms_initial_bandpass` | `ms_modify/initial_bandpass.py` | gaincal → bandpass → applycal; populates CORRECTED |
 | `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass; **requires** explicit `field` (only the field with valid CORRECTED) |

@@ -124,9 +124,30 @@ Jy`, which silently corrupts the flux scale (fluxscale comes out
 order-of-magnitude low).
 
 **Therefore, when polcal is in scope, the flux/bandpass cals must be set with
-`ms_setjy(usescratch=True)` too** — re-run `ms_setjy` with `usescratch=True`
-before (or together with) `ms_setjy_polcal` so the entire MS uses one consistent
+`ms_setjy(usescratch=True)` too** — run `ms_setjy` with `usescratch=True`
+**strictly before** `ms_setjy_polcal` so the entire MS uses one consistent
 physical `MODEL_DATA`. See skill 07 Step 6 (fluxscale) for the sanity check.
+
+**Ordering is not commutative — never run the two in parallel.** `MODEL_DATA` is
+last-writer-wins per (field, spw). The pol-angle calibrator (3C286 / 3C138 /
+3C48) is *also* a standard flux/BP calibrator, so `ms_setjy`'s automatic field
+selection includes it. If a plain `ms_setjy(usescratch=True)` pass lands on that
+field **after** `ms_setjy_polcal`, it overwrites the polarized model with a
+Stokes-I-only one — silently. This is the G55 failure: a parallel `ms_setjy`
+re-set Stokes-I models on both 3C286 entries after the polarized model, wiping it.
+
+**When the pol-angle cal overlaps a flux/BP cal (the usual case), prefer the full
+Stokes model for that field and skip the Stokes-I write on it:** pass the
+overlapping field to `ms_setjy(exclude_fields=...)` so the plain pass omits it,
+and let `ms_setjy_polcal` (also `usescratch=True`) be the *only* writer of its
+model. The excluded field still gets a consistent physical `MODEL_DATA` from
+`ms_setjy_polcal`, so the whole-MS `usescratch` consistency (above) is preserved.
+
+**Verify before moving on.** After the setjy steps, run
+`ms_verify_model(field='<all cals>', polcal_fields='<pol-angle cal>')`. It flags
+any field pinned at the `MODEL=1 Jy` default (unwritten → flux-scale trap) and —
+for the `polcal_fields` — a missing polarization signature (zero cross-hands),
+which is exactly a Stokes-I clobber of the polarized model.
 
 > **Before editing or debugging a setjy model, read `09b-polcal-reference.md`.**
 > Stokes I (`spix`), `polindex` and `polangle` use *three different* polynomial

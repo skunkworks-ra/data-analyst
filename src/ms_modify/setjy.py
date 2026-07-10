@@ -93,6 +93,7 @@ def run(
     workdir: str,
     standard: str = _DEFAULT_STANDARD,
     usescratch: bool = True,
+    exclude_fields: str = "",
     execute: bool = False,
 ) -> dict:
     """
@@ -102,6 +103,15 @@ def run(
         ms_path:    Path to calibrators.ms (or full MS).
         workdir:    Existing output directory for setjy.py script.
         standard:   Flux standard (default 'Perley-Butler 2017').
+        exclude_fields: Comma-separated field NAMES to omit from the Stokes-I
+                    setjy pass, even if they are catalogued flux standards. Pass
+                    the pol-angle calibrator here when it overlaps a flux/BP cal:
+                    its full polarized model is set by ms_setjy_polcal
+                    (usescratch=True), and a plain Stokes-I setjy on that field
+                    would overwrite the polarization (MODEL is last-writer-wins
+                    per field). Excluded fields still get a consistent physical
+                    MODEL_DATA from ms_setjy_polcal, so usescratch consistency
+                    is preserved.
         usescratch: If True (default), fill the physical MODEL_DATA column (so
                     ms_residual_stats and polarization calibration work). If
                     False, write a virtual model (no MODEL_DATA column).
@@ -148,10 +158,18 @@ def run(
     # Cross-match against catalogue — only keep flux calibrators
     flux_fields: list[str] = []
     skipped_fields: list[str] = []
+    excluded_fields: list[str] = []
     inline_warnings: list[str] = []
+
+    exclude_set = {n.strip() for n in exclude_fields.split(",") if n.strip()}
 
     for fname in field_names:
         entry = lookup(fname)
+        if fname in exclude_set:
+            # Caller-requested skip: the field's model is set elsewhere
+            # (ms_setjy_polcal). Do not write a Stokes-I model over it.
+            excluded_fields.append(fname)
+            continue
         if entry is not None and "flux" in entry.role:
             flux_fields.append(fname)
             # Advisory warnings for specific sources
@@ -183,10 +201,19 @@ def run(
         "script_path": fmt_field(script_path),
         "flux_fields": fmt_field(flux_fields),
         "skipped_fields": fmt_field(skipped_fields),
+        "excluded_fields": fmt_field(excluded_fields),
         "standard": standard,
         "usescratch": usescratch,
         "n_flux_fields": len(flux_fields),
     }
+
+    # Warn if a requested exclusion name never appeared in the MS (likely a typo).
+    unmatched_excludes = sorted(exclude_set - set(excluded_fields))
+    if unmatched_excludes:
+        warnings.append(
+            f"exclude_fields names not found in the MS FIELD table: {unmatched_excludes}. "
+            "Check the spelling against ms_field_list."
+        )
 
     if not execute:
         if not flux_fields:

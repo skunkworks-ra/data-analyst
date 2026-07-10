@@ -105,6 +105,44 @@ class TestSetjyRun:
         flux_fields = result["data"]["flux_fields"]["value"]
         assert "3C286" in flux_fields
 
+    def test_exclude_fields_omits_overlap_field(self, tmp_path):
+        from ms_modify.setjy import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        # 3C286 is a catalogued flux cal; excluding it (pol cal overlap) must
+        # keep it out of flux_fields and record it under excluded_fields.
+        with patch("ms_modify.setjy._get_field_names", return_value=["3C286", "3C147"]):
+            result = run(str(ms), str(workdir), exclude_fields="3C286", execute=False)
+        flux_fields = result["data"]["flux_fields"]["value"]
+        excluded = result["data"]["excluded_fields"]["value"]
+        assert "3C286" not in flux_fields
+        assert "3C147" in flux_fields
+        assert "3C286" in excluded
+
+    def test_exclude_field_not_written_to_script(self, tmp_path):
+        from ms_modify.setjy import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        with patch("ms_modify.setjy._get_field_names", return_value=["3C286", "3C147"]):
+            run(str(ms), str(workdir), exclude_fields="3C286", execute=False)
+        script = (workdir / "setjy.py").read_text()
+        assert "3C147" in script
+        assert "field='3C286'" not in script
+
+    def test_unmatched_exclude_name_warns(self, tmp_path):
+        from ms_modify.setjy import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        with patch("ms_modify.setjy._get_field_names", return_value=["3C286"]):
+            result = run(str(ms), str(workdir), exclude_fields="typo_name", execute=False)
+        assert any("not found" in w for w in result["warnings"])
+
     def test_unknown_field_is_skipped(self, tmp_path):
         from ms_modify.setjy import run
 

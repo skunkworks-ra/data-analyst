@@ -447,6 +447,16 @@ class SetjyInput(BaseModel):
             "corrupts the flux scale."
         ),
     )
+    exclude_fields: str = Field(
+        default="",
+        description=(
+            "Comma-separated field NAMES to omit from the Stokes-I setjy pass, "
+            "even if catalogued flux standards. Pass the pol-angle calibrator here "
+            "when it overlaps a flux/BP cal: its polarized model is set by "
+            "ms_setjy_polcal, and a plain Stokes-I setjy would overwrite it "
+            "(MODEL is last-writer-wins per field)."
+        ),
+    )
     execute: bool = Field(
         default=False,
         description=(
@@ -840,7 +850,7 @@ async def ms_setjy(params: SetjyInput) -> str:
         params.execute:    Generate script only (False) or run setjy in-process (True).
 
     Returns:
-        JSON with flux_fields, skipped_fields, warnings, and script_path.
+        JSON with flux_fields, skipped_fields, excluded_fields, warnings, script_path.
     """
     return _run_tool(
         setjy.run,
@@ -848,6 +858,7 @@ async def ms_setjy(params: SetjyInput) -> str:
         params.workdir,
         params.standard,
         params.usescratch,
+        params.exclude_fields,
         params.execute,
     )
 

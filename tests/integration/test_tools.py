@@ -242,6 +242,24 @@ _SKIP = pytest.mark.skipif(_TEST_MS is None, reason="RADIO_MCP_TEST_MS not set")
 
 
 @_SKIP
+class TestVerifyModelReal:
+    """Integration test stub for ms_verify_model against a real MS."""
+
+    def test_verify_model_returns_ok(self):
+        from ms_inspect.tools import verify_model
+
+        # Requires MODEL_DATA (usescratch=True). On an MS without it the tool
+        # raises ComputationError; both outcomes exercise the CASA path.
+        try:
+            result = verify_model.run(_TEST_MS)
+        except Exception as exc:  # noqa: BLE001
+            assert "MODEL_DATA" in str(exc)
+            return
+        assert result["status"] == "ok"
+        assert "per_field" in result["data"]
+
+
+@_SKIP
 class TestAntennaFlagFractionReal:
     """Integration tests for ms_antenna_flag_fraction against a real MS."""
 
