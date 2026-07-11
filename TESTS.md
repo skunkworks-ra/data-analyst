@@ -1,7 +1,29 @@
-# Testing Guide — ms-inspect Claude Code Plugin
+# Testing Guide — radio-analyst Claude Code Plugin
 
-Run these in order. Steps 1 and 2 give fast feedback with no side effects.
-Step 3 is the real end-to-end test.
+The plugin (`radio-analyst@radio-analyst`) ships three MCP servers —
+`ms-inspect`, `ms-modify`, `ms-create`. Run these in order. Steps 0–2 give fast
+feedback with no side effects; step 3 is the real end-to-end test.
+
+---
+
+## 0. Python test suite (unit + integration)
+
+```bash
+# Unit tests — no CASA, no MS required; runs everywhere
+pixi run test-unit
+
+# Integration tests — auto-uses the 3C391 tarball if present, or point at an MS:
+#   RADIO_MCP_TEST_MS_TGZ=/path/to/3c391.ms.tgz pixi run test-int
+#   RADIO_MCP_TEST_MS=/path/to/your.ms          pixi run test-int
+pixi run test-int
+
+# Lint + format check (CI gate)
+pixi run check
+```
+
+Unit tests live in `tests/unit/` (pure logic, no casatools); integration tests
+in `tests/integration/` (require casatools, gated by the fixtures in
+`conftest.py`).
 
 ---
 
@@ -51,14 +73,14 @@ as a marketplace once, then install the plugin from it.
 claude plugin marketplace add https://github.com/skunkworks-ra/radio-analyst
 
 # Step 2 — install the plugin
-claude plugin install ms-inspect --scope user
+claude plugin install radio-analyst@radio-analyst
 ```
 
-Verify the MCP server registered:
+Verify the MCP servers registered:
 
 ```bash
 claude mcp list
-# ms-inspect should appear
+# ms-inspect, ms-modify, and ms-create should all appear
 ```
 
 Trigger a tool call to confirm the server actually starts (requires a real MS path):
@@ -71,8 +93,8 @@ Trigger a tool call to confirm the server actually starts (requires a real MS pa
 To uninstall cleanly:
 
 ```bash
-claude plugin uninstall ms-inspect --scope user
-claude plugin marketplace remove ms-inspect --scope user
+claude plugin uninstall radio-analyst@radio-analyst
+claude plugin marketplace remove radio-analyst
 ```
 
 ---
@@ -102,5 +124,6 @@ Expected: `casatools` and `casatasks` resolve and install; `ms-inspect` starts.
 
 `${CLAUDE_PLUGIN_ROOT}` substitution behaviour when installing from a git URL
 needs to be confirmed. If the variable does not expand, the server will fail with
-a pixi "manifest not found" error. In that case, fall back to Option D in README
-(pip-based `ms-inspect` entry point, which does not rely on `${CLAUDE_PLUGIN_ROOT}`).
+a pixi "manifest not found" error. In that case, fall back to the pip-based
+entry points (`ms-inspect` / `ms-modify` / `ms-create` from `pip install ".[casa]"`,
+§4 above), which do not rely on `${CLAUDE_PLUGIN_ROOT}`.

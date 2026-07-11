@@ -7,16 +7,21 @@ Checked into the repository root — applies to every contributor.
 
 ## What this project is
 
-`ms-inspect` is a **Model Context Protocol (MCP) server** that exposes a suite
-of read-only inspection tools over CASA Measurement Sets (MS). It is the data
-layer for an AI-assisted radio interferometric reduction pipeline targeting
-VLA/JVLA/EVLA, MeerKAT, and uGMRT.
+This repository ships **three Model Context Protocol (MCP) servers** for an
+AI-assisted radio interferometric reduction pipeline targeting VLA/JVLA/EVLA,
+MeerKAT, and uGMRT:
 
-**Phase 1 scope (this codebase):** Layer 1 (Orientation) and Layer 2
-(Instrument Sanity) — 12 tools total. Layers 3–5 are out of scope.
+- **ms-inspect** — read-only inspection and diagnostics (33 tools, port 8000)
+- **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
+- **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
 
-The design document is at `DESIGN.md` in this directory. Read it before making
-any non-trivial change.
+`ms-inspect` began as Phase 1 only — Layer 1 (Orientation) and Layer 2
+(Instrument Sanity), 13 tools — and has since grown to cover pre-calibration,
+calibration, and imaging inspection as those phases were implemented. The
+companion `ms-modify` / `ms-create` servers cover the write and ingestion paths.
+
+The design document is at `DESIGN.md` in this directory (§8 has the full,
+per-server tool inventory). Read it before making any non-trivial change.
 
 ---
 
@@ -203,31 +208,34 @@ Environment variable reference:
 | `ms_flag_preflight` | `tools/flags.py` | Fast probe: row count, FLAG shape, data volume, runtime estimate, recommended workers |
 | `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` adaptive parallel reads; accepts `n_workers` override |
 
-### Calibration inspection (4 tools)
+### Calibration inspection (5 tools)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_calsol_stats` | `tools/calsol_stats.py` | Per-(antenna, SPW, field) stats from G/B/K caltables — flagged fraction, SNR, amplitude/phase arrays, delays |
+| `ms_calsol_stats_detail` | `tools/calsol_stats.py` | Deep-dive reader over the `.calsol_stats.npz` sidecar written by `ms_calsol_stats`; full per-(antenna, SPW, field) detail (`kind='low_snr'|'amp_outliers'|'antenna'`) beyond the bounded summary |
 | `ms_calsol_plot` | `tools/calsol_plot.py` | Bokeh HTML dashboard + NPZ from a single caltable; calls `ms_calsol_stats` internally |
 | `ms_plot_caltable_library` | `tools/calsol_plot_library.py` | Batch plot an explicit list of caltables in one call; partial-success — a bad table records an error entry rather than aborting |
 | `ms_gaincal_snr_predict` | `tools/gaincal_snr_predict.py` | Predict per-(antenna, SPW) SNR for a candidate solint; uses SEFD table + MS metadata; requires `flux_jy` from `ms_setjy` |
 
-### Pre-calibration inspection (5 tools)
+### Pre-calibration inspection (7 tools)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_verify_import` | `tools/verify_import.py` | Filesystem check: MS exists + table.info valid + .flagonline.txt non-empty |
+| `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms/priorcals/initial_bandpass present, corrected_populated, final_caltables/first_image present, and a categorical `next_recommended_step` |
 | `ms_verify_model` | `tools/verify_model.py` | Per-field MODEL_DATA sanity probe after setjy/setjy_polcal: flags default-pinned (MODEL=1 Jy → flux-scale trap), out-of-band amplitude, and — for `polcal_fields` — missing polarization (zero cross-hands = Stokes-I clobber). Requires usescratch=True |
 | `ms_online_flag_stats` | `tools/online_flags.py` | Parse .flagonline.txt — n_commands, antennas flagged, reason breakdown, time range |
 | `ms_flag_summary` | `tools/flag_summary.py` | Per-field/SPW flag fractions from flagdata summary mode |
 | `ms_verify_priorcals` | `tools/priorcals_check.py` | Check prior caltables (gc, opac, rq, ap) exist and are non-empty |
 | `ms_verify_caltables` | `tools/caltables.py` | Check init_gain.g + BP0.b from initial bandpass exist and have rows |
 
-### Instrument and RFI inspection (3 tools)
+### Instrument and RFI inspection (7 tools)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_refant` | `tools/refant.py` | Ranked reference antenna list by geometry + flag fraction heuristics |
+| `ms_phase_cal_lookup` | `util/phase_cal_catalog.py` | Cross-match a sky position against the NRAO VLA phase-calibrator catalog; nearest source within `max_sep_deg` with flux, UV limits, and per-config quality codes (P/S/W/C/X) |
 | `ms_rfi_channel_stats` | `tools/rfi.py` | Per-channel flag fractions; identifies persistent RFI bands |
 | `ms_spw_amp_severity` | `tools/spw_amp_severity.py` | Robust per-channel amplitude stats (median/MAD/min/max) of any data column, aggregated per SpW. Severity = band_floor vs a clean-SpW anchor (RFI-dominated drop signal) + estimated_discardable_frac (localized-RFI magnitude). Memory-bounded reservoir sampling. |
 | `ms_pol_cal_feasibility` | `tools/pol_cal_feasibility.py` | Parallactic angle spread + D-term feasibility gate |
@@ -251,6 +259,7 @@ It has its own FastMCP server entry point (`ms_create.server`, port 8002).
 |------|--------|-------------|
 | `ms_sdm_summary` | `ms_create/sdm_summary.py` | Pre-conversion ASDM inspection (read-only, no casatools): telescope, config, band, per-SPW continuum-vs-line classification, HI-21cm coverage, correlation products, sources+intents, scan balance, max target elevation. Decide *what* a dataset is before importing it. |
 | `ms_import_asdm` | `ms_create/import_asdm.py` | Convert ASDM → MS; `ocorr_mode='co'`, `savecmds=True`, `applyflags=False`; writes `import_asdm.py` + `.flagonline.txt` |
+| `ms_reduction_log` | `ms_create/reduction_log.py` | Working-calls ledger: shuttle known-good calls into a per-reduction JSONL recipe. `action='append'` records one validated call; `'render'` emits the ordered recipe + replay script; `'list'` gives a compact step summary |
 
 Fixed parameters (not exposed): `ocorr_mode='co'` (cross-correlations only),
 `savecmds=True` (always write online flag file), `applyflags=False` (flagging
