@@ -172,9 +172,11 @@ automatically when the plugin is installed.
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `RADIO_MCP_TRANSPORT` | `stdio` | `stdio` for Claude Code; `http` for remote |
+| `RADIO_MCP_HOST` | `127.0.0.1` | HTTP bind address. **The HTTP transport has no authentication — do not bind beyond localhost on shared or untrusted networks** |
 | `RADIO_MCP_PORT` | `8000` / `8001` / `8002` | HTTP port (inspect / modify / create) |
 | `RADIO_MCP_WORKERS` | `4` | Parallel workers for FLAG column reads (cap 8) |
 | `RADIO_MCP_TEST_MS` | — | Path to MS for integration tests |
+| `RADIO_MCP_TEST_MS_TGZ` | — | Path to `.ms.tgz` tarball; auto-extracted by conftest.py |
 
 ---
 

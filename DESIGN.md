@@ -859,7 +859,7 @@ On tool error:
 |------|----------------|
 | `ms_calsol_stats` | Per-(antenna, SpW, field) stats from G/B/K caltables — flagged fraction, SNR, amp/phase arrays, delays |
 | `ms_calsol_stats_detail` | Deep-dive reader over the `.calsol_stats.npz` sidecar; full per-solution detail (`low_snr`/`amp_outliers`/`antenna`) beyond the bounded summary |
-| `ms_calsol_plot` | Bokeh HTML dashboard + NPZ from a single caltable |
+| `ms_calsol_plot` | Bokeh HTML dashboard from a single caltable (reads caltable columns directly; view routed by VisCal type) |
 | `ms_plot_caltable_library` | Batch-plot an explicit list of caltables in one call; partial-success per table |
 | `ms_gaincal_snr_predict` | Predict per-(antenna, SpW) SNR for a candidate solint from SEFD + MS metadata |
 | `ms_verify_caltables` | Structural validation of `init_gain.g` + `BP0.b` from initial bandpass |

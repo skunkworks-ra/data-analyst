@@ -83,6 +83,7 @@ ms-inspect/
 │   │   ├── fluxscale.py           ← ms_fluxscale
 │   │   ├── applycal.py            ← ms_applycal
 │   │   ├── tclean.py              ← ms_tclean
+│   │   ├── pathguard.py           ← output-caltable path validation + safe-delete guard
 │   │   └── slurm.py               ← SLURM batch submission utility (not an MCP tool)
 │   └── ms_inspect/
 │       ├── __init__.py            ← version string
@@ -176,6 +177,7 @@ Environment variable reference:
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `RADIO_MCP_TRANSPORT` | `stdio` | `stdio` for Claude Desktop; `http` for remote |
+| `RADIO_MCP_HOST` | `127.0.0.1` | HTTP bind address. No authentication on the HTTP transport — keep it on localhost unless the network is trusted |
 | `RADIO_MCP_PORT` | `8000` | HTTP port (ms-inspect); ms-modify uses 8001, ms-create uses 8002 |
 | `RADIO_MCP_WORKERS` | `4` | Parallel worker count for FLAG column reads (cap 8) |
 | `RADIO_MCP_TEST_MS` | — | Path to pre-extracted MS for integration tests |
@@ -214,7 +216,7 @@ Environment variable reference:
 |------|--------|-------------|
 | `ms_calsol_stats` | `tools/calsol_stats.py` | Per-(antenna, SPW, field) stats from G/B/K caltables — flagged fraction, SNR, amplitude/phase arrays, delays |
 | `ms_calsol_stats_detail` | `tools/calsol_stats.py` | Deep-dive reader over the `.calsol_stats.npz` sidecar written by `ms_calsol_stats`; full per-(antenna, SPW, field) detail (`kind='low_snr'|'amp_outliers'|'antenna'`) beyond the bounded summary |
-| `ms_calsol_plot` | `tools/calsol_plot.py` | Bokeh HTML dashboard + NPZ from a single caltable; calls `ms_calsol_stats` internally |
+| `ms_calsol_plot` | `tools/calsol_plot.py` | Bokeh HTML dashboard from a single caltable, read directly from the caltable columns (does not call `ms_calsol_stats`); view routed by VisCal type |
 | `ms_plot_caltable_library` | `tools/calsol_plot_library.py` | Batch plot an explicit list of caltables in one call; partial-success — a bad table records an error entry rather than aborting |
 | `ms_gaincal_snr_predict` | `tools/gaincal_snr_predict.py` | Predict per-(antenna, SPW) SNR for a candidate solint; uses SEFD table + MS metadata; requires `flux_jy` from `ms_setjy` |
 
