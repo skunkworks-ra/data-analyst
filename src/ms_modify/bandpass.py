@@ -55,6 +55,8 @@ def _build_script(
     interp: list[str],
     parang: bool,
 ) -> str:
+    from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
+
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -65,8 +67,8 @@ import os
 import shutil
 from casatasks import bandpass
 
-if os.path.exists({caltable!r}):
-    shutil.rmtree({caltable!r})
+{safe_rm}
+_safe_rm_table({caltable!r})
 bandpass(
     vis={ms_str!r},
     caltable={caltable!r},
@@ -163,6 +165,10 @@ def run(
             f"workdir does not exist: {workdir}",
             ms_path=ms_path,
         )
+
+    from ms_modify.pathguard import validate_output_caltable
+
+    validate_output_caltable(caltable, workdir, ms_str)
 
     for gt in gaintable:
         if not Path(gt).exists():

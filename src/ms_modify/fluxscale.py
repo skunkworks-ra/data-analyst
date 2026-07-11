@@ -64,6 +64,8 @@ def _build_script(
     transfer: list[str],
     incremental: bool,
 ) -> str:
+    from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
+
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -74,8 +76,8 @@ import os
 import shutil
 from casatasks import fluxscale
 
-if os.path.exists({fluxtable!r}):
-    shutil.rmtree({fluxtable!r})
+{safe_rm}
+_safe_rm_table({fluxtable!r})
 result = fluxscale(
     vis={ms_str!r},
     caltable={caltable!r},
@@ -134,6 +136,10 @@ def run(
             f"workdir does not exist: {workdir}",
             ms_path=ms_path,
         )
+
+    from ms_modify.pathguard import validate_output_caltable
+
+    validate_output_caltable(fluxtable, workdir, ms_str)
 
     if not Path(caltable).exists():
         from ms_inspect.exceptions import ComputationError

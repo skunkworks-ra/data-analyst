@@ -60,6 +60,8 @@ def _build_script(
         if uvrange
         else ""
     )
+    from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
+
     priorcals_repr = repr(priorcals)
     return f"""\
 #!/usr/bin/env python
@@ -76,10 +78,9 @@ init_gain_table = {init_gain_table!r}
 bp_table = {bp_table!r}
 priorcals = {priorcals_repr}
 
-if os.path.exists(init_gain_table):
-    shutil.rmtree(init_gain_table)
-if os.path.exists(bp_table):
-    shutil.rmtree(bp_table)
+{safe_rm}
+_safe_rm_table(init_gain_table)
+_safe_rm_table(bp_table)
 
 # Step 1 — gaincal (phase, per-integration)
 gaincal_kwargs = dict(

@@ -39,17 +39,25 @@ _CONVERGED_STOPCODES = {2, 8}
 def _convergence(summary: object) -> tuple[int | None, str, bool, str | None]:
     """(stopcode, description, converged, warning) from a tclean summary dict."""
     if not isinstance(summary, dict) or "stopcode" not in summary:
-        return None, "unknown", False, (
-            "tclean returned no summary dict; convergence could not be verified."
+        return (
+            None,
+            "unknown",
+            False,
+            ("tclean returned no summary dict; convergence could not be verified."),
         )
     code = int(summary["stopcode"])
     desc = _STOPCODE_DESC.get(code, f"unrecognized stopcode {code}")
     if code in _CONVERGED_STOPCODES:
         return code, desc, True, None
-    return code, desc, False, (
-        f"tclean did NOT converge: stopcode {code} ({desc}). Restored image is "
-        "likely deconvolution/sidelobe-limited, not a clean detection — inspect "
-        "before reporting."
+    return (
+        code,
+        desc,
+        False,
+        (
+            f"tclean did NOT converge: stopcode {code} ({desc}). Restored image is "
+            "likely deconvolution/sidelobe-limited, not a clean detection — inspect "
+            "before reporting."
+        ),
     )
 
 
@@ -119,8 +127,20 @@ from casatasks import tclean
 ms_path   = {ms_str!r}
 imagename = {imagename!r}
 
-# Remove all existing image products for this imagename before re-running.
+# Remove existing tclean products for this imagename before re-running.
+# Only known product suffixes are removed — never a bare glob of
+# imagename + ".*", which could match the MS itself or unrelated files.
+_PRODUCT_SUFFIXES = (
+    ".image", ".residual", ".psf", ".pb", ".model", ".sumwt", ".mask",
+    ".pbcor", ".weight", ".gridwt", ".workdirectory",
+)
 for p in glob.glob(imagename + ".*"):
+    rest = p[len(imagename):]
+    is_product = any(
+        rest == s or rest[: len(s) + 1] == s + "." for s in _PRODUCT_SUFFIXES
+    )
+    if not is_product:
+        continue
     if os.path.isdir(p):
         shutil.rmtree(p)
     elif os.path.isfile(p):

@@ -88,7 +88,7 @@ class TestGeneratePriorcals:
         script = (workdir / "priorcals.py").read_text()
         assert "plotweather" in script
         assert "WEATHER" in script
-        assert "parameter=taus" in script
+        assert "parameter=_tau" in script
 
     def test_script_gates_rq_on_syspower(self, tmp_path):
         """rq generation must be gated on SYSPOWER subtable presence (WIDAR

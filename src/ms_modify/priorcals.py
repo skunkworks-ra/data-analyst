@@ -51,6 +51,8 @@ def _build_script(
     antpos_table: str,
 ) -> str:
     """Return a self-contained priorcals Python script."""
+    from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
+
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -80,14 +82,14 @@ def _table_nrows(path):
         return 0
 
 
+{safe_rm}
 priorcals = []
 skipped = []
 skip_reasons = {{}}
 
 # 1 — Gain curves
 print("Generating gain curves...")
-if os.path.exists(gc_table):
-    shutil.rmtree(gc_table)
+_safe_rm_table(gc_table)
 try:
     gencal(vis=ms_path, caltable=gc_table, caltype="gc")
 except Exception as _exc:
@@ -108,41 +110,28 @@ if "gain_curves.gc" not in skip_reasons:
 # in parameter=. Derive per-SPW zenith opacities from the WEATHER table with
 # plotweather(doPlot=False), then feed them to gencal with a matching spw list.
 print("Generating opacities...")
-if os.path.exists(opac_table):
-    shutil.rmtree(opac_table)
+_safe_rm_table(opac_table)
 try:
     _tau = list(plotweather(vis=ms_path, doPlot=False))
     _spw = ",".join(str(_i) for _i in range(len(_tau)))
     gencal(vis=ms_path, caltable=opac_table, caltype="opac", spw=_spw, parameter=_tau)
-    print(f"  opac: tau per spw = {{_tau}}")
 except Exception as _exc:
     print(f"  opac: plotweather/gencal raised {{_exc!r}} — skipped")
     skipped.append("opacities.opac")
-    skip_reasons["opacities.opac"] = "no WEATHER subtable — cannot compute zenith opacity"
-    print("  opac: skipped (no WEATHER subtable)")
-else:
-    try:
-        taus = plotweather(vis=ms_path, doPlot=False)
-        spw_sel = ",".join(str(i) for i in range(len(taus)))
-        gencal(vis=ms_path, caltable=opac_table, caltype="opac", spw=spw_sel, parameter=taus)
-    except Exception as _exc:
-        print(f"  opac: raised {{_exc!r}} — skipped")
+    skip_reasons["opacities.opac"] = str(_exc)
+if "opacities.opac" not in skip_reasons:
+    if _table_nrows(opac_table) > 0:
+        priorcals.append(opac_table)
+        print(f"  opac: {{opac_table}} (tau={{[round(t, 4) for t in _tau]}})")
+    else:
         skipped.append("opacities.opac")
-        skip_reasons["opacities.opac"] = str(_exc)
-    if "opacities.opac" not in skip_reasons:
-        if _table_nrows(opac_table) > 0:
-            priorcals.append(opac_table)
-            print(f"  opac: {{opac_table}} (tau={{[round(t, 4) for t in taus]}})")
-        else:
-            skipped.append("opacities.opac")
-            skip_reasons["opacities.opac"] = "gencal returned 0-row table"
-            print("  opac: empty — skipped")
+        skip_reasons["opacities.opac"] = "gencal returned 0-row table"
+        print("  opac: empty — skipped")
 
 # 3 — Requantizer (WIDAR data only; SYSPOWER subtable is written only by WIDAR)
 if _table_nrows(ms_path + "/SYSPOWER") > 0:
     print("Generating requantizer corrections...")
-    if os.path.exists(rq_table):
-        shutil.rmtree(rq_table)
+    _safe_rm_table(rq_table)
     try:
         gencal(vis=ms_path, caltable=rq_table, caltype="rq")
     except Exception as _exc:
@@ -164,8 +153,7 @@ else:
 
 # 4 — Antenna positions
 print("Generating antenna position corrections...")
-if os.path.exists(antpos_table):
-    shutil.rmtree(antpos_table)
+_safe_rm_table(antpos_table)
 try:
     gencal(vis=ms_path, caltable=antpos_table, caltype="antpos")
 except Exception as _exc:
@@ -302,9 +290,7 @@ def run(
             casa_calls.append("casatasks.plotweather(doPlot=False) → zenith opacities")
             taus = plotweather(vis=ms_str, doPlot=False)
             spw_sel = ",".join(str(i) for i in range(len(taus)))
-            casa_calls.append(
-                f"casatasks.gencal(caltype='opac', spw='{spw_sel}', parameter=taus)"
-            )
+            casa_calls.append(f"casatasks.gencal(caltype='opac', spw='{spw_sel}', parameter=taus)")
             gencal(vis=ms_str, caltable=opac_table, caltype="opac", spw=spw_sel, parameter=taus)
         except Exception as exc:
             warnings.append(f"opacity computation failed: {exc}")
