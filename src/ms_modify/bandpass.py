@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ms_inspect.util.casa_context import validate_ms_path
+from ms_inspect.util.casa_context import describe_numeric_fields, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, response_envelope
 from ms_modify.exceptions import BandpassFailedError
@@ -55,6 +55,8 @@ def _build_script(
     interp: list[str],
     parang: bool,
 ) -> str:
+    from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
+
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -65,8 +67,8 @@ import os
 import shutil
 from casatasks import bandpass
 
-if os.path.exists({caltable!r}):
-    shutil.rmtree({caltable!r})
+{safe_rm}
+_safe_rm_table({caltable!r})
 bandpass(
     vis={ms_str!r},
     caltable={caltable!r},
@@ -104,6 +106,7 @@ def run(
     gaintable: list[str] | None = None,
     interp: list[str] | None = None,
     parang: bool = True,
+    target_fields: str = "",
     execute: bool = False,
 ) -> dict:
     """
@@ -127,6 +130,9 @@ def run(
         gaintable:    Prior caltables to apply on-the-fly.
         interp:       Interpolation mode per gaintable entry.
         parang:       Apply parallactic angle correction (default True).
+        target_fields: Optional CASA field selection for the science-target /
+                      transfer fields, used only for the SpW-coverage guardrail.
+                      Empty (default) infers them from intents; raises if it cannot.
         execute:      If False (default), write script and return.
                       If True, run bandpass in-process.
 
@@ -140,6 +146,11 @@ def run(
     ms_str = str(p)
     casa_calls: list[str] = []
     warnings: list[str] = []
+    warnings.extend(describe_numeric_fields(ms_path, field))
+
+    from ms_inspect.util.spw_coverage import check_spw_coverage
+
+    warnings.extend(check_spw_coverage(ms_str, field, spw, target_fields))
 
     if gaintable is None:
         gaintable = []
@@ -154,6 +165,10 @@ def run(
             f"workdir does not exist: {workdir}",
             ms_path=ms_path,
         )
+
+    from ms_modify.pathguard import validate_output_caltable
+
+    validate_output_caltable(caltable, workdir, ms_str)
 
     for gt in gaintable:
         if not Path(gt).exists():

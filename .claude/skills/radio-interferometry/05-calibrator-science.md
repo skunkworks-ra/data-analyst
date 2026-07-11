@@ -215,5 +215,13 @@ In a standard VLA L-band/S-band reduction:
 10. `applycal(parang=True)` → apply all tables with parallactic angle correction
 
 Steps 6–10 are polarisation calibration and are covered in `09-polcal-execution.md`.
+
+> **Setjy ordering (step 1 vs step 6).** Plain `ms_setjy` (Stokes I) must run
+> *strictly before* `ms_setjy_polcal`, never in parallel — `MODEL_DATA` is
+> last-writer-wins per field, so a later Stokes-I pass silently wipes the
+> polarized model. When the pol-angle cal is also the flux cal (usual case),
+> exclude it from step 1 with `ms_setjy(exclude_fields=...)` and let
+> `ms_setjy_polcal` be its only model writer. Verify with `ms_verify_model`.
+> See skill 09 for the full rule.
 Steps 1–5 are documented here as context for flagging whether all required calibrators
 are present during Phase 1/2 inspection.

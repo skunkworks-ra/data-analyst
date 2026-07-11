@@ -16,16 +16,19 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect.exceptions import RadioMSError
+from ms_inspect.util.formatting import compact_fields
 from ms_modify import (
     __version__,
     applycal,
     bandpass,
+    flag_caltable,
     fluxscale,
     gaincal,
     initial_bandpass,
     initial_rflag,
     intents,
     polcal,
+    postcal_flag,
     preflag,
     priorcals,
     rflag,
@@ -91,6 +94,14 @@ class InitialBandpassInput(BaseModel):
         description="CASA field selection string for the bandpass calibrator (e.g. '3C147').",
         min_length=1,
     )
+    applycal_field: str = Field(
+        ...,
+        description=(
+            "CASA field selection for the Step 3 applycal. Required, no default. "
+            "Gains are solved on bp_field only, so normally pass the bandpass "
+            "calibrator field here; pass '' (all fields) only deliberately."
+        ),
+    )
     ref_ant: str = Field(
         ...,
         description="Reference antenna name from ms_refant output (e.g. 'ea17').",
@@ -122,6 +133,21 @@ class InitialBandpassInput(BaseModel):
         default="",
         description=(
             "UV range restriction (e.g. '>1klambda'). Set for 3C84 to exclude extended emission."
+        ),
+    )
+    applymode: str = Field(
+        default="calflagstrict",
+        description=(
+            "applycal mode for Step 3 (default 'calflagstrict'). "
+            "Fall back to 'calflag' if strict flagging is too aggressive."
+        ),
+    )
+    target_fields: str = Field(
+        default="",
+        description=(
+            "Optional CASA field selection for the science-target / transfer fields, "
+            "used only for the SpW-coverage guardrail. Empty infers them from intents; "
+            "the tool raises if it cannot infer them."
         ),
     )
     execute: bool = Field(
@@ -178,9 +204,9 @@ def _run_tool(tool_fn, *args, **kwargs) -> str:
     """
     try:
         result = tool_fn(*args, **kwargs)
-        return json.dumps(result, indent=2, default=str)
+        return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
     except RadioMSError as e:
-        return json.dumps(e.to_dict(), indent=2)
+        return json.dumps(e.to_dict(), separators=(",", ":"))
 
 
 # ---------------------------------------------------------------------------
@@ -258,14 +284,16 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
     Three-step sequence (adapted from evla_pipe/stages/initial_bp.py):
       1. gaincal(solint='int', calmode='p') → workdir/init_gain.g
       2. bandpass(solint='inf', combine='scan', fillgaps=62) → workdir/BP0.b
-      3. applycal(all fields, calwt=False) → CORRECTED column populated
+      3. applycal(field=applycal_field, calwt=False) → CORRECTED column populated
 
     Hard fails (INITIAL_BANDPASS_FAILED) if either caltable is not produced.
     After this tool completes, rflag can be run on the CORRECTED column.
 
     Args:
         params.ms_path:        Path to cal_only.ms.
-        params.bp_field:       Bandpass calibrator field selection.
+        params.bp_field:       Bandpass calibrator field selection (solve step).
+        params.applycal_field: Field selection for Step 3 applycal (required).
+                               Normally the bandpass calibrator; '' = all fields.
         params.ref_ant:        Reference antenna (from ms_refant).
         params.workdir:        Existing directory for caltable output.
         params.bp_scan:        Scan selection (default: all).
@@ -273,15 +301,17 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
         params.priorcals:      Prior caltables to pre-apply.
         params.min_bl_per_ant: minblperant (default 4).
         params.uvrange:        UV range restriction for extended calibrators.
+        params.applymode:      applycal mode (default 'calflagstrict').
 
     Returns:
         JSON with init_gain_table, bp_table, corrected_written, ref_ant,
-        bp_field, solint_phase, solint_bp, fillgaps.
+        bp_field, applycal_field, applymode, solint_phase, solint_bp, fillgaps.
     """
     return _run_tool(
         initial_bandpass.run,
         params.ms_path,
         params.bp_field,
+        params.applycal_field,
         params.ref_ant,
         params.workdir,
         params.bp_scan,
@@ -289,6 +319,8 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
         params.priorcals,
         params.min_bl_per_ant,
         params.uvrange,
+        params.applymode,
+        params.target_fields,
         params.execute,
     )
 
@@ -404,6 +436,27 @@ class SetjyInput(BaseModel):
         default="Perley-Butler 2017",
         description="Flux standard to use (default 'Perley-Butler 2017').",
     )
+    usescratch: bool = Field(
+        default=False,
+        description=(
+            "False (default) = virtual model; True = fill physical MODEL_DATA. "
+            "Must match across all setjy calls on one MS. If polarization "
+            "calibration is in scope, set True here (ms_setjy_polcal forces True "
+            "because virtual models fail on non-zero-RM source models — a known "
+            "CASA bug). Mixing leaves virtual-model fields at MODEL_DATA=1 Jy and "
+            "corrupts the flux scale."
+        ),
+    )
+    exclude_fields: str = Field(
+        default="",
+        description=(
+            "Comma-separated field NAMES to omit from the Stokes-I setjy pass, "
+            "even if catalogued flux standards. Pass the pol-angle calibrator here "
+            "when it overlaps a flux/BP cal: its polarized model is set by "
+            "ms_setjy_polcal, and a plain Stokes-I setjy would overwrite it "
+            "(MODEL is last-writer-wins per field)."
+        ),
+    )
     execute: bool = Field(
         default=False,
         description=(
@@ -444,8 +497,12 @@ class SetjyPolcalInput(BaseModel):
         ),
     )
     epoch: str = Field(
-        default="perley_butler_2013",
-        description="Catalogue epoch key for the polarization data.",
+        default="",
+        description=(
+            "Catalogue epoch key for the polarization data. Leave empty to "
+            "auto-select the epoch nearest the observation date (latest if "
+            "unknown)."
+        ),
     )
     pol_freq_range_lo_ghz: float | None = Field(
         default=None,
@@ -467,11 +524,19 @@ class SetjyPolcalInput(BaseModel):
         description="Polynomial degree for polangle (default 4).",
         ge=1,
     )
+    min_chunk_mhz: float = Field(
+        default=32.0,
+        description=(
+            "Minimum width (MHz) of each Perley-Butler Stokes I probe chunk when "
+            "equipartitioning a wide SPW (default 32)."
+        ),
+        gt=0.0,
+    )
     execute: bool = Field(
         default=False,
         description=(
             "If False (default), write setjy_polcal.py and return. "
-            "If True, run setjy(standard='manual') in-process."
+            "If True, probe Perley-Butler Stokes I and set the manual model in-process."
         ),
     )
 
@@ -495,9 +560,25 @@ class PolcalInput(BaseModel):
     refant: str = Field(default="", description="Reference antenna name.")
     gaintable: list[str] = Field(default_factory=list, description="Prior caltables to apply.")
     interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
+    spwmap: list[list[int]] = Field(
+        default_factory=list,
+        description=(
+            "Optional per-prior-table SPW map (list-of-lists aligned to gaintable), "
+            "e.g. [[], [0,0,0,0]] to fan an spw-combined prior (VLA multiband-delay "
+            "Kcross) across all SPWs. Empty → CASA identity (default per-SPW behaviour)."
+        ),
+    )
     parang: bool = Field(
         default=True,
         description="Apply parallactic angle correction (default True, critical for polcal).",
+    )
+    target_fields: str = Field(
+        default="",
+        description=(
+            "Optional CASA field selection for the science-target / transfer fields, "
+            "used only for the SpW-coverage guardrail. Empty infers them from intents; "
+            "the tool raises if it cannot infer them."
+        ),
     )
     execute: bool = Field(
         default=False,
@@ -513,6 +594,16 @@ class ApplyInitialRflagInput(BaseModel):
         min_length=1,
     )
     workdir: str = Field(..., description="Existing directory for generated scripts.", min_length=1)
+    field: str = Field(
+        ...,
+        description=(
+            "REQUIRED. The field(s) to flag — scope to whichever field's CORRECTED column "
+            "is genuinely calibrated at this point (e.g. the bandpass calibrator right after "
+            "initial_bandpass, or all calibrators after the full solve). An all-field pass over "
+            "uncalibrated fields flags ~90% of the data and is recoverable only by re-splitting."
+        ),
+        min_length=1,
+    )
     timedevscale: float = Field(
         default=5.0,
         description="rflag time deviation threshold (default 5.0).",
@@ -536,8 +627,103 @@ class ApplyInitialRflagInput(BaseModel):
     execute: bool = Field(
         default=False,
         description=(
-            "If False (default), write initial_rflag_cmds.txt + initial_rflag.py and return. "
-            "If True, run flagdata(mode='list') in-process."
+            "If False (default), write initial_rflag.py and return. "
+            "If True, run the rflag + tfcrop passes in-process."
+        ),
+    )
+
+
+class PostcalFlagInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(
+        ...,
+        description="Path to the MS (CORRECTED populated on the selected fields).",
+        min_length=1,
+    )
+    workdir: str = Field(..., description="Existing directory for generated scripts.", min_length=1)
+    field: str = Field(
+        ...,
+        description=(
+            "REQUIRED. The phase calibrator and/or science target whose CORRECTED column "
+            "is valid after the final applycal. An all-field pass over fields without valid "
+            "CORRECTED flags almost everything."
+        ),
+        min_length=1,
+    )
+    keep_spw: str = Field(
+        default="",
+        description="SpWs being KEPT — tfcrop + rflag run on these to salvage localized RFI. Empty = all.",
+    )
+    drop_spw: str = Field(
+        default="",
+        description="Drop-tier SpWs — fully flagged via manual command. Empty = drop nothing.",
+    )
+    datacolumn: str = Field(
+        default="corrected", description="Column to flag on (default 'corrected')."
+    )
+    clip_sigma: float | None = Field(
+        default=5.0,
+        description="Per-SpW robust clip ceiling = median + clip_sigma*1.4826*MAD, computed per kept SpW. None disables.",
+    )
+    clipmax: float | None = Field(
+        default=None,
+        description="Flat |data| ceiling fallback, used only when clip_sigma is None.",
+    )
+    uvrange: str = Field(
+        default="",
+        description="Optional CASA uvrange applied to the clip only (e.g. '>2klambda') to protect short-spacing flux on extended sources.",
+    )
+    timedevscale: float = Field(default=5.0, description="rflag time deviation threshold.", gt=0.0)
+    freqdevscale: float = Field(
+        default=5.0, description="rflag frequency deviation threshold.", gt=0.0
+    )
+    timecutoff: float = Field(default=4.0, description="tfcrop time deviation threshold.", gt=0.0)
+    freqcutoff: float = Field(
+        default=4.0, description="tfcrop frequency deviation threshold.", gt=0.0
+    )
+    execute: bool = Field(
+        default=False,
+        description="If False (default), write scripts and return. If True, run flagdata(mode='list') in-process.",
+    )
+
+
+class FlagCaltableInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    caltable_path: str = Field(
+        ..., description="Path to the CASA calibration table to autoflag.", min_length=1
+    )
+    workdir: str = Field(
+        ..., description="Existing directory for the generated script.", min_length=1
+    )
+    sigma: float = Field(
+        default=5.0,
+        description=(
+            "Threshold scale (default 5.0; 6.0 is more conservative). Maps to "
+            "timecutoff/freqcutoff (tfcrop) or timedevscale/freqdevscale (rflag)."
+        ),
+        gt=0.0,
+    )
+    mode: str | None = Field(
+        default=None,
+        description=(
+            "'rflag' or 'tfcrop'. Default None → auto-route from the VisCal type "
+            "(B→tfcrop, G/T/D→rflag, K→refused)."
+        ),
+    )
+    datacolumn: str = Field(
+        default="CPARAM",
+        description="Solution column to flag on. Default 'CPARAM' (complex: B/G/D). 'FPARAM' for real-valued.",
+        min_length=1,
+    )
+    flagbackup: bool = Field(
+        default=True,
+        description="Save a .flagversions backup of the caltable before flagging (default True).",
+    )
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write flag_caltable.py and return. If True, run "
+            "summary→apply→summary in-process and report flagged_frac_before/after/delta."
         ),
     )
 
@@ -615,7 +801,8 @@ async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> str:
     Tables generated via gencal in order:
       1. gain_curves.gc   — VLA elevation gain curves
       2. opacities.opac   — per-SPW zenith opacity
-      3. requantizer.rq   — post-2011 VLA requantizer (skipped for pre-WIDAR data)
+      3. requantizer.rq   — VLA WIDAR requantizer (attempted iff the SYSPOWER
+                            subtable has rows; absent SYSPOWER = pre-WIDAR data)
       4. antpos.ap        — antenna position corrections (skipped if empty)
 
     The returned 'priorcals' list is the canonical input to ms_initial_bandpass.
@@ -665,17 +852,21 @@ async def ms_setjy(params: SetjyInput) -> str:
     Args:
         params.ms_path:   Path to calibrators.ms.
         params.workdir:   Existing directory for setjy.py script.
-        params.standard:  Flux standard (default 'Perley-Butler 2017').
-        params.execute:   Generate script only (False) or run setjy in-process (True).
+        params.standard:   Flux standard (default 'Perley-Butler 2017').
+        params.usescratch: Virtual model (False) or fill MODEL_DATA (True). Set
+                           True when polarization calibration is in scope.
+        params.execute:    Generate script only (False) or run setjy in-process (True).
 
     Returns:
-        JSON with flux_fields, skipped_fields, warnings, and script_path.
+        JSON with flux_fields, skipped_fields, excluded_fields, warnings, script_path.
     """
     return _run_tool(
         setjy.run,
         params.ms_path,
         params.workdir,
         params.standard,
+        params.usescratch,
+        params.exclude_fields,
         params.execute,
     )
 
@@ -698,17 +889,20 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
     """
     Set the full polarization model for a polarization angle calibrator.
 
-    Fits three polynomial models from the Perley & Butler (2013) catalogue:
-      - Stokes I spectral index (log-polynomial → spix)
+    Stokes I (flux@reffreq + spectral index) is probed from CASA's own
+    Perley-Butler 2017 flux standard at run time — setjy(standard='Perley-Butler
+    2017', usescratch=False) is run per SPW (wide SPWs equipartitioned into
+    chunks >= min_chunk_mhz) and the returned model flux is fit in log space.
+    The pol-property catalogue (default epoch '2019') supplies only:
       - Pol fraction vs frequency (ascending polynomial → polindex)
       - Pol angle vs frequency in radians (ascending polynomial → polangle)
 
-    All polynomials use x = (f - f_ref)/f_ref, ASCENDING coefficient order
-    [c0, c1, ...] as required by CASA setjy(standard='manual').
+    All polynomials use ASCENDING coefficient order [c0, c1, ...] as required by
+    CASA setjy(standard='manual').
 
-    Writes workdir/setjy_polcal.py. Run it with CASA to populate the MODEL
-    column with the full polarized flux density model before solving Kcross,
-    D-terms, or position angle calibration tables.
+    Writes workdir/setjy_polcal.py — a self-contained probe→fit→apply script.
+    Run it with CASA to populate the MODEL column with the full polarized flux
+    density model before solving Kcross, D-terms, or position angle tables.
 
     Args:
         params.ms_path:               Path to the Measurement Set.
@@ -716,17 +910,18 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
         params.workdir:               Existing directory for the generated script.
         params.reffreq_ghz:           Reference frequency in GHz.
         params.calibrator_name:       Catalogue lookup name (defaults to field).
-        params.epoch:                 Catalogue epoch (default 'perley_butler_2013').
+        params.epoch:                 Catalogue epoch (empty → auto-select by obs date).
         params.pol_freq_range_lo_ghz: Lower GHz bound to restrict pol fits.
         params.pol_freq_range_hi_ghz: Upper GHz bound to restrict pol fits.
         params.polindex_deg:          Polynomial degree for polindex (default 3).
         params.polangle_deg:          Polynomial degree for polangle (default 4).
+        params.min_chunk_mhz:         Minimum probe-chunk width in MHz (default 32).
         params.execute:               Generate script only (False) or run in-process (True).
 
     Returns:
-        JSON with script_path, calibrator, reffreq_ghz, flux_jy, polindex,
-        polangle, polindex_c0 (pol fraction at reffreq), polangle_c0_rad
-        (pol angle in radians at reffreq).
+        JSON with script_path, calibrator, reffreq_ghz, polindex, polangle,
+        polindex_c0 (pol fraction at reffreq), polangle_c0_rad (pol angle in
+        radians at reffreq), and — when execute=True — the probed flux_jy/spix.
     """
     return _run_tool(
         setjy_polcal.run,
@@ -735,11 +930,12 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
         params.workdir,
         params.reffreq_ghz,
         params.calibrator_name or None,
-        params.epoch,
+        params.epoch or None,
         params.pol_freq_range_lo_ghz,
         params.pol_freq_range_hi_ghz,
         params.polindex_deg,
         params.polangle_deg,
+        params.min_chunk_mhz,
         params.execute,
     )
 
@@ -769,6 +965,8 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
     Args:
         params.ms_path:      Path to the MS (CORRECTED + MODEL must exist).
         params.workdir:      Existing directory for generated scripts.
+        params.field:        REQUIRED. Field(s) whose CORRECTED column is valid at this stage.
+                             All-field passes over uncalibrated fields are unsafe (see field docs).
         params.timedevscale: rflag time deviation threshold (default 5.0).
         params.freqdevscale: rflag frequency deviation threshold (default 5.0).
         params.timecutoff:   tfcrop time deviation threshold (default 4.0).
@@ -776,16 +974,126 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
         params.execute:      Generate scripts only (False) or run in-process (True).
 
     Returns:
-        JSON with cmds_path, script_path, thresholds, and (if execute=True) flags_applied.
+        JSON with script_path, thresholds, and (if execute=True) flags_applied.
     """
     return _run_tool(
         initial_rflag.run,
         params.ms_path,
         params.workdir,
+        params.field,
         params.timedevscale,
         params.freqdevscale,
         params.timecutoff,
         params.freqcutoff,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_postcal_flag",
+    description=(
+        "Post-calibration RFI flagging on the phase calibrator and science target. "
+        "Ordered direct flagdata(action='apply') passes on CORRECTED: optional clip, "
+        "then tfcrop + rflag on the kept SpWs (salvage localized RFI), then a manual "
+        "flag of the drop-tier SpWs. Consumes the SpW triage from ms_spw_amp_severity."
+    ),
+    annotations={
+        "title": "Post-Calibration RFI Flagging",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_postcal_flag(params: PostcalFlagInput) -> str:
+    """
+    Post-calibration RFI flagging on target + phase calibrator CORRECTED.
+
+    Extends flagging to the fields the pre-cal pipeline never cleaned and bakes
+    the SpW-triage decision into the FLAG column. Generates postcal_flag.py; runs
+    in-process when execute=True. A single flagmanager save captures the pre-flag
+    state; the passes run as direct flagdata calls (not mode='list').
+
+    Args:
+        params.ms_path:      Path to the MS (CORRECTED on the selected fields).
+        params.workdir:      Existing directory for generated scripts.
+        params.field:        REQUIRED. Phase cal and/or target with valid CORRECTED.
+        params.keep_spw:     SpWs to salvage (tfcrop + rflag). Empty = all.
+        params.drop_spw:     Drop-tier SpWs to fully flag. Empty = none.
+        params.datacolumn:   Column to flag on (default 'corrected').
+        params.clipmax:      Optional |CORRECTED| ceiling applied first.
+        params.timedevscale/freqdevscale: rflag thresholds (default 5.0).
+        params.timecutoff/freqcutoff:     tfcrop thresholds (default 4.0).
+        params.execute:      Generate scripts only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, selections, and (if execute=True) flags_applied.
+    """
+    return _run_tool(
+        postcal_flag.run,
+        params.ms_path,
+        params.workdir,
+        params.field,
+        params.keep_spw,
+        params.drop_spw,
+        params.datacolumn,
+        params.clip_sigma,
+        params.clipmax,
+        params.uvrange,
+        params.timedevscale,
+        params.freqdevscale,
+        params.timecutoff,
+        params.freqcutoff,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_flag_caltable",
+    description=(
+        "Autoflag a caltable's solutions (rflag/tfcrop, auto-routed from VisCal type) "
+        "to catch RFI-contaminated outliers that passed the solve-time SNR cut. Run "
+        "after a table is created, before it is applied as a prior. Delay (K) tables "
+        "are refused. Reports flagged fraction before/after."
+    ),
+    annotations={
+        "title": "Flag Calibration Table Solutions",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_flag_caltable(params: FlagCaltableInput) -> str:
+    """
+    Autoflag outlier solutions in a calibration table.
+
+    Mode is auto-routed from the VisCal type unless overridden: B→tfcrop,
+    G/T/D→rflag, K→refused. A single sigma (default 5.0) maps to the relevant
+    flagdata thresholds. The flagged fraction is reported so the caller can
+    decide whether to redo the solve (> 30% flagged) versus loosen sigma.
+
+    Args:
+        params.caltable_path: Path to the CASA calibration table.
+        params.workdir:       Existing directory for the generated script.
+        params.sigma:         Threshold scale (default 5.0; 6.0 more conservative).
+        params.mode:          'rflag'/'tfcrop' override, or None to auto-route.
+        params.datacolumn:    Solution column (default 'CPARAM').
+        params.flagbackup:    Save a .flagversions backup first (default True).
+        params.execute:       Generate script only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, viscal_type, resolved mode, and (if execute=True)
+        flagged_frac_before/after/delta.
+    """
+    return _run_tool(
+        flag_caltable.run,
+        params.caltable_path,
+        params.workdir,
+        params.sigma,
+        params.mode,
+        params.datacolumn,
+        params.flagbackup,
         params.execute,
     )
 
@@ -828,7 +1136,23 @@ class GaincalInput(BaseModel):
     )
     gaintable: list[str] = Field(default_factory=list, description="Prior caltables to apply.")
     interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
+    spwmap: list[list[int]] = Field(
+        default_factory=list,
+        description=(
+            "Optional per-prior-table SPW map (list-of-lists aligned to gaintable) to "
+            "fan an spw-combined prior across all SPWs. Empty → CASA identity. Only "
+            "needed if a prior used combine='spw' (VLA multiband delay)."
+        ),
+    )
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
+    target_fields: str = Field(
+        default="",
+        description=(
+            "Optional CASA field selection for the science-target / transfer fields, "
+            "used only for the SpW-coverage guardrail. Empty infers them from intents; "
+            "the tool raises if it cannot infer them."
+        ),
+    )
     execute: bool = Field(
         default=False,
         description="If False (default), write script and return. If True, run in-process.",
@@ -862,6 +1186,14 @@ class BandpassInput(BaseModel):
     gaintable: list[str] = Field(default_factory=list, description="Prior caltables to apply.")
     interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
+    target_fields: str = Field(
+        default="",
+        description=(
+            "Optional CASA field selection for the science-target / transfer fields, "
+            "used only for the SpW-coverage guardrail. Empty infers them from intents; "
+            "the tool raises if it cannot infer them."
+        ),
+    )
     execute: bool = Field(
         default=False,
         description="If False (default), write script and return. If True, run in-process.",
@@ -925,6 +1257,16 @@ class ApplycalInput(BaseModel):
             "'nearest,nearestflag' for delay (K) tables."
         ),
     )
+    spwmap: list[list[int]] = Field(
+        default_factory=list,
+        description=(
+            "Optional per-table SPW map (list-of-lists aligned to gaintable), e.g. "
+            "[[], [0,0,0,0], []] to fan an spw-combined table across all SPWs while "
+            "leaving per-SPW tables on identity. Empty → CASA identity (unchanged "
+            "per-SPW behaviour). Only needed when a table used combine='spw' (VLA "
+            "multiband delay)."
+        ),
+    )
     calwt: bool = Field(
         default=False,
         description=(
@@ -933,10 +1275,11 @@ class ApplycalInput(BaseModel):
         ),
     )
     applymode: str = Field(
-        default="calflagstrict",
+        default="calonly",
         description=(
-            "'calflagstrict' flags data with missing solutions (recommended). "
-            "'calonly' applies without additional flagging."
+            "'calonly' (default) applies calibration without flagging, leaving the FLAG "
+            "column to post-cal RFI flagging (ms_postcal_flag, skill 13). 'calflagstrict' "
+            "additionally flags data with missing/flagged solutions at apply time."
         ),
     )
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
@@ -1017,8 +1360,10 @@ async def ms_gaincal(params: GaincalInput) -> str:
         params.solnorm,
         params.gaintable,
         params.interp,
+        params.spwmap or None,
         params.parang,
         params.smodel,
+        params.target_fields,
         params.execute,
     )
 
@@ -1076,7 +1421,9 @@ async def ms_polcal(params: PolcalInput) -> str:
         params.refant,
         params.gaintable or None,
         params.interp or None,
+        params.spwmap or None,
         params.parang,
+        params.target_fields,
         params.execute,
     )
 
@@ -1138,6 +1485,7 @@ async def ms_bandpass(params: BandpassInput) -> str:
         params.gaintable,
         params.interp,
         params.parang,
+        params.target_fields,
         params.execute,
     )
 
@@ -1195,8 +1543,8 @@ async def ms_fluxscale(params: FluxscaleInput) -> str:
     name="ms_applycal",
     description=(
         "Apply calibration tables to a field and populate CORRECTED_DATA. "
-        "Default applymode='calflagstrict' flags data with missing solutions. "
-        "calwt=False is correct for VLA."
+        "Default applymode='calonly' leaves flagging to post-cal RFI flagging "
+        "(ms_postcal_flag). calwt=False is correct for VLA."
     ),
     annotations={
         "title": "Apply Calibration",
@@ -1215,8 +1563,10 @@ async def ms_applycal(params: ApplycalInput) -> str:
       Phase cal:  gainfield=[..., phase_field], interp=[..., 'nearest']
       Target:     gainfield=[..., phase_field], interp=[..., 'linear']
 
-    Uses applymode='calflagstrict' by default — data with missing solutions
-    are flagged rather than left uncorrected. Set calwt=False for VLA data.
+    Uses applymode='calonly' by default — calibration is applied without
+    flagging, so post-cal RFI flagging (ms_postcal_flag, skill 13) owns the FLAG
+    column. Use 'calflagstrict' to flag missing-solution data at apply time.
+    Set calwt=False for VLA data.
 
     Args:
         params.ms_path:    Path to the Measurement Set.
@@ -1226,7 +1576,7 @@ async def ms_applycal(params: ApplycalInput) -> str:
         params.gainfield:  Per-table field selection for solution rows.
         params.interp:     Per-table interpolation mode.
         params.calwt:      Calibrate weights (default False for VLA).
-        params.applymode:  'calflagstrict' (default) or 'calonly'.
+        params.applymode:  'calonly' (default) or 'calflagstrict'.
         params.parang:     Parallactic angle correction (default True).
         params.flagbackup: Save flag backup first (default False).
         params.execute:    Generate script only (False) or run in-process (True).
@@ -1242,6 +1592,7 @@ async def ms_applycal(params: ApplycalInput) -> str:
         params.workdir,
         params.gainfield or None,
         params.interp or None,
+        params.spwmap or None,
         params.calwt,
         params.applymode,
         params.parang,
@@ -1275,13 +1626,24 @@ class TcleanInput(BaseModel):
     workdir: str = Field(
         ..., description="Existing directory for the generated script.", min_length=1
     )
+    spw: str = Field(
+        default="",
+        description=(
+            "CASA SPW selection (default '' = all SPWs). Use to exclude "
+            "RFI-dominated SPWs, e.g. '0~8,10~15' to drop SPW 9."
+        ),
+    )
     stokes: str = Field(
         default="I",
         description="Stokes products to image. Default 'I'. Also accepts 'IV', 'IQUV', 'RR', 'LL', etc.",
     )
     specmode: str = Field(
         default="mfs",
-        description="'mfs' for continuum (default) or 'cube' for per-channel imaging.",
+        description=(
+            "'mfs' for continuum (default), 'cube' for per-channel imaging, or "
+            "'mvc' for wideband awp2 imaging (awp2 lacks conjbeams; plain 'mfs' "
+            "needs several major cycles to converge flux normalization)."
+        ),
     )
     deconvolver: str = Field(
         default="hogbom",
@@ -1300,9 +1662,18 @@ class TcleanInput(BaseModel):
         default=None,
         description=(
             "Number of W-projection planes. Omit when W-terms are negligible "
-            "(Fresnel number >= 0.9). Valid for both 'wproject' and 'awp2' gridders."
+            "(Fresnel number >= 0.9). Valid for both 'wproject' and 'awp2' gridders. "
+            "If omitted for those gridders, CASA silently defaults to 1 (no W-projection)."
         ),
         ge=1,
+    )
+    cfcache: str | None = Field(
+        default=None,
+        description=(
+            "Convolution-function cache path. Only used by gridder='awproject' "
+            "(awp2 has no cfcache). Without it, awproject recomputes CFs on every "
+            "run — potentially hours."
+        ),
     )
     cell: str = Field(
         default="1.0arcsec",
@@ -1336,6 +1707,35 @@ class TcleanInput(BaseModel):
     savemodel: str = Field(
         default="modelcolumn",
         description="'modelcolumn' writes MODEL_DATA for self-cal (default). 'none' skips it.",
+    )
+    pblimit: float = Field(
+        default=-0.01,
+        description=(
+            "Primary-beam gain cutoff. Default -0.01 (negative disables PB-based "
+            "blanking, keeping low-gain regions and PB-sidelobe outliers visible). "
+            "CASA's default 0.2 blanks everything below 20% PB."
+        ),
+    )
+    nchan: int | None = Field(
+        default=None,
+        description=(
+            "Number of output channels for a frequency cube (specmode='cube' "
+            "only; None = all). For an IQUV polarization cube, set one plane per "
+            "SPW-chunk per skill 11. Ignored for specmode='mfs'/'mvc'."
+        ),
+        ge=1,
+    )
+    start: str | None = Field(
+        default=None,
+        description="Cube first channel as a CASA spectral string, e.g. '1.0GHz' or '0' (specmode='cube').",
+    )
+    width: str | None = Field(
+        default=None,
+        description="Cube channel width, e.g. '64MHz' or '4' (specmode='cube').",
+    )
+    outframe: str | None = Field(
+        default=None,
+        description="Output spectral reference frame, e.g. 'LSRK' (specmode='cube'). None = CASA default.",
     )
     execute: bool = Field(
         default=False,
@@ -1384,8 +1784,11 @@ async def ms_tclean(params: TcleanInput) -> str:
         params.imagename:   Base path for image output (no suffix).
         params.field:       CASA field selection for science target(s).
         params.workdir:     Existing directory for the generated script.
+        params.spw:         CASA SPW selection (default '' = all SPWs).
         params.stokes:      Stokes products (default 'I').
-        params.specmode:    'mfs' or 'cube'.
+        params.specmode:    'mfs', 'cube', or 'mvc'.
+        params.nchan/start/width/outframe: frequency-cube channelization
+                            (specmode='cube' only; ignored otherwise).
         params.deconvolver: 'hogbom' or 'mtmfs'.
         params.nterms:      Taylor terms (pass 2 for mtmfs; omit for hogbom).
         params.gridder:     'standard', 'wproject', or 'awp2'.
@@ -1408,20 +1811,27 @@ async def ms_tclean(params: TcleanInput) -> str:
         params.imagename,
         params.field,
         params.workdir,
-        params.stokes,
-        params.specmode,
-        params.deconvolver,
-        params.nterms,
-        params.gridder,
-        params.wprojplanes,
-        params.cell,
-        params.imsize,
-        params.weighting,
-        params.robust,
-        params.niter,
-        params.threshold,
-        params.savemodel,
-        params.execute,
+        spw=params.spw,
+        stokes=params.stokes,
+        specmode=params.specmode,
+        deconvolver=params.deconvolver,
+        nterms=params.nterms,
+        gridder=params.gridder,
+        wprojplanes=params.wprojplanes,
+        cfcache=params.cfcache,
+        cell=params.cell,
+        imsize=params.imsize,
+        weighting=params.weighting,
+        robust=params.robust,
+        niter=params.niter,
+        threshold=params.threshold,
+        savemodel=params.savemodel,
+        pblimit=params.pblimit,
+        nchan=params.nchan,
+        start=params.start,
+        width=params.width,
+        outframe=params.outframe,
+        execute=params.execute,
     )
 
 

@@ -4,10 +4,11 @@ MCP servers, skills, and slash commands for AI-assisted radio interferometric
 data reduction. Targets VLA/JVLA/EVLA, MeerKAT, and uGMRT observations stored
 as CASA Measurement Sets.
 
-Two MCP servers expose the full tool suite:
+Three MCP servers expose the full tool suite:
 
-- **ms-inspect** — read-only inspection and diagnostics (19 tools)
-- **ms-modify** — calibration, flagging, and MS modification (7 tools)
+- **ms-inspect** — read-only inspection and diagnostics (33 tools, port 8000)
+- **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
+- **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
 
 Built on [casatools](https://casa.nrao.edu/) and the
 [Model Context Protocol](https://modelcontextprotocol.io/).
@@ -79,6 +80,9 @@ RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8000 pixi run serve
 
 # Modification server (port 8001)
 RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8001 pixi run serve-modify
+
+# Ingestion server (port 8002)
+RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8002 pixi run serve-create
 ```
 
 Add to your Claude Desktop `claude_desktop_config.json`:
@@ -104,57 +108,39 @@ For any MCP-compatible client — point at `http://localhost:8000/mcp` (streamab
 
 ## Tool inventory
 
-### ms-inspect — read-only inspection (19 tools)
+The full per-tool inventory with descriptions lives in
+[`DESIGN.md`](DESIGN.md) (§8 ms-inspect, §8b ms-modify, §8c ms-create). A
+summary by category:
 
-#### Layer 1 — Orientation
+### ms-inspect — read-only inspection (33 tools)
 
-| Tool | What it returns |
-|------|----------------|
-| `ms_observation_info` | Telescope, observer, project code, time range, duration |
-| `ms_field_list` | Fields with J2000 coordinates, calibrator cross-match, inferred intents |
-| `ms_scan_list` | Time-ordered scans with intents, durations, SpW assignments |
-| `ms_scan_intent_summary` | Observing time distribution across intents |
-| `ms_spectral_window_list` | Per-SpW frequency structure, channel counts, band names |
-| `ms_correlator_config` | Dump time, polarisation basis, full-Stokes check |
+- **Layer 1 — Orientation** (6): observation info, field list, scan list, scan
+  intent summary, spectral window list, correlator config.
+- **Layer 2 — Instrument sanity** (7): antenna list, baseline lengths, elevation
+  vs time, parallactic angle vs time, shadowing report, flag preflight, antenna
+  flag fraction.
+- **Calibration inspection** (6): caltable solution stats + detail reader,
+  single/library caltable plots, gaincal SNR prediction, caltable structural checks.
+- **Pre-calibration inspection** (5): import/model/priorcal verification, online
+  flag stats, flag summary.
+- **Instrument & RFI inspection** (7): reference-antenna ranking, per-channel RFI
+  stats, SpW amplitude severity, pol-cal feasibility, residual/corrected-data
+  stats, phase-calibrator catalogue lookup.
+- **Imaging inspection** (1): robust image RMS / peak / dynamic-range / beam.
+- **Pipeline / workflow** (1): workflow state probe.
 
-#### Layer 2 — Instrument sanity
+### ms-modify — calibration and flagging (16 tools)
 
-| Tool | What it returns |
-|------|----------------|
-| `ms_antenna_list` | Antenna positions (ECEF), dish diameters, mount types, array centre |
-| `ms_baseline_lengths` | Min/max/median baselines, per-SpW angular resolution and LAS |
-| `ms_elevation_vs_time` | Per-scan elevation statistics, low-elevation warnings |
-| `ms_parallactic_angle_vs_time` | PA range per field (sky-frame and feed-frame) |
-| `ms_shadowing_report` | Shadowed antenna events and pre-existing shadow flags |
-| `ms_antenna_flag_fraction` | Per-antenna flag fractions from the FLAG column |
+Intent population, preflagging, prior caltables, flux models (setjy / setjy
+polcal), bandpass, gaincal, polcal, fluxscale, applycal, residual and post-cal
+RFI flagging, caltable autoflag, and tclean imaging. All modify tools support
+`execute=False` (default) to generate a reviewable Python script without
+touching the MS, and `execute=True` to run in-process.
 
-#### Calibration diagnostics
+### ms-create — ingestion (3 tools)
 
-| Tool | What it returns |
-|------|----------------|
-| `ms_refant` | Ranked reference antenna list (geometry + flagging scores) |
-| `ms_verify_caltables` | Structural validation of init_gain.g and BP0.b caltables |
-| `ms_rfi_channel_stats` | Per-SpW bad-channel ranges with RFI source annotations |
-| `ms_flag_summary` | Per-field/scan/SpW/antenna flag fractions via `flagdata(mode='summary')` |
-| `ms_pol_cal_feasibility` | Polarisation calibration feasibility verdict (FULL/LEAKAGE_ONLY/DEGRADED/NOT_FEASIBLE) |
-| `ms_online_flag_stats` | Parse `.flagonline.txt` — command counts, antennas, reason breakdown |
-| `ms_verify_priorcals` | Check prior caltables (gc, opac, rq, antpos) exist and are non-empty |
-| `ms_residual_stats` | Per-SpW amplitude statistics of CORRECTED - MODEL residuals |
-
-### ms-modify — calibration and flagging (7 tools)
-
-| Tool | What it does |
-|------|-------------|
-| `ms_set_intents` | Populate STATE subtable from calibrator catalogue matching |
-| `ms_apply_preflag` | Online flags + shadow + zero-clip + tfcrop, then split calibrators |
-| `ms_generate_priorcals` | Generate gain curves, opacities, requantiser, antenna position tables |
-| `ms_setjy` | Set flux density models for standard calibrators |
-| `ms_initial_bandpass` | Coarse bandpass solve (gaincal + bandpass + applycal) |
-| `ms_apply_rflag` | rflag RFI excision on the CORRECTED column |
-| `ms_apply_initial_rflag` | Combined rflag + tfcrop on residuals (CORRECTED - MODEL) |
-
-All modify tools support `execute=False` (default) to generate a reviewable
-Python script without touching the MS, and `execute=True` to run in-process.
+Pre-conversion ASDM summary, ASDM → MS import, and a per-reduction working-calls
+ledger.
 
 ---
 
@@ -173,6 +159,10 @@ automatically when the plugin is installed.
 | Command | What it does |
 |---------|-------------|
 | `/project:inspect <ms_path>` | Full Phase 1 + Phase 2 analysis with go/no-go report |
+| `/project:precal <ms_path>` | Pre-calibration workflow (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
+| `/project:calibrate <ms_path>` | Full calibration solve (initial phase → delay → bandpass → gain → fluxscale → applycal) |
+| `/project:polcal <ms_path>` | Polarisation calibration (Kcross → D-terms → Xf → applycal with parang) |
+| `/project:image <ms_path>` | First-pass continuum/cube imaging with derived tclean parameters |
 | `/project:simulate <description>` | Generate a synthetic MS from a conversational description |
 
 ---
@@ -182,9 +172,11 @@ automatically when the plugin is installed.
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `RADIO_MCP_TRANSPORT` | `stdio` | `stdio` for Claude Code; `http` for remote |
-| `RADIO_MCP_PORT` | `8000` / `8001` | HTTP port (inspect / modify) |
+| `RADIO_MCP_HOST` | `127.0.0.1` | HTTP bind address. **The HTTP transport has no authentication — do not bind beyond localhost on shared or untrusted networks** |
+| `RADIO_MCP_PORT` | `8000` / `8001` / `8002` | HTTP port (inspect / modify / create) |
 | `RADIO_MCP_WORKERS` | `4` | Parallel workers for FLAG column reads (cap 8) |
 | `RADIO_MCP_TEST_MS` | — | Path to MS for integration tests |
+| `RADIO_MCP_TEST_MS_TGZ` | — | Path to `.ms.tgz` tarball; auto-extracted by conftest.py |
 
 ---
 

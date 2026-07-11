@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ms_inspect.util.casa_context import validate_ms_path
+from ms_inspect.util.casa_context import describe_numeric_fields, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, response_envelope
 from ms_modify.exceptions import GaincalFailedError
@@ -53,8 +53,12 @@ def _build_script(
     interp: list[str],
     parang: bool,
     smodel: list[float] | None = None,
+    spwmap: list[list[int]] | None = None,
 ) -> str:
+    from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
+
     smodel_line = f"    smodel={smodel!r},\n" if smodel is not None else ""
+    spwmap_line = f"    spwmap={spwmap!r},\n" if spwmap is not None else ""
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -65,8 +69,8 @@ import os
 import shutil
 from casatasks import gaincal
 
-if os.path.exists({caltable!r}):
-    shutil.rmtree({caltable!r})
+{safe_rm}
+_safe_rm_table({caltable!r})
 gaincal(
     vis={ms_str!r},
     caltable={caltable!r},
@@ -82,7 +86,7 @@ gaincal(
     solnorm={solnorm},
 {smodel_line}    gaintable={gaintable!r},
     interp={interp!r},
-    parang={parang},
+{spwmap_line}    parang={parang},
 )
 print("Done. Caltable written to: {caltable}")
 """
@@ -104,8 +108,10 @@ def run(
     solnorm: bool = False,
     gaintable: list[str] | None = None,
     interp: list[str] | None = None,
+    spwmap: list[list[int]] | None = None,
     parang: bool = True,
     smodel: list[float] | None = None,
+    target_fields: str = "",
     execute: bool = False,
 ) -> dict:
     """
@@ -127,8 +133,15 @@ def run(
         solnorm:      Normalise solutions to unit amplitude (default False).
         gaintable:    Prior caltables to apply on-the-fly.
         interp:       Interpolation mode per gaintable entry.
+        spwmap:       Optional per-prior-table SPW map (list-of-lists aligned to
+                      gaintable) to fan an spw-combined prior across all SPWs.
+                      Default None → CASA identity. Only needed if a prior used
+                      combine='spw' (a VLA multiband-delay choice).
         parang:       Apply parallactic angle correction (default True).
         smodel:       Scratch model [I, Q, U, V] for gaintype='KCROSS' (default None).
+        target_fields: Optional CASA field selection for the science-target /
+                      transfer fields, used only for the SpW-coverage guardrail.
+                      Empty (default) infers them from intents; raises if it cannot.
         execute:      If False (default), write script and return.
                       If True, run gaincal in-process.
 
@@ -142,11 +155,25 @@ def run(
     ms_str = str(p)
     casa_calls: list[str] = []
     warnings: list[str] = []
+    warnings.extend(describe_numeric_fields(ms_path, field))
+
+    from ms_inspect.util.spw_coverage import check_spw_coverage
+
+    warnings.extend(check_spw_coverage(ms_str, field, spw, target_fields))
 
     if gaintable is None:
         gaintable = []
     if interp is None:
         interp = [""] * len(gaintable)
+
+    if spwmap is not None and len(spwmap) != len(gaintable):
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(
+            f"spwmap length ({len(spwmap)}) must match gaintable length ({len(gaintable)}). "
+            "Pass a per-table list-of-lists, e.g. [[], [0,0,0,0]].",
+            ms_path=ms_path,
+        )
 
     workdir_path = Path(workdir)
     if not workdir_path.exists():
@@ -156,6 +183,10 @@ def run(
             f"workdir does not exist: {workdir}",
             ms_path=ms_path,
         )
+
+    from ms_modify.pathguard import validate_output_caltable
+
+    validate_output_caltable(caltable, workdir, ms_str)
 
     for gt in gaintable:
         if not Path(gt).exists():
@@ -185,6 +216,7 @@ def run(
             interp=interp,
             parang=parang,
             smodel=smodel,
+            spwmap=spwmap,
         )
     )
     casa_calls.append(f"write_script → {script}")
@@ -249,6 +281,8 @@ def run(
     )
     if smodel is not None:
         kwargs["smodel"] = smodel
+    if spwmap is not None:
+        kwargs["spwmap"] = spwmap
     try:
         gaincal(**kwargs)
     except Exception as e:

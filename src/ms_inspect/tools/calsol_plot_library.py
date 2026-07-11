@@ -1,12 +1,10 @@
 """
 calsol_plot_library.py — ms_plot_caltable_library
 
-Plot an explicit list of CASA calibration tables in one call. Each caltable
-is passed to ms_calsol_plot (calsol_plot.run) independently so a single bad
-table produces a per-entry error rather than aborting the whole batch.
-
-Returns a summary envelope with one entry per caltable: html_path, table_type,
-and any per-table errors or warnings.
+Render an explicit list of CASA calibration tables into ONE combined Bokeh HTML,
+a tab per caltable. Each layout is built via calsol_plot.build_layout (direct
+table read, no ms_calsol_stats). A table that fails becomes an error tab rather
+than aborting the batch.
 """
 
 from __future__ import annotations
@@ -21,66 +19,63 @@ TOOL_NAME = "ms_plot_caltable_library"
 
 
 def run(
-    caltable_paths: list[str],
-    output_dir: str,
+    caltable_paths: list[str], output_dir: str, combined_name: str = "caltables_overview.html"
 ) -> dict:
     """
-    Plot an explicit list of CASA calibration tables.
-
-    Each table is passed to calsol_plot.run() independently. A table that
-    fails (not found, unsupported type, CASA error) records an error entry
-    rather than aborting the batch.
+    Plot a list of caltables into a single combined HTML (one tab each).
 
     Args:
-        caltable_paths: Ordered list of paths to caltable directories.
-        output_dir:     Directory to write all dashboard HTML and NPZ files.
+        caltable_paths: Ordered list of caltable directory paths.
+        output_dir:     Directory to write the combined HTML.
+        combined_name:  Filename for the combined HTML.
 
     Returns:
-        Standard response envelope. data["plots"] is a list of per-table
-        dicts with keys: caltable, status, html_path, npz_path, table_type,
-        error (if status == "error").
+        Standard envelope: data["html_path"] and per-table tab/status list.
     """
+    from bokeh.embed import file_html
+    from bokeh.models import Div, TabPanel, Tabs
+    from bokeh.resources import CDN
+
     out = Path(output_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
 
-    plots: list[dict] = []
+    panels: list = []
+    entries: list[dict] = []
     warnings: list[str] = []
-    casa_calls: list[str] = []
 
-    for raw_path in caltable_paths:
-        p = Path(raw_path).expanduser().resolve()
-        entry: dict = {"caltable": str(p)}
+    for raw in caltable_paths:
+        p = Path(raw).expanduser().resolve()
+        name = p.name
+        if not p.exists() or not p.is_dir():
+            warnings.append(f"{name}: not found")
+            entries.append({"caltable": str(p), "status": "error", "error": "not found"})
+            panels.append(TabPanel(child=Div(text=f"<b>{name}</b>: not found"), title=f"⚠ {name}"))
+            continue
+        try:
+            built = calsol_plot.build_layout(str(p))
+            panels.append(TabPanel(child=built["layout"], title=name))
+            entries.append(
+                {"caltable": str(p), "status": "ok", "viscal": built["vc"], "view": built["view"]}
+            )
+        except Exception as exc:  # partial success — one bad table is an error tab
+            warnings.append(f"{name}: {exc}")
+            entries.append({"caltable": str(p), "status": "error", "error": str(exc)})
+            panels.append(TabPanel(child=Div(text=f"<b>{name}</b>: {exc}"), title=f"⚠ {name}"))
 
-        result = calsol_plot.run(str(p), str(out))
-        casa_calls.extend(result.get("provenance", {}).get("casa_calls", []))
+    html_path = str(out / combined_name)
+    with open(html_path, "w") as fh:
+        fh.write(file_html(Tabs(tabs=panels), CDN, "Caltable overview"))
 
-        if result.get("status") == "error":
-            entry["status"] = "error"
-            entry["error"] = result.get("message", "unknown error")
-            warnings.append(f"{p.name}: {entry['error']}")
-        else:
-            d = result.get("data", {})
-            entry["status"] = "ok"
-            entry["html_path"] = d.get("html_path", {}).get("value", "")
-            entry["npz_path"] = d.get("npz_path", {}).get("value", "")
-            entry["table_type"] = d.get("table_type", {}).get("value", "")
-            for w in result.get("warnings", []):
-                warnings.append(f"{p.name}: {w}")
-
-        plots.append(entry)
-
-    n_ok = sum(1 for e in plots if e["status"] == "ok")
-    n_err = len(plots) - n_ok
-
+    n_ok = sum(1 for e in entries if e["status"] == "ok")
     return response_envelope(
         tool_name=TOOL_NAME,
         ms_path=output_dir,
         data={
-            "plots": fmt_field(plots),
+            "html_path": fmt_field(html_path),
             "n_ok": fmt_field(n_ok),
-            "n_error": fmt_field(n_err),
-            "output_dir": fmt_field(str(out)),
+            "n_error": fmt_field(len(entries) - n_ok),
+            "tables": fmt_field(entries),
         },
         warnings=warnings,
-        casa_calls=casa_calls,
+        casa_calls=[],
     )

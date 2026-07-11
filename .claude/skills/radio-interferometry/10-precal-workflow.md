@@ -33,7 +33,8 @@ ms_verify_priorcals(workdir)             → confirm all required tables exist
 ms_setjy(execute=False, ...)             → generate setjy.py
   → run setjy.py as background job; wait for completion however long it takes
 
-ms_refant(calibrators.ms, field=bp_field) → ranked reference antenna list
+ms_refant(calibrators.ms, field=bp_field)    → refant ranked on BP cal
+ms_refant(calibrators.ms, field=phase_field) → refant ranked on phase cal (pick antenna healthy on both)
 ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
   → run initial_bandpass.py as background job; wait for completion however long it takes
 ms_verify_caltables(...)                  → confirm init_gain.g + BP0.b valid
@@ -146,21 +147,47 @@ The returned `flux_fields` list confirms which fields received a model. If a
 flux calibrator is missing from this list, check that its field name matches
 the catalogue (use `ms_field_list` cross-match for disambiguation).
 
+**If polarization calibration is in scope for this dataset, call `ms_setjy` with
+`usescratch=True`** (default is `False`). `ms_setjy_polcal` forces `usescratch=True`
+later, and `usescratch` cannot be mixed within one MS without corrupting the flux
+scale. Set it consistently from the start. See skill 09 Step 1 and skill 07 Step 6.
+
 ---
 
 ## Step 5 — Reference antenna selection
 
-`ms_refant` returns a full ranked list. Use the top-ranked antenna unless:
+**Score the refant on every calibrator it must serve, not just the bandpass
+calibrator.** `ms_refant`'s flag heuristic is computed only over the `field` you
+pass it. An antenna can rank top on the bandpass cal yet be heavily flagged on
+the phase cal — different scans, elevation, and RFI — and scoring on the BP field
+alone is blind to that. The same refant is used for all solves (G0, K, B, and the
+gain solve over flux+phase cals), so it must be well populated on all of them. The
+phase cal especially: the science target inherits its gain solutions, so a refant
+weak on the phase cal corrupts the target even when the bandpass looks perfect.
+
+Run `ms_refant` once per calibrator field and choose the antenna that ranks well
+on **all** of them:
+
+```
+ms_refant(calibrators.ms, field=bp_field)      → ranked list scored on the BP cal
+ms_refant(calibrators.ms, field=phase_field)   → ranked list scored on the phase cal
+```
+
+A `flag_score` near 0 means the antenna is fully flagged on that field — never
+pick it, however high it ranks on another. Prefer the highest-ranked antenna with
+a healthy `flag_score` in every list over the top pick of any single list.
 
 | Condition | Action |
 |-----------|--------|
+| Candidate `flag_score` near 0 on *any* calibrator field | Disqualify — dead on that field; drop to the next antenna healthy on all fields |
 | Top-ranked antenna flagged > 30% (from `ms_flag_summary`) | Use rank-2 antenna |
 | Top-ranked antenna has `flag_score` ≫ `geo_score` (periphery of array) | Note this — peripheral refants can cause phase-wrapping on long baselines at high freq |
 | Only one heuristic used (completeness flag `INFERRED`) | Accept result but note lower confidence |
 | Fewer than 3 antennas scored (`n_antennas` < 3) | Escalate — array is too sparse for reliable refant selection |
 
-The `refant_list` field contains the full ranked list. Record the top 3 — if
-the initial bandpass fails, try rank-2 before changing other parameters.
+Record the top 3 cross-field candidates. If a solve fails or a gain solve flags
+heavily, first check whether the refant is weak on that solve's field, then try
+the next cross-field candidate before changing other parameters.
 
 For 3C84 observations: pass `uvrange='>5klambda'` to `ms_initial_bandpass`
 regardless of refant choice. The extended emission contaminates solutions on
@@ -174,6 +201,26 @@ short baselines independent of the reference antenna.
 and populates the CORRECTED column.
 
 **This tool runs casatasks — it can take several minutes on large MSs.**
+
+**Set `applycal_field` to the bandpass calibrator field at this stage.** It is a
+required argument with no default. Gains are solved on the bandpass calibrator
+only (`bp_field`), so it is the only field with a valid solution. The Step 3
+applycal must be restricted to that field — applying to other fields under the
+default `applymode='calflagstrict'` flags them for lack of a matching solution
+and silently corrupts the FLAG state of every non-BP calibrator (observed on
+AB1345). There is no flagversions rollback in this build, so the only recovery
+is to re-split `calibrators.ms`. Pass `applycal_field=bp_field` here; reserve
+`applycal_field=''` (all fields) for stages where all fields genuinely have
+solutions.
+
+If the before/after `ms_flag_summary` delta on the bandpass calibrator is still
+unexpectedly high, re-run with `applymode='calflag'` (softer — does not flag on
+partial per-polarization solutions).
+
+**Never re-run `ms_initial_bandpass` before the final gain/pol solves.** It is a
+one-shot bootstrap to populate CORRECTED for residual rflag on the BP cal — not
+something to iterate. If you need a clean FLAG state for the final solves,
+re-split `calibrators.ms` rather than re-running this tool.
 
 After the script completes, verify with `ms_verify_caltables`:
 
@@ -229,6 +276,22 @@ narrowband RFI (GPS, GSM). Cross-check with `ms_rfi_channel_stats` annotations.
 ---
 
 ## Step 8 — Initial RFI flagging on residuals
+
+**`ms_apply_initial_rflag` requires a `field` argument — there is no all-field
+default, by design.** Residual rflag is only meaningful on a field whose
+CORRECTED column is genuinely calibrated at the point you call it.
+
+**At this stage that field is the bandpass calibrator only (`field={BP_FIELD}`).**
+`ms_initial_bandpass` solves gains on the bandpass calibrator alone, so it is the
+only field with a valid CORRECTED column right now. On every other field,
+CORRECTED−MODEL is dominated by uncorrected gain/phase error — not RFI — so a
+residual pass there flags almost the entire field (observed: 9.2% → ~90% overall,
+phase cals ~97%), recoverable only by re-splitting the calibrators.
+
+Residual rflag on the *other* calibrators happens later (see 07-calibration-execution.md),
+once the full gain solve + applycal has populated valid CORRECTED for them — at
+that point you pass those fields instead. The rule is invariant; the specific
+field changes with the stage.
 
 `ms_apply_initial_rflag` runs rflag + tfcrop on the residual column in a single
 flagdata list-mode pass. `flagbackup=True` saves a versioned backup automatically.

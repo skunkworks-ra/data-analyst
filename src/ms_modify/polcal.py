@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ms_inspect.util.casa_context import validate_ms_path
+from ms_inspect.util.casa_context import describe_numeric_fields, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
 from ms_modify.exceptions import PolcalFailedError
@@ -45,7 +45,11 @@ def _build_script(
     gaintable: list[str],
     interp: list[str],
     parang: bool,
+    spwmap: list[list[int]] | None = None,
 ) -> str:
+    from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
+
+    spwmap_line = f"    spwmap={spwmap!r},\n" if spwmap is not None else ""
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -56,8 +60,8 @@ import os
 import shutil
 from casatasks import polcal
 
-if os.path.exists({caltable!r}):
-    shutil.rmtree({caltable!r})
+{safe_rm}
+_safe_rm_table({caltable!r})
 polcal(
     vis={ms_str!r},
     caltable={caltable!r},
@@ -68,7 +72,7 @@ polcal(
     refant={refant!r},
     gaintable={gaintable!r},
     interp={interp!r},
-)
+{spwmap_line})
 print("Done. Caltable written to: {caltable}")
 """
 
@@ -84,7 +88,9 @@ def run(
     refant: str = "",
     gaintable: list[str] | None = None,
     interp: list[str] | None = None,
+    spwmap: list[list[int]] | None = None,
     parang: bool = True,
+    target_fields: str = "",
     execute: bool = False,
 ) -> dict:
     """
@@ -101,7 +107,13 @@ def run(
         refant:       Reference antenna name.
         gaintable:    Prior caltables to apply on-the-fly.
         interp:       Interpolation mode per gaintable entry.
-        parang:       Apply parallactic angle correction (default True). **Critical for polcal.**
+        spwmap:       Optional per-prior-table SPW map (list-of-lists aligned to
+                      gaintable), e.g. [[], [0,0,0,0]] to fan an spw-combined prior
+                      (a VLA multiband-delay Kcross) across all SPWs. Default None →
+                      CASA identity. Only needed if a prior used combine='spw'.
+        target_fields: Optional CASA field selection for the science-target /
+                      transfer fields, used only for the SpW-coverage guardrail.
+                      Empty (default) infers them from intents; raises if it cannot.
         execute:      If False (default), write script and return.
                       If True, run polcal in-process.
 
@@ -114,6 +126,14 @@ def run(
     ms_str = str(p)
     casa_calls: list[str] = []
     warnings: list[str] = []
+    warnings.extend(describe_numeric_fields(ms_path, field))
+
+    # SpW-coverage guardrail: polcal solves on the pol calibrator and the table is
+    # applied to the target/transfer fields. polcal has no spw selection (solves all
+    # SpWs), so pass '' for the selection.
+    from ms_inspect.util.spw_coverage import check_spw_coverage
+
+    warnings.extend(check_spw_coverage(ms_str, field, "", target_fields))
 
     if poltype not in ("Df", "Df+QU", "Xf"):
         from ms_inspect.exceptions import ComputationError
@@ -128,6 +148,15 @@ def run(
     if interp is None:
         interp = [""] * len(gaintable)
 
+    if spwmap is not None and len(spwmap) != len(gaintable):
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(
+            f"spwmap length ({len(spwmap)}) must match gaintable length ({len(gaintable)}). "
+            "Pass a per-table list-of-lists, e.g. [[], [0,0,0,0]].",
+            ms_path=ms_path,
+        )
+
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
@@ -136,6 +165,10 @@ def run(
             f"workdir does not exist: {workdir}",
             ms_path=ms_path,
         )
+
+    from ms_modify.pathguard import validate_output_caltable
+
+    validate_output_caltable(caltable, workdir, ms_str)
 
     for gt in gaintable:
         if not Path(gt).exists():
@@ -159,6 +192,7 @@ def run(
             gaintable=gaintable,
             interp=interp,
             parang=parang,
+            spwmap=spwmap,
         )
     )
     casa_calls.append(f"write_script → {script}")
@@ -203,7 +237,11 @@ def run(
     )
 
     try:
-        polcal(
+        # NOTE: casatasks.polcal does not accept a `parang` argument — it applies
+        # the parallactic-angle correction internally per poltype. Passing parang
+        # raises TypeError. The `parang` run() arg is retained for API symmetry
+        # with gaincal/bandpass/applycal but is not forwarded here.
+        polcal_kwargs: dict = dict(
             vis=ms_str,
             caltable=caltable,
             field=field,
@@ -213,8 +251,10 @@ def run(
             refant=refant,
             gaintable=gaintable,
             interp=interp,
-            parang=parang,
         )
+        if spwmap is not None:
+            polcal_kwargs["spwmap"] = spwmap
+        polcal(**polcal_kwargs)
     except Exception as e:
         raise PolcalFailedError(
             f"polcal raised an exception: {e}\n"

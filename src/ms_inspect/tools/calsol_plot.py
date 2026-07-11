@@ -1,401 +1,704 @@
 """
 calsol_plot.py — ms_calsol_plot
 
-Reads a CASA calibration table via ms_calsol_stats, saves a numpy NPZ of the
-extracted arrays, and generates a Bokeh HTML dashboard. Returns paths to both
-output files.
+Visual QA of a single CASA calibration table. Reads the caltable's OWN columns
+directly (CPARAM/FPARAM, FLAG, ANTENNA1, SPECTRAL_WINDOW_ID, TIME) plus CHAN_FREQ
+from the SPECTRAL_WINDOW subtable — it does NOT call ms_calsol_stats. The plot is
+the raw solutions, not a reduction.
 
-Supports G Jones, B Jones, and K Jones tables. Dashboard layout adapts to
-table type.
+One self-contained Bokeh HTML per caltable. Series are pre-rendered into the page;
+a slider switches which is shown via CustomJS (static HTML, no server). Traces are
+coloured by correlation (R/L or X/Y). A header carries the caltable name, the
+associated MS, and the (non-default) calibration call parameters parsed from the
+generated script. An optional per-antenna metadata label can be toggled.
+
+Axis rule: if more than two axes vary, SPW gets its own slider; otherwise SPW
+folds onto a single plot. For frequency views (B/Df/Xf) SPW folds onto a
+concatenated frequency x-axis, so only an antenna slider is needed.
+
+View routed by VisCal type:
+    B            → amp + phase vs frequency (all SPW concatenated) · antenna slider
+    Df           → amplitude vs frequency   (all SPW concatenated) · antenna slider
+    Xf           → phase vs frequency       (all SPW concatenated) · antenna slider
+    G            → amp + phase vs time        · antenna + SPW sliders
+    K / Kcross   → delay vs antenna           · SPW slider
 """
 
 from __future__ import annotations
 
+import ast
+import contextlib
 import math
 from pathlib import Path
 
 import numpy as np
 
-from ms_inspect.tools import calsol_stats
+from ms_inspect.util.casa_context import open_table
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 
 TOOL_NAME = "ms_calsol_plot"
 
+_CORR_COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd"]
 
-# ---------------------------------------------------------------------------
-# Helpers — array extraction
-# ---------------------------------------------------------------------------
-
-
-def _val(data: dict, key: str) -> np.ndarray | list | None:
-    """Extract the value from a fmt_field wrapper; return None if UNAVAILABLE."""
-    entry = data.get(key)
-    if entry is None or entry.get("flag") == "UNAVAILABLE":
-        return None
-    return entry["value"]
-
-
-def _arr(data: dict, key: str) -> np.ndarray | None:
-    """Extract and convert to float numpy array; None if absent."""
-    v = _val(data, key)
-    if v is None:
-        return None
-    return np.array(v, dtype=float)
+# Salient calibration-call knobs to surface in the header (if present in the call).
+_SALIENT_PARAMS = (
+    "field",
+    "solint",
+    "combine",
+    "refant",
+    "minsnr",
+    "minblperant",
+    "bandtype",
+    "gaintype",
+    "poltype",
+    "solnorm",
+    "parang",
+    "smodel",
+)
 
 
 # ---------------------------------------------------------------------------
-# NPZ save
+# VisCal classification
 # ---------------------------------------------------------------------------
 
 
-def _save_npz(npz_path: str, data: dict, table_type: str) -> None:
-    arrays: dict[str, np.ndarray] = {}
+def _viscal(tb) -> str:
+    try:
+        vc = str(tb.getkeyword("VisCal")).strip()
+    except Exception:
+        return ""
+    return vc.split()[0] if vc else ""
 
-    for key in ("ant_names", "spw_ids", "field_ids", "field_names"):
-        v = _val(data, key)
-        if v is not None:
-            arrays[key] = np.array(v)
 
-    for key in (
-        "flagged_frac",
-        "snr_mean",
-        "amp_mean",
-        "amp_std",
-        "phase_mean_deg",
-        "phase_rms_deg",
-    ):
-        a = _arr(data, key)
-        if a is not None:
-            arrays[key] = a
+def _is_delay(vc: str) -> bool:
+    return vc.upper().startswith("K") or vc.lower() == "kcross"
 
-    if table_type == "B":
-        a = _arr(data, "amp_array")
-        if a is not None:
-            arrays["amp_array"] = a
 
-    if table_type == "K":
-        for key in ("delay_ns", "delay_rms_ns"):
-            a = _arr(data, key)
-            if a is not None:
-                arrays[key] = a
-
-    np.savez(npz_path, **arrays)
+def _is_freq_dep(vc: str) -> bool:
+    return vc in ("B", "Df", "Xf", "Bf") or vc.startswith("BPOLY")
 
 
 # ---------------------------------------------------------------------------
-# Bokeh dashboard builders
+# Subtable + provenance readers
 # ---------------------------------------------------------------------------
 
 
-def _palette(n: int) -> list[str]:
-    from bokeh.palettes import Category10, Category20
-
-    if n <= 2:
-        return ["#1f77b4", "#ff7f0e"]
-    if n <= 10:
-        return list(Category10[max(n, 3)])
-    return list(Category20[min(n, 20)])
+def _ant_names(caltable: str) -> list[str]:
+    with open_table(str(Path(caltable) / "ANTENNA")) as tb:
+        return [str(x) for x in tb.getcol("NAME")]
 
 
-def _build_g_dashboard(data: dict) -> object:
-    from bokeh.layouts import column
-    from bokeh.models import HoverTool, Legend, LegendItem
-    from bokeh.plotting import figure
-
-    ant_names = list(_val(data, "ant_names") or [])
-    field_names = list(_val(data, "field_names") or [])
-    spw_ids = list(_val(data, "spw_ids") or [])
-
-    amp_mean = _arr(data, "amp_mean")  # [n_ant, n_spw, n_field]
-    phase_rms = _arr(data, "phase_rms_deg")  # [n_ant, n_spw, n_field]
-    flagged = _arr(data, "flagged_frac")  # [n_ant, n_spw, n_field]
-
-    n_field = len(field_names)
-    colors = _palette(n_field)
-
-    # --- amplitude and phase panels (averaged over SPWs) ---
-    amp_fig = figure(
-        width=900,
-        height=280,
-        title="Gain amplitude mean (avg over SPWs)",
-        x_range=ant_names,
-        toolbar_location="right",
-    )
-    amp_fig.xaxis.major_label_orientation = 0.7
-
-    phase_fig = figure(
-        width=900,
-        height=280,
-        title="Phase RMS deg (avg over SPWs)",
-        x_range=ant_names,
-        toolbar_location="right",
-    )
-    phase_fig.xaxis.major_label_orientation = 0.7
-
-    amp_legend_items = []
-    phase_legend_items = []
-
-    for fi, (fname, color) in enumerate(zip(field_names, colors, strict=False)):
-        if amp_mean is not None:
-            y_amp = np.nanmean(amp_mean[:, :, fi], axis=1)
-            r = amp_fig.scatter(
-                x=ant_names,
-                y=y_amp.tolist(),
-                size=8,
-                color=color,
-                alpha=0.8,
-            )
-            amp_fig.add_tools(
-                HoverTool(
-                    renderers=[r],
-                    tooltips=[
-                        ("antenna", "@x"),
-                        ("amp_mean", "@y{0.4f}"),
-                    ],
-                )
-            )
-            amp_legend_items.append(LegendItem(label=fname, renderers=[r]))
-
-        if phase_rms is not None:
-            y_ph = np.nanmean(phase_rms[:, :, fi], axis=1)
-            r = phase_fig.scatter(
-                x=ant_names,
-                y=y_ph.tolist(),
-                size=8,
-                color=color,
-                alpha=0.8,
-            )
-            phase_fig.add_tools(
-                HoverTool(
-                    renderers=[r],
-                    tooltips=[
-                        ("antenna", "@x"),
-                        ("phase_rms_deg", "@y{0.2f}"),
-                    ],
-                )
-            )
-            phase_legend_items.append(LegendItem(label=fname, renderers=[r]))
-
-    if amp_legend_items:
-        amp_fig.add_layout(Legend(items=amp_legend_items), "right")
-    if phase_legend_items:
-        phase_fig.add_layout(Legend(items=phase_legend_items), "right")
-
-    # --- flagged fraction heatmap [ant × spw] averaged over fields ---
-    heatmap = _flagged_heatmap(
-        flagged,
-        ant_names,
-        [str(s) for s in spw_ids],
-        title="Flagged fraction heatmap (avg over fields)",
-    )
-
-    return column(amp_fig, phase_fig, heatmap)
+def _field_names(caltable: str) -> dict[int, str]:
+    with open_table(str(Path(caltable) / "FIELD")) as tb:
+        return {i: str(n) for i, n in enumerate(tb.getcol("NAME"))}
 
 
-def _build_b_dashboard(data: dict) -> object:
-    from bokeh.layouts import column
-    from bokeh.models import Legend, LegendItem, TabPanel, Tabs
-    from bokeh.plotting import figure
-
-    ant_names = list(_val(data, "ant_names") or [])
-    spw_ids = list(_val(data, "spw_ids") or [])
-    flagged = _arr(data, "flagged_frac")
-
-    amp_array = _arr(data, "amp_array")  # [n_ant, n_spw, n_field, n_chan]
-
-    n_ant = len(ant_names)
-    colors = _palette(n_ant)
-
-    tab_panels = []
-    if amp_array is not None:
-        n_chan = amp_array.shape[3]
-        channels = list(range(n_chan))
-
-        for si, spw in enumerate(spw_ids):
-            fig = figure(
-                width=900,
-                height=300,
-                title=f"Bandpass amplitude — SPW {spw} (avg over fields)",
-                toolbar_location="right",
-            )
-            legend_items = []
-            for ai, (aname, color) in enumerate(zip(ant_names, colors, strict=False)):
-                # average over field axis
-                y = np.nanmean(amp_array[ai, si, :, :], axis=0)
-                r = fig.line(
-                    x=channels,
-                    y=y.tolist(),
-                    line_color=color,
-                    line_width=1.2,
-                    alpha=0.75,
-                )
-                legend_items.append(LegendItem(label=aname, renderers=[r]))
-
-            fig.add_layout(Legend(items=legend_items, ncols=3), "right")
-            fig.legend.label_text_font_size = "9px"
-            fig.xaxis.axis_label = "Channel"
-            fig.yaxis.axis_label = "Amplitude"
-            tab_panels.append(TabPanel(child=fig, title=f"SPW {spw}"))
-
-    heatmap = _flagged_heatmap(
-        flagged,
-        ant_names,
-        [str(s) for s in spw_ids],
-        title="Flagged fraction heatmap (avg over fields)",
-    )
-
-    if tab_panels:
-        return column(Tabs(tabs=tab_panels), heatmap)
-    return column(heatmap)
+def _spw_chan_freqs_ghz(caltable: str) -> dict[int, list[float]]:
+    out: dict[int, list[float]] = {}
+    with open_table(str(Path(caltable) / "SPECTRAL_WINDOW")) as tb:
+        for row in range(tb.nrows()):
+            out[row] = (np.asarray(tb.getcell("CHAN_FREQ", row), dtype=float) / 1e9).tolist()
+    return out
 
 
-def _build_k_dashboard(data: dict) -> object:
-    from bokeh.layouts import column
-    from bokeh.models import HoverTool, Legend, LegendItem
-    from bokeh.plotting import figure
-
-    ant_names = list(_val(data, "ant_names") or [])
-    spw_ids = list(_val(data, "spw_ids") or [])
-    field_names = list(_val(data, "field_names") or [])
-
-    delay_ns = _arr(data, "delay_ns")  # [n_ant, n_spw, n_field, n_corr]
-    delay_rms = _arr(data, "delay_rms_ns")  # [n_spw, n_field]
-    flagged = _arr(data, "flagged_frac")
-
-    n_field = len(field_names)
-    colors = _palette(n_field)
-
-    delay_fig = figure(
-        width=900,
-        height=300,
-        title="Delay per antenna (ns, avg over SPWs and corrs)",
-        x_range=ant_names,
-        toolbar_location="right",
-    )
-    delay_fig.xaxis.major_label_orientation = 0.7
-    delay_fig.yaxis.axis_label = "Delay (ns)"
-
-    if delay_ns is not None:
-        legend_items = []
-        for fi, (fname, color) in enumerate(zip(field_names, colors, strict=False)):
-            # mean over SPW and corr axes
-            y = np.nanmean(delay_ns[:, :, fi, :], axis=(1, 2))
-            r = delay_fig.scatter(
-                x=ant_names,
-                y=y.tolist(),
-                size=9,
-                color=color,
-                alpha=0.85,
-            )
-            delay_fig.add_tools(
-                HoverTool(
-                    renderers=[r],
-                    tooltips=[
-                        ("antenna", "@x"),
-                        ("delay_ns", "@y{0.3f}"),
-                    ],
-                )
-            )
-            legend_items.append(LegendItem(label=fname, renderers=[r]))
-        delay_fig.add_layout(Legend(items=legend_items), "right")
-
-    rms_fig = figure(
-        width=900,
-        height=220,
-        title="Delay RMS per SPW (ns, across antennas)",
-        toolbar_location="right",
-    )
-    rms_fig.yaxis.axis_label = "Delay RMS (ns)"
-
-    if delay_rms is not None:
-        spw_labels = [str(s) for s in spw_ids]
-        for fi, (fname, color) in enumerate(zip(field_names, colors, strict=False)):
-            y = delay_rms[:, fi].tolist()
-            rms_fig.vbar(
-                x=spw_labels,
-                top=y,
-                width=0.4,
-                color=color,
-                alpha=0.75,
-                legend_label=fname,
-            )
-        rms_fig.xaxis.axis_label = "SPW"
-
-    heatmap = _flagged_heatmap(
-        flagged,
-        ant_names,
-        [str(s) for s in spw_ids],
-        title="Flagged fraction heatmap",
-    )
-
-    return column(delay_fig, rms_fig, heatmap)
+def _poln_labels(n_poln: int) -> list[str]:
+    if n_poln == 2:
+        return ["R", "L"]
+    return [f"P{i}" for i in range(n_poln)]
 
 
-def _flagged_heatmap(
-    flagged: np.ndarray | None,
-    ant_names: list[str],
-    spw_labels: list[str],
-    title: str,
+def _call_provenance(caltable: str) -> dict:
+    """
+    MS name (from MSName keyword) + the calibration call params parsed from the
+    generated script that produced this caltable, if it is alongside the table.
+    """
+    p = Path(caltable)
+    prov: dict = {"caltable": p.name, "ms_name": None, "task": None, "params": {}}
+    try:
+        with open_table(caltable) as tb:
+            prov["ms_name"] = str(tb.getkeyword("MSName"))
+    except Exception:
+        pass
+
+    for script in sorted(p.parent.glob("*.py")):
+        try:
+            text = script.read_text()
+        except Exception:
+            continue
+        if p.name not in text:
+            continue
+        try:
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                continue
+            kw = {k.arg: k.value for k in node.keywords if k.arg}
+            ct = kw.get("caltable")
+            try:
+                ct_val = ast.literal_eval(ct) if ct is not None else None
+            except Exception:
+                ct_val = None
+            if ct_val is None or not str(ct_val).rstrip("/").endswith(p.name):
+                continue
+            prov["task"] = node.func.id
+            params: dict = {}
+            for key in _SALIENT_PARAMS:
+                if key in kw:
+                    with contextlib.suppress(Exception):
+                        params[key] = ast.literal_eval(kw[key])
+            if "gaintable" in kw:
+                with contextlib.suppress(Exception):
+                    params["n_priors"] = len(ast.literal_eval(kw["gaintable"]))
+            prov["params"] = params
+            return prov
+    return prov
+
+
+def _provenance_header(prov: dict, vc: str, stem: str) -> str:
+    bits = [f"<b>caltable</b> {prov['caltable']}"]
+    if prov.get("ms_name"):
+        bits.append(f"<b>MS</b> {prov['ms_name']}")
+    if prov.get("task"):
+        pstr = ", ".join(f"{k}={v!r}" for k, v in prov["params"].items())
+        bits.append(f"<b>{prov['task']}</b>({pstr})")
+    return " &nbsp;|&nbsp; ".join(bits)
+
+
+def _nan_to_none(arr) -> list:
+    return [
+        None if (v is None or (isinstance(v, float) and math.isnan(v))) else float(v)
+        for v in np.asarray(arr, dtype=float)
+    ]
+
+
+def _cds_init(entry: dict) -> dict:
+    """ColumnDataSource init: drop 'meta', map None→NaN so first render has gaps not zeros."""
+    out = {}
+    for k, v in entry.items():
+        if k == "meta":
+            continue
+        if isinstance(v, list):
+            out[k] = [float("nan") if x is None else x for x in v]
+        else:
+            out[k] = v
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Caltable read
+# ---------------------------------------------------------------------------
+
+
+def _read_solutions(caltable: str) -> dict:
+    ant_names = _ant_names(caltable)
+    field_names = _field_names(caltable)
+    chan_freqs = _spw_chan_freqs_ghz(caltable)
+    with open_table(caltable) as tb:
+        vc = _viscal(tb)
+        is_delay = _is_delay(vc)
+        col = "FPARAM" if is_delay else "CPARAM"
+        param = tb.getcol(col)
+        flag = tb.getcol("FLAG")
+        ant1 = tb.getcol("ANTENNA1")
+        spw = tb.getcol("SPECTRAL_WINDOW_ID")
+        fld = tb.getcol("FIELD_ID")
+        time = tb.getcol("TIME")
+    n_poln = param.shape[0]
+    rows = [
+        {
+            "ant": int(ant1[r]),
+            "spw": int(spw[r]),
+            "field": int(fld[r]),
+            "time": float(time[r]),
+            "param": param[:, :, r],
+            "flag": flag[:, :, r],
+        }
+        for r in range(param.shape[2])
+    ]
+    spw_ids = sorted({r["spw"] for r in rows}, key=lambda s: np.mean(chan_freqs.get(s, [s])))
+    return {
+        "vc": vc,
+        "is_delay": is_delay,
+        "is_freq_dep": _is_freq_dep(vc),
+        "ant_names": ant_names,
+        "spw_ids": spw_ids,
+        "field_names": field_names,
+        "n_poln": n_poln,
+        "poln_labels": _poln_labels(n_poln),
+        "chan_freqs": chan_freqs,
+        "rows": rows,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Builders
+# ---------------------------------------------------------------------------
+
+
+def _freq_view(
+    sol: dict, want_amp: bool, want_phase: bool, header: str, title: str, color_by_spw: bool = False
 ) -> object:
-    from bokeh.models import BasicTicker, ColorBar, HoverTool, LinearColorMapper
+    """B/Df/Xf: all SPW concatenated on one frequency axis; antenna slider only.
+
+    color_by_spw: colour the phase trace by SPW (Xf) so SPW breaks are obvious.
+    """
+    from bokeh.layouts import column
+    from bokeh.models import (
+        CheckboxGroup,
+        ColorBar,
+        ColumnDataSource,
+        CustomJS,
+        Div,
+        LinearColorMapper,
+        Slider,
+    )
+    from bokeh.palettes import Turbo256
     from bokeh.plotting import figure
     from bokeh.transform import transform
 
-    n_ant = len(ant_names)
+    ant_names, spw_ids = sol["ant_names"], sol["spw_ids"]
+    labels, n_poln = sol["poln_labels"], sol["n_poln"]
+    by_key = {}
+    for r in sol["rows"]:
+        by_key.setdefault((r["ant"], r["spw"]), r)
 
-    fig = figure(
-        width=900,
-        height=max(200, min(40 * n_ant, 500)),
-        title=title,
-        x_range=spw_labels,
-        y_range=list(reversed(ant_names)),
-        toolbar_location="right",
+    store: dict[str, dict] = {}
+    for ai in range(len(ant_names)):
+        x: list = []
+        spw_ax: list = []
+        amp_p = {pi: [] for pi in range(n_poln)}
+        pha_p = {pi: [] for pi in range(n_poln)}
+        flagged_n = total_n = 0
+        field = None
+        for si, spw in enumerate(spw_ids):
+            cf = sol["chan_freqs"].get(spw, [])
+            r = by_key.get((ai, spw))
+            if r is not None:
+                f = r["flag"]
+                flagged_n += int(f.sum())
+                total_n += f.size
+                field = sol["field_names"].get(r["field"], str(r["field"]))
+                amp = np.where(f, np.nan, np.abs(r["param"]))
+                pha = np.where(f, np.nan, np.angle(r["param"]) * 180.0 / math.pi)
+            else:
+                amp = np.full((n_poln, len(cf)), np.nan)
+                pha = np.full((n_poln, len(cf)), np.nan)
+            x.extend(cf)
+            spw_ax.extend([spw] * len(cf))
+            for pi in range(n_poln):
+                amp_p[pi].extend(amp[pi].tolist())
+                pha_p[pi].extend(pha[pi].tolist())
+            if si < len(spw_ids) - 1:  # NaN break between SPWs
+                x.append(cf[-1] if cf else None)
+                spw_ax.append(spw)
+                for pi in range(n_poln):
+                    amp_p[pi].append(float("nan"))
+                    pha_p[pi].append(float("nan"))
+        entry = {"x": x, "spw": spw_ax}
+        for pi in range(n_poln):
+            entry[f"amp_p{pi}"] = _nan_to_none(amp_p[pi])
+            entry[f"pha_p{pi}"] = _nan_to_none(pha_p[pi])
+        ff = (flagged_n / total_n) if total_n else 0.0
+        entry["meta"] = (
+            f"<b>antenna</b> {ant_names[ai]} &nbsp;|&nbsp; <b>field</b> {field} &nbsp;|&nbsp; <b>flagged</b> {ff * 100:.1f}%"
+        )
+        store[f"a{ai}"] = entry
+
+    src = ColumnDataSource(data=_cds_init(store["a0"]))
+    figs = []
+    if want_amp:
+        fa = figure(
+            width=1000,
+            height=280,
+            title="Amplitude",
+            x_axis_label="Frequency (GHz)",
+            y_axis_label="Amp",
+            toolbar_location="right",
+        )
+        for pi in range(n_poln):
+            c = _CORR_COLORS[pi % 4]
+            fa.line(
+                "x", f"amp_p{pi}", source=src, line_color=c, line_width=1.2, legend_label=labels[pi]
+            )
+            fa.scatter("x", f"amp_p{pi}", source=src, size=3, color=c, legend_label=labels[pi])
+        fa.legend.location = "top_right"
+        fa.legend.click_policy = "hide"
+        figs.append(fa)
+    if want_phase:
+        fp = figure(
+            width=1000,
+            height=280,
+            title="Phase",
+            x_axis_label="Frequency (GHz)",
+            y_axis_label="Phase (deg)",
+            toolbar_location="right",
+        )
+        if color_by_spw:
+            mapper = LinearColorMapper(palette=Turbo256, low=min(spw_ids), high=max(spw_ids))
+            fp.line("x", "pha_p0", source=src, line_color="#cccccc", line_width=1)
+            fp.scatter(
+                "x",
+                "pha_p0",
+                source=src,
+                size=5,
+                line_color=None,
+                fill_color=transform("spw", mapper),
+            )
+            fp.add_layout(ColorBar(color_mapper=mapper, title="SPW", width=10), "right")
+        else:
+            for pi in range(n_poln):
+                c = _CORR_COLORS[pi % 4]
+                fp.line(
+                    "x",
+                    f"pha_p{pi}",
+                    source=src,
+                    line_color=c,
+                    line_width=1.2,
+                    legend_label=labels[pi],
+                )
+                fp.scatter("x", f"pha_p{pi}", source=src, size=3, color=c, legend_label=labels[pi])
+            fp.legend.location = "top_right"
+            fp.legend.click_policy = "hide"
+        figs.append(fp)
+
+    ant_slider = Slider(
+        start=0,
+        end=len(ant_names) - 1,
+        value=0,
+        step=1,
+        title=f"Antenna: {ant_names[0]}",
+        width=1000,
+    )
+    chk = CheckboxGroup(labels=["metadata"], active=[0])
+    meta_div = Div(text=store["a0"]["meta"], width=1000)
+    cb = CustomJS(
+        args=dict(
+            src=src,
+            store=store,
+            antS=ant_slider,
+            ants=ant_names,
+            metaDiv=meta_div,
+            chk=chk,
+            npoln=n_poln,
+        ),
+        code="""
+        const ai=antS.value; antS.title='Antenna: '+ants[ai];
+        const d=store['a'+ai]; if(!d){return;}
+        const fix=a=>a.map(v=>v===null?NaN:v);
+        const nd={x:fix(d.x), spw:d.spw};
+        for(let p=0;p<npoln;p++){nd['amp_p'+p]=fix(d['amp_p'+p]); nd['pha_p'+p]=fix(d['pha_p'+p]);}
+        src.data=nd; src.change.emit();
+        metaDiv.text = chk.active.includes(0)?d.meta:'';
+        """,
+    )
+    ant_slider.js_on_change("value", cb)
+    chk.js_on_change("active", cb)
+    return column(
+        Div(text=f"<h3 style='margin:2px'>{title}</h3>"),
+        Div(text=f"<div style='font-size:90%'>{header}</div>", width=1000),
+        ant_slider,
+        chk,
+        meta_div,
+        *figs,
     )
 
-    if flagged is not None:
-        frac = np.nanmean(flagged, axis=2) if flagged.ndim == 3 else flagged
 
-        xs, ys, vs = [], [], []
-        for ai, aname in enumerate(ant_names):
-            for si, slabel in enumerate(spw_labels):
-                v = frac[ai, si]
-                xs.append(slabel)
-                ys.append(aname)
-                vs.append(float(v) if not math.isnan(v) else 0.0)
+_MARKERS = ["circle", "triangle", "square", "diamond"]
 
-        from bokeh.models import ColumnDataSource
 
-        source = ColumnDataSource(dict(x=xs, y=ys, v=vs))
-        mapper = LinearColorMapper(
-            palette="Viridis256",
-            low=0.0,
-            high=1.0,
-        )
-        r = fig.rect(
-            x="x",
-            y="y",
-            width=1,
-            height=1,
-            source=source,
-            fill_color=transform("v", mapper),
-            line_color=None,
-        )
-        fig.add_tools(
-            HoverTool(
-                renderers=[r],
-                tooltips=[
-                    ("SPW", "@x"),
-                    ("antenna", "@y"),
-                    ("flagged_frac", "@v{0.3f}"),
-                ],
+def _time_view(sol: dict, header: str, title: str) -> object:
+    """G: amp + phase vs time; antenna + SPW sliders. Color = field, marker = correlation.
+
+    Each field gets its own ColumnDataSource (a CDS requires equal-length columns,
+    and the cal fields have different time samplings). A slider change swaps the
+    data on every field's source.
+    """
+    from bokeh.layouts import column
+    from bokeh.models import CheckboxGroup, ColumnDataSource, CustomJS, Div, Slider
+    from bokeh.plotting import figure
+
+    ant_names, spw_ids = sol["ant_names"], sol["spw_ids"]
+    labels, n_poln = sol["poln_labels"], sol["n_poln"]
+    fields = sorted({r["field"] for r in sol["rows"]})
+    fname = {fi: sol["field_names"].get(fi, str(fi)) for fi in fields}
+
+    grouped: dict = {}
+    for r in sol["rows"]:
+        grouped.setdefault((r["ant"], r["spw"], r["field"]), []).append(r)
+    for v in grouped.values():
+        v.sort(key=lambda r: r["time"])
+    t0 = min((r["time"] for r in sol["rows"]), default=0.0)
+
+    # store[key]["f{fi}"] = {x, amp_p{p}, pha_p{p}}; plus meta.
+    store: dict[str, dict] = {}
+    for ai in range(len(ant_names)):
+        for spw in spw_ids:
+            entry: dict = {}
+            fcount = []
+            for fi in fields:
+                rs = grouped.get((ai, spw, fi), [])
+                sub = {"x": [(r["time"] - t0) / 3600.0 for r in rs]}
+                for pi in range(n_poln):
+                    amp, pha = [], []
+                    for r in rs:
+                        fl = bool(r["flag"][pi, 0])
+                        val = r["param"][pi, 0]
+                        amp.append(np.nan if fl else float(abs(val)))
+                        pha.append(np.nan if fl else float(np.angle(val) * 180.0 / math.pi))
+                    sub[f"amp_p{pi}"] = _nan_to_none(amp)
+                    sub[f"pha_p{pi}"] = _nan_to_none(pha)
+                entry[f"f{fi}"] = sub
+                if rs:
+                    fcount.append(f"{fname[fi]} n={len(rs)}")
+            entry["meta"] = (
+                f"<b>antenna</b> {ant_names[ai]} &nbsp;|&nbsp; <b>SPW</b> {spw} "
+                f"&nbsp;|&nbsp; " + ", ".join(fcount)
             )
-        )
-        cb = ColorBar(color_mapper=mapper, ticker=BasicTicker(), width=10)
-        fig.add_layout(cb, "right")
+            store[f"a{ai}_s{spw}"] = entry
 
-    fig.xaxis.axis_label = "SPW"
-    return fig
+    spw0 = spw_ids[0]
+    init = store[f"a0_s{spw0}"]
+    src_by_field = {fi: ColumnDataSource(data=_cds_init(init[f"f{fi}"])) for fi in fields}
+    src_list = [
+        src_by_field[fi] for fi in fields
+    ]  # ordered for CustomJS (dict-of-models won't serialize)
+
+    fa = figure(
+        width=1000,
+        height=300,
+        title="Amplitude",
+        x_axis_label="Time (h)",
+        y_axis_label="Amp",
+        toolbar_location="right",
+    )
+    fp = figure(
+        width=1000,
+        height=300,
+        title="Phase",
+        x_axis_label="Time (h)",
+        y_axis_label="Phase (deg)",
+        toolbar_location="right",
+    )
+    for k, fi in enumerate(fields):
+        mk = _MARKERS[k % 4]  # marker = field
+        src = src_by_field[fi]
+        for pi in range(n_poln):
+            color = _CORR_COLORS[pi % 4]  # color = correlation (R/L)
+            lbl = f"{fname[fi]} {labels[pi]}"
+            fa.scatter(
+                "x", f"amp_p{pi}", source=src, size=6, color=color, marker=mk, legend_label=lbl
+            )
+            fp.scatter(
+                "x", f"pha_p{pi}", source=src, size=6, color=color, marker=mk, legend_label=lbl
+            )
+    fa.legend.click_policy = "hide"
+    fp.legend.click_policy = "hide"
+    fa.legend.label_text_font_size = "8px"
+    fp.legend.label_text_font_size = "8px"
+
+    ant_slider = Slider(
+        start=0,
+        end=len(ant_names) - 1,
+        value=0,
+        step=1,
+        title=f"Antenna: {ant_names[0]}",
+        width=1000,
+    )
+    spw_slider = Slider(
+        start=0, end=len(spw_ids) - 1, value=0, step=1, title=f"SPW: {spw0}", width=1000
+    )
+    chk = CheckboxGroup(labels=["metadata"], active=[0])
+    meta_div = Div(text=init["meta"], width=1000)
+    cb = CustomJS(
+        args=dict(
+            srcs=src_list,
+            store=store,
+            antS=ant_slider,
+            spwS=spw_slider,
+            ants=ant_names,
+            spws=spw_ids,
+            fields=fields,
+            metaDiv=meta_div,
+            chk=chk,
+            npoln=n_poln,
+        ),
+        code="""
+        const ai=antS.value, si=spwS.value, spw=spws[si];
+        antS.title='Antenna: '+ants[ai]; spwS.title='SPW: '+spw;
+        const d=store['a'+ai+'_s'+spw]; if(!d){return;}
+        const fix=a=>a.map(v=>v===null?NaN:v);
+        for(let k=0;k<fields.length;k++){
+          const sub=d['f'+fields[k]]; const s=srcs[k]; if(!sub||!s){continue;}
+          const nd={x:sub.x};
+          for(let p=0;p<npoln;p++){nd['amp_p'+p]=fix(sub['amp_p'+p]); nd['pha_p'+p]=fix(sub['pha_p'+p]);}
+          s.data=nd; s.change.emit();
+        }
+        metaDiv.text=chk.active.includes(0)?d.meta:'';
+        """,
+    )
+    ant_slider.js_on_change("value", cb)
+    spw_slider.js_on_change("value", cb)
+    chk.js_on_change("active", cb)
+    return column(
+        Div(text=f"<h3 style='margin:2px'>{title}</h3>"),
+        Div(text=f"<div style='font-size:90%'>{header}</div>", width=1000),
+        ant_slider,
+        spw_slider,
+        chk,
+        meta_div,
+        fa,
+        fp,
+    )
+
+
+def _kcross_view(sol: dict, header: str, title: str) -> object:
+    """Kcross: cross-hand delay vs antenna, all SPWs overlaid coloured by SPW.
+
+    The cross-hand delay lives in a single polarization; the other pol is
+    identically zero and is not plotted.
+    """
+    from bokeh.layouts import column
+    from bokeh.models import ColorBar, ColumnDataSource, Div, LinearColorMapper
+    from bokeh.palettes import Turbo256
+    from bokeh.plotting import figure
+    from bokeh.transform import transform
+
+    ant_names, spw_ids = sol["ant_names"], sol["spw_ids"]
+    n_poln = sol["n_poln"]
+    by_key = {}
+    for r in sol["rows"]:
+        by_key.setdefault((r["ant"], r["spw"]), r)
+
+    # Which polns carry signal (drop the uniformly-zero one).
+    active = []
+    for pi in range(n_poln):
+        vals = [abs(r["param"][pi, 0]) for r in sol["rows"] if not bool(r["flag"][pi, 0])]
+        if vals and np.nanmax(vals) > 1e-9:
+            active.append(pi)
+    if not active:
+        active = [0]
+
+    xs, ys, spws = [], [], []
+    for spw in spw_ids:
+        for ai, aname in enumerate(ant_names):
+            r = by_key.get((ai, spw))
+            if r is None:
+                continue
+            for pi in active:
+                if bool(r["flag"][pi, 0]):
+                    continue
+                xs.append(aname)
+                ys.append(float(r["param"][pi, 0]))
+                spws.append(spw)
+    src = ColumnDataSource(dict(x=xs, y=ys, spw=spws))
+
+    mapper = LinearColorMapper(palette=Turbo256, low=min(spw_ids), high=max(spw_ids))
+    fig = figure(
+        width=1000,
+        height=400,
+        title="Cross-hand delay vs antenna (colour = SPW)",
+        x_range=ant_names,
+        x_axis_label="Antenna",
+        y_axis_label="Delay (ns)",
+        toolbar_location="right",
+    )
+    fig.xaxis.major_label_orientation = 0.8
+    fig.scatter("x", "y", source=src, size=9, line_color=None, fill_color=transform("spw", mapper))
+    fig.add_layout(ColorBar(color_mapper=mapper, title="SPW", width=10), "right")
+
+    pol_note = (
+        f"pol {sol['poln_labels'][active[0]]}"
+        if len(active) == 1
+        else "pols " + ",".join(sol["poln_labels"][p] for p in active)
+    )
+    return column(
+        Div(text=f"<h3 style='margin:2px'>{title}</h3>"),
+        Div(
+            text=f"<div style='font-size:90%'>{header} &nbsp;|&nbsp; {pol_note} (other pol ≡ 0, omitted)</div>",
+            width=1000,
+        ),
+        fig,
+    )
+
+
+def _delay_view(sol: dict, header: str, title: str) -> object:
+    """K/Kcross: delay vs antenna; SPW slider."""
+    from bokeh.layouts import column
+    from bokeh.models import CheckboxGroup, ColumnDataSource, CustomJS, Div, Slider
+    from bokeh.plotting import figure
+
+    ant_names, spw_ids = sol["ant_names"], sol["spw_ids"]
+    labels, n_poln = sol["poln_labels"], sol["n_poln"]
+    by_key = {}
+    for r in sol["rows"]:
+        by_key.setdefault((r["ant"], r["spw"]), r)
+    store: dict[str, dict] = {}
+    for spw in spw_ids:
+        entry = {"x": list(ant_names)}
+        for pi in range(n_poln):
+            ys = []
+            for ai in range(len(ant_names)):
+                r = by_key.get((ai, spw))
+                ys.append(
+                    np.nan if (r is None or bool(r["flag"][pi, 0])) else float(r["param"][pi, 0])
+                )
+            entry[f"d_p{pi}"] = _nan_to_none(ys)
+        entry["meta"] = f"<b>SPW</b> {spw}"
+        store[f"s{spw}"] = entry
+
+    spw0 = spw_ids[0]
+    src = ColumnDataSource(data=_cds_init(store[f"s{spw0}"]))
+    fig = figure(
+        width=1000,
+        height=380,
+        title="Delay vs antenna",
+        x_range=ant_names,
+        x_axis_label="Antenna",
+        y_axis_label="Delay (ns)",
+        toolbar_location="right",
+    )
+    fig.xaxis.major_label_orientation = 0.8
+    for pi in range(n_poln):
+        fig.scatter(
+            "x", f"d_p{pi}", source=src, size=9, color=_CORR_COLORS[pi % 4], legend_label=labels[pi]
+        )
+    fig.legend.click_policy = "hide"
+    spw_slider = Slider(
+        start=0, end=len(spw_ids) - 1, value=0, step=1, title=f"SPW: {spw0}", width=1000
+    )
+    chk = CheckboxGroup(labels=["metadata"], active=[0])
+    meta_div = Div(text=store[f"s{spw0}"]["meta"], width=1000)
+    cb = CustomJS(
+        args=dict(
+            src=src,
+            store=store,
+            spwS=spw_slider,
+            spws=spw_ids,
+            metaDiv=meta_div,
+            chk=chk,
+            npoln=n_poln,
+        ),
+        code="""
+        const si=spwS.value, spw=spws[si]; spwS.title='SPW: '+spw;
+        const d=store['s'+spw]; if(!d){return;}
+        const fix=a=>a.map(v=>v===null?NaN:v); const nd={x:d.x};
+        for(let p=0;p<npoln;p++){nd['d_p'+p]=fix(d['d_p'+p]);}
+        src.data=nd; src.change.emit(); metaDiv.text=chk.active.includes(0)?d.meta:'';
+        """,
+    )
+    spw_slider.js_on_change("value", cb)
+    chk.js_on_change("active", cb)
+    return column(
+        Div(text=f"<h3 style='margin:2px'>{title}</h3>"),
+        Div(text=f"<div style='font-size:90%'>{header}</div>", width=1000),
+        spw_slider,
+        chk,
+        meta_div,
+        fig,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -403,101 +706,93 @@ def _flagged_heatmap(
 # ---------------------------------------------------------------------------
 
 
+def build_layout(caltable_path: str) -> dict:
+    """Read a caltable and build its Bokeh layout, routed by VisCal. No file written.
+
+    Returns {layout, title, vc, view, prov} — reused by run() and the combined render.
+    """
+    sol = _read_solutions(caltable_path)
+    vc = sol["vc"]
+    stem = Path(caltable_path).name
+    prov = _call_provenance(caltable_path)
+    header = _provenance_header(prov, vc, stem)
+
+    if sol["is_delay"] and vc.lower() == "kcross":
+        layout = _kcross_view(sol, header, f"Kcross delay — {stem}")
+        kind = "kcross_vs_antenna"
+    elif sol["is_delay"]:
+        layout = _delay_view(sol, header, f"{vc} delay — {stem}")
+        kind = "delay_vs_antenna"
+    elif vc == "Df":
+        layout = _freq_view(sol, True, False, header, f"Df leakage — {stem}")
+        kind = "amp_vs_freq"
+    elif vc == "Xf":
+        layout = _freq_view(sol, False, True, header, f"Xf angle — {stem}", color_by_spw=True)
+        kind = "phase_vs_freq"
+    elif sol["is_freq_dep"]:
+        layout = _freq_view(sol, True, True, header, f"Bandpass — {stem}")
+        kind = "amp_phase_vs_freq"
+    else:
+        layout = _time_view(sol, header, f"Gain — {stem}")
+        kind = "amp_phase_vs_time"
+    return {
+        "layout": layout,
+        "title": f"{vc} — {stem}",
+        "vc": vc,
+        "view": kind,
+        "prov": prov,
+        "sol": sol,
+    }
+
+
 def run(caltable_path: str, output_dir: str) -> dict:
     """
-    Inspect a CASA calibration table and produce a Bokeh dashboard + NPZ.
-
-    Calls ms_calsol_stats internally, saves extracted arrays to an NPZ file,
-    and writes a self-contained Bokeh HTML dashboard.
-
-    Args:
-        caltable_path: Path to the caltable directory.
-        output_dir:    Directory to write {name}_stats.npz and {name}_dashboard.html.
-
-    Returns:
-        Standard response envelope with npz_path, html_path, and table_type.
+    Render a single caltable to a self-contained Bokeh HTML, read directly from
+    the caltable columns (no ms_calsol_stats). View routed by VisCal type.
     """
     from bokeh.embed import file_html
     from bokeh.resources import CDN
 
     p = Path(caltable_path).expanduser().resolve()
     out = Path(output_dir).expanduser().resolve()
-
     if not p.exists() or not p.is_dir():
         from ms_inspect.util.formatting import error_envelope
 
         return error_envelope(
-            TOOL_NAME,
-            caltable_path,
-            "CALTABLE_NOT_FOUND",
-            f"Calibration table not found: {p}",
+            TOOL_NAME, caltable_path, "CALTABLE_NOT_FOUND", f"Calibration table not found: {p}"
         )
-
     out.mkdir(parents=True, exist_ok=True)
+
+    built = build_layout(caltable_path)
+    layout, vc, kind, prov, sol = (
+        built["layout"],
+        built["vc"],
+        built["view"],
+        built["prov"],
+        built["sol"],
+    )
     stem = p.name
-    npz_path = str(out / f"{stem}_stats.npz")
-    html_path = str(out / f"{stem}_dashboard.html")
 
-    # --- get stats ---
-    stats = calsol_stats.run(caltable_path)
-    if stats.get("status") == "error":
-        from ms_inspect.util.formatting import error_envelope
-
-        return error_envelope(
-            TOOL_NAME,
-            caltable_path,
-            stats.get("error_type", "COMPUTATION_ERROR"),
-            stats.get("message", "ms_calsol_stats failed"),
-        )
-
-    data = stats["data"]
-    table_type = data.get("table_type", {}).get("value", "")
-    warnings: list[str] = list(stats.get("warnings", []))
-
-    # --- save NPZ ---
-    _save_npz(npz_path, data, table_type)
-
-    # --- build dashboard ---
-    if table_type == "G":
-        layout = _build_g_dashboard(data)
-        title = f"Gain solutions — {stem}"
-    elif table_type == "B":
-        layout = _build_b_dashboard(data)
-        title = f"Bandpass solutions — {stem}"
-    elif table_type == "K":
-        layout = _build_k_dashboard(data)
-        title = f"Delay solutions — {stem}"
-    else:
-        warnings.append(
-            f"Table type '{table_type}' has no dashboard template; producing flagged fraction heatmap only."
-        )
-        flagged = np.array(data.get("flagged_frac", {}).get("value") or [], dtype=float)
-        ant_names = list(data.get("ant_names", {}).get("value") or [])
-        spw_ids = list(data.get("spw_ids", {}).get("value") or [])
-        layout = _flagged_heatmap(
-            flagged if flagged.size else None,
-            ant_names,
-            [str(s) for s in spw_ids],
-            title=f"Flagged fraction — {stem}",
-        )
-
-    html = file_html(layout, CDN, title)
+    html_path = str(out / f"{stem}_plot.html")
     with open(html_path, "w") as fh:
-        fh.write(html)
-
-    result_data = {
-        "npz_path": fmt_field(npz_path),
-        "html_path": fmt_field(html_path),
-        "table_type": fmt_field(table_type),
-        "n_antennas": data.get("n_antennas", fmt_field(0)),
-        "n_spw": data.get("n_spw", fmt_field(0)),
-        "n_field": data.get("n_field", fmt_field(0)),
-    }
+        fh.write(file_html(layout, CDN, f"{vc} — {stem}"))
 
     return response_envelope(
         tool_name=TOOL_NAME,
         ms_path=caltable_path,
-        data=result_data,
-        warnings=warnings,
-        casa_calls=stats.get("provenance", {}).get("casa_calls", []),
+        data={
+            "html_path": fmt_field(html_path),
+            "viscal": fmt_field(vc),
+            "view": fmt_field(kind),
+            "ms_name": fmt_field(prov.get("ms_name")),
+            "call_params": fmt_field(prov.get("params", {})),
+            "n_antennas": fmt_field(len(sol["ant_names"])),
+            "n_spw": fmt_field(len(sol["spw_ids"])),
+        },
+        warnings=[],
+        casa_calls=[
+            f"tb.open({stem}) → CPARAM/FPARAM, FLAG, ANTENNA1, SPECTRAL_WINDOW_ID, FIELD_ID, TIME",
+            "tb.open(ANTENNA/FIELD/SPECTRAL_WINDOW) → NAME, CHAN_FREQ",
+            "getkeyword(MSName)",
+        ],
     )

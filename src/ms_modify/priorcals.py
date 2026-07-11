@@ -7,8 +7,10 @@ prepended to every subsequent gaincal/bandpass/applycal call.
 Tables generated (in order):
   1. gain_curves.gc   — gencal(caltype='gc')   VLA elevation gain curves
   2. opacities.opac   — gencal(caltype='opac')  Per-SPW zenith opacity
-  3. requantizer.rq   — gencal(caltype='rq')    Post-2011 VLA requantizer
-                        (MJD >= 55616.6 only — older data skip silently)
+  3. requantizer.rq   — gencal(caltype='rq')    VLA WIDAR requantizer
+                        (attempted iff SYSPOWER subtable has rows — only
+                        WIDAR writes SYSPOWER; an observation date proxy
+                        misclassifies 2010-11 commissioning-era data)
   4. antpos.ap        — gencal(caltype='antpos') Antenna position corrections
                         (skipped if gencal returns 0-row table)
 
@@ -25,9 +27,6 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 
 TOOL_NAME = "ms_generate_priorcals"
-
-# MJD threshold for VLA WIDAR requantizer (2011-03-01 ≈ MJD 55616.6)
-_RQ_MJD_THRESHOLD = 55616.6
 
 
 def _table_nrows(path: str) -> int:
@@ -50,9 +49,10 @@ def _build_script(
     opac_table: str,
     rq_table: str,
     antpos_table: str,
-    rq_mjd_threshold: float,
 ) -> str:
     """Return a self-contained priorcals Python script."""
+    from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
+
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -61,7 +61,7 @@ Run with: python priorcals.py
 \"\"\"
 import os
 import shutil
-from casatasks import gencal
+from casatasks import gencal, plotweather
 from casatools import table
 
 ms_path = {ms_str!r}
@@ -82,26 +82,14 @@ def _table_nrows(path):
         return 0
 
 
-def _get_obs_mjd(vis):
-    \"\"\"Read start MJD from OBSERVATION subtable.\"\"\"
-    try:
-        tb = table()
-        tb.open(vis + "/OBSERVATION", nomodify=True)
-        time_range = tb.getcol("TIME_RANGE")
-        tb.close()
-        return float(time_range[0][0]) / 86400.0  # seconds → days
-    except Exception:
-        return None
-
-
+{safe_rm}
 priorcals = []
 skipped = []
 skip_reasons = {{}}
 
 # 1 — Gain curves
 print("Generating gain curves...")
-if os.path.exists(gc_table):
-    shutil.rmtree(gc_table)
+_safe_rm_table(gc_table)
 try:
     gencal(vis=ms_path, caltable=gc_table, caltype="gc")
 except Exception as _exc:
@@ -118,30 +106,32 @@ if "gain_curves.gc" not in skip_reasons:
         print("  gc: empty — skipped")
 
 # 2 — Opacities
+# gencal(caltype='opac') does NOT compute tau; it only writes the values passed
+# in parameter=. Derive per-SPW zenith opacities from the WEATHER table with
+# plotweather(doPlot=False), then feed them to gencal with a matching spw list.
 print("Generating opacities...")
-if os.path.exists(opac_table):
-    shutil.rmtree(opac_table)
+_safe_rm_table(opac_table)
 try:
-    gencal(vis=ms_path, caltable=opac_table, caltype="opac")
+    _tau = list(plotweather(vis=ms_path, doPlot=False))
+    _spw = ",".join(str(_i) for _i in range(len(_tau)))
+    gencal(vis=ms_path, caltable=opac_table, caltype="opac", spw=_spw, parameter=_tau)
 except Exception as _exc:
-    print(f"  opac: gencal raised {{_exc!r}} — skipped")
+    print(f"  opac: plotweather/gencal raised {{_exc!r}} — skipped")
     skipped.append("opacities.opac")
     skip_reasons["opacities.opac"] = str(_exc)
 if "opacities.opac" not in skip_reasons:
     if _table_nrows(opac_table) > 0:
         priorcals.append(opac_table)
-        print(f"  opac: {{opac_table}}")
+        print(f"  opac: {{opac_table}} (tau={{[round(t, 4) for t in _tau]}})")
     else:
         skipped.append("opacities.opac")
         skip_reasons["opacities.opac"] = "gencal returned 0-row table"
         print("  opac: empty — skipped")
 
-# 3 — Requantizer (VLA post-2011 only)
-obs_mjd = _get_obs_mjd(ms_path)
-if obs_mjd is None or obs_mjd >= {rq_mjd_threshold}:
+# 3 — Requantizer (WIDAR data only; SYSPOWER subtable is written only by WIDAR)
+if _table_nrows(ms_path + "/SYSPOWER") > 0:
     print("Generating requantizer corrections...")
-    if os.path.exists(rq_table):
-        shutil.rmtree(rq_table)
+    _safe_rm_table(rq_table)
     try:
         gencal(vis=ms_path, caltable=rq_table, caltype="rq")
     except Exception as _exc:
@@ -158,13 +148,12 @@ if obs_mjd is None or obs_mjd >= {rq_mjd_threshold}:
             print("  rq: empty — skipped")
 else:
     skipped.append("requantizer.rq")
-    skip_reasons["requantizer.rq"] = f"MJD {{obs_mjd:.1f}} < {rq_mjd_threshold} (pre-WIDAR)"
-    print(f"  rq: skipped (pre-WIDAR, MJD={{obs_mjd:.1f}})")
+    skip_reasons["requantizer.rq"] = "no SYSPOWER subtable (pre-WIDAR data)"
+    print("  rq: skipped (no SYSPOWER subtable — pre-WIDAR data)")
 
 # 4 — Antenna positions
 print("Generating antenna position corrections...")
-if os.path.exists(antpos_table):
-    shutil.rmtree(antpos_table)
+_safe_rm_table(antpos_table)
 try:
     gencal(vis=ms_path, caltable=antpos_table, caltype="antpos")
 except Exception as _exc:
@@ -231,7 +220,6 @@ def run(
         opac_table=opac_table,
         rq_table=rq_table,
         antpos_table=antpos_table,
-        rq_mjd_threshold=_RQ_MJD_THRESHOLD,
     )
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
@@ -270,18 +258,6 @@ def run(
     skipped: list[str] = []
     skip_reasons: dict[str, str] = {}
 
-    # Determine obs MJD for rq decision
-    obs_mjd: float | None = None
-    try:
-        from ms_inspect.util.casa_context import open_table
-
-        with open_table(ms_str + "/OBSERVATION") as tb:
-            time_range = tb.getcol("TIME_RANGE")
-            obs_mjd = float(time_range[0][0]) / 86400.0
-        casa_calls.append("tb.open(OBSERVATION) → TIME_RANGE (for rq MJD check)")
-    except Exception as exc:
-        warnings.append(f"Could not read obs MJD for rq check: {exc}. Attempting rq generation.")
-
     def _run_gencal(caltable: str, caltype: str, label: str) -> bool:
         casa_calls.append(f"casatasks.gencal(caltype='{caltype}') → {label}")
         try:
@@ -298,16 +274,40 @@ def run(
         skipped.append("gain_curves.gc")
         skip_reasons["gain_curves.gc"] = "gencal returned 0-row table"
 
-    # opac
-    if _run_gencal(opac_table, "opac", "opacities.opac"):
-        priorcals.append(opac_table)
-    else:
+    # opac — per-SPW zenith opacity computed from the WEATHER subtable via
+    # plotweather, then written with gencal(caltype='opac', parameter=taus).
+    # gencal opac is a *manual* caltype: without parameter it writes a 0-row
+    # table, so opacity must be computed first. Genuinely skipped only when
+    # there is no WEATHER subtable (e.g. some older/imported MSs).
+    casa_calls.append("tb.open(WEATHER) → nrows (opacity check)")
+    if _table_nrows(ms_str + "/WEATHER") == 0:
         skipped.append("opacities.opac")
-        skip_reasons["opacities.opac"] = "gencal returned 0-row table"
+        skip_reasons["opacities.opac"] = "no WEATHER subtable — cannot compute zenith opacity"
+    else:
+        try:
+            from casatasks import plotweather  # type: ignore[import]
 
-    # rq — only for post-2011 data
-    do_rq = obs_mjd is None or obs_mjd >= _RQ_MJD_THRESHOLD
-    if do_rq:
+            casa_calls.append("casatasks.plotweather(doPlot=False) → zenith opacities")
+            taus = plotweather(vis=ms_str, doPlot=False)
+            spw_sel = ",".join(str(i) for i in range(len(taus)))
+            casa_calls.append(f"casatasks.gencal(caltype='opac', spw='{spw_sel}', parameter=taus)")
+            gencal(vis=ms_str, caltable=opac_table, caltype="opac", spw=spw_sel, parameter=taus)
+        except Exception as exc:
+            warnings.append(f"opacity computation failed: {exc}")
+            skipped.append("opacities.opac")
+            skip_reasons["opacities.opac"] = str(exc)
+        if "opacities.opac" not in skip_reasons:
+            if _table_nrows(opac_table) > 0:
+                priorcals.append(opac_table)
+            else:
+                skipped.append("opacities.opac")
+                skip_reasons["opacities.opac"] = "gencal returned 0-row table"
+
+    # rq — WIDAR data only. SYSPOWER is written only by the WIDAR correlator,
+    # so its presence is the discriminator; an observation-date cutoff
+    # misclassifies 2010-11 commissioning-era WIDAR data as pre-WIDAR.
+    casa_calls.append("tb.open(SYSPOWER) → nrows (rq WIDAR check)")
+    if _table_nrows(ms_str + "/SYSPOWER") > 0:
         if _run_gencal(rq_table, "rq", "requantizer.rq"):
             priorcals.append(rq_table)
         else:
@@ -315,7 +315,7 @@ def run(
             skip_reasons["requantizer.rq"] = "gencal returned 0-row table"
     else:
         skipped.append("requantizer.rq")
-        skip_reasons["requantizer.rq"] = f"MJD {obs_mjd:.1f} < {_RQ_MJD_THRESHOLD} (pre-WIDAR era)"
+        skip_reasons["requantizer.rq"] = "no SYSPOWER subtable (pre-WIDAR data)"
 
     # antpos
     if _run_gencal(antpos_table, "antpos", "antpos.ap"):

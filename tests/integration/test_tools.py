@@ -242,6 +242,24 @@ _SKIP = pytest.mark.skipif(_TEST_MS is None, reason="RADIO_MCP_TEST_MS not set")
 
 
 @_SKIP
+class TestVerifyModelReal:
+    """Integration test stub for ms_verify_model against a real MS."""
+
+    def test_verify_model_returns_ok(self):
+        from ms_inspect.tools import verify_model
+
+        # Requires MODEL_DATA (usescratch=True). On an MS without it the tool
+        # raises ComputationError; both outcomes exercise the CASA path.
+        try:
+            result = verify_model.run(_TEST_MS)
+        except Exception as exc:  # noqa: BLE001
+            assert "MODEL_DATA" in str(exc)
+            return
+        assert result["status"] == "ok"
+        assert "per_field" in result["data"]
+
+
+@_SKIP
 class TestAntennaFlagFractionReal:
     """Integration tests for ms_antenna_flag_fraction against a real MS."""
 
@@ -382,7 +400,13 @@ class TestInitialBandpassReal:
         if bp_field is None:
             pytest.skip("No CALIBRATE_BANDPASS field found in test MS")
 
-        return bp_run(_TEST_MS, bp_field=bp_field, ref_ant=ref_ant, workdir=bp_workdir)
+        return bp_run(
+            _TEST_MS,
+            bp_field=bp_field,
+            applycal_field=bp_field,
+            ref_ant=ref_ant,
+            workdir=bp_workdir,
+        )
 
     def test_returns_ok(self, bp_result):
         assert bp_result["status"] == "ok"
@@ -431,7 +455,14 @@ class TestVerifyCaltablesReal:
         if bp_field is None:
             pytest.skip("No CALIBRATE_BANDPASS field found in test MS")
 
-        bp_run(_TEST_MS, bp_field=bp_field, ref_ant=ref_ant, workdir=workdir, execute=True)
+        bp_run(
+            _TEST_MS,
+            bp_field=bp_field,
+            applycal_field=bp_field,
+            ref_ant=ref_ant,
+            workdir=workdir,
+            execute=True,
+        )
 
         import os
 
@@ -588,23 +619,26 @@ class TestApplyInitialRflagReal:
     def test_script_generation_only(self, tmp_path):
         from ms_modify.initial_rflag import run
 
-        result = run(_TEST_MS, workdir=str(tmp_path), execute=False)
+        result = run(_TEST_MS, str(tmp_path), "0", execute=False)
         assert result["status"] == "ok"
         import os
 
-        assert os.path.exists(os.path.join(str(tmp_path), "initial_rflag_cmds.txt"))
         assert os.path.exists(os.path.join(str(tmp_path), "initial_rflag.py"))
+        # cmds file is retired — the script issues two direct flagdata calls
+        assert not os.path.exists(os.path.join(str(tmp_path), "initial_rflag_cmds.txt"))
 
-    def test_cmds_file_has_two_lines(self, tmp_path):
+    def test_script_has_two_direct_passes(self, tmp_path):
         import os
 
         from ms_modify.initial_rflag import run
 
-        run(_TEST_MS, workdir=str(tmp_path), execute=False)
-        with open(os.path.join(str(tmp_path), "initial_rflag_cmds.txt")) as fh:
-            cmds = fh.read()
-        lines = [ln for ln in cmds.splitlines() if ln.strip()]
-        assert len(lines) == 2
+        run(_TEST_MS, str(tmp_path), "0", execute=False)
+        with open(os.path.join(str(tmp_path), "initial_rflag.py")) as fh:
+            script = fh.read()
+        assert 'mode="list"' not in script
+        # one rflag pass + one tfcrop pass
+        assert script.count("flagdata(") == 2
+        assert 'mode="rflag"' in script and 'mode="tfcrop"' in script
 
 
 @_SKIP

@@ -21,10 +21,12 @@ import pytest
 from ms_inspect.util.polcal_setjy_fit import (
     SetjyPolParams,
     fit_from_catalogue,
+    fit_pol_terms_from_catalogue,
     fit_polangle,
     fit_polindex,
     fit_setjy_params,
     fit_stokes_i,
+    fit_stokes_i_adaptive,
 )
 
 # ---------------------------------------------------------------------------
@@ -191,14 +193,26 @@ class TestFitSetjyParams:
         assert params_wide.polindex != params_narrow.polindex
 
     def test_insufficient_stokes_i_nodes_raises(self):
+        """A single node gives no slope; ≥2 in-band nodes are required."""
         with pytest.raises(ValueError, match="Stokes I"):
             fit_setjy_params(
-                [3.0, 4.0],
-                [10.0, 7.5],
-                [0.02, 0.03],
-                [-95.0, -90.0],
+                [3.0],
+                [10.0],
+                [0.02],
+                [-95.0],
                 reffreq_ghz=3.5,
             )
+
+    def test_two_stokes_i_nodes_ok_degree_one(self):
+        """Exactly 2 in-band nodes → first-order spix (spectral index only)."""
+        params = fit_setjy_params(
+            [3.0, 4.0],
+            [10.0, 7.5],
+            [0.02, 0.03],
+            [-95.0, -90.0],
+            reffreq_ghz=3.5,
+        )
+        assert len(params.spix) == 1
 
     def test_insufficient_polindex_nodes_raises(self):
         """Fewer nodes than polindex_deg+1 should raise ValueError."""
@@ -306,3 +320,110 @@ class TestFitFromCatalogue:
         # Should NOT raise — 14 S-band-and-above nodes with defined PA are available
         params = fit_from_catalogue("3C48", reffreq_ghz=3.0, pol_freq_range_ghz=(2.0, 9.0))
         assert params is not None
+
+
+# ---------------------------------------------------------------------------
+# fit_stokes_i_adaptive — degree adapts to sample count
+# ---------------------------------------------------------------------------
+
+
+class TestFitStokesIAdaptive:
+    def test_three_points_quadratic_recovers_alpha(self):
+        alpha = -0.7
+        reffreq = 1.5
+        freq = np.array([1.0, 1.5, 2.0, 3.0])
+        flux = 12.0 * (freq / reffreq) ** alpha
+        flux_at_ref, spix = fit_stokes_i_adaptive(freq, flux, reffreq)
+        assert flux_at_ref == pytest.approx(12.0, rel=1e-4)
+        assert len(spix) == 2
+        assert spix[0] == pytest.approx(alpha, abs=1e-3)
+
+    def test_two_points_linear_spix(self):
+        flux_at_ref, spix = fit_stokes_i_adaptive([1.0, 2.0], [10.0, 5.0], reffreq_ghz=1.5)
+        assert len(spix) == 1  # degree 1 → single alpha
+
+    def test_single_point_flat_spix(self):
+        flux_at_ref, spix = fit_stokes_i_adaptive([1.5], [9.0], reffreq_ghz=1.5)
+        assert flux_at_ref == pytest.approx(9.0, rel=1e-6)
+        assert spix == [0.0]
+
+    def test_no_points_raises(self):
+        with pytest.raises(ValueError, match="≥1"):
+            fit_stokes_i_adaptive([], [], reffreq_ghz=1.5)
+
+    def test_nonpositive_flux_raises(self):
+        with pytest.raises(ValueError, match="positive"):
+            fit_stokes_i_adaptive([1.0, 2.0, 3.0], [10.0, 0.0, 5.0], reffreq_ghz=2.0)
+
+
+# ---------------------------------------------------------------------------
+# fit_pol_terms_from_catalogue — pol-only fit, works for flux-less 2019 epoch
+# ---------------------------------------------------------------------------
+
+
+class TestFitPolTermsFromCatalogue:
+    def test_3c286_2019_pol_only_no_flux_needed(self):
+        """3C286's 2019 epoch has NO Stokes I — pol-only fit must still succeed."""
+        polindex, polangle = fit_pol_terms_from_catalogue("3C286", reffreq_ghz=1.5)
+        # 2019 table: ~9.8% pol and PA ~33° near L-band
+        assert polindex[0] == pytest.approx(0.099, abs=0.01)
+        assert polangle[0] == pytest.approx(math.radians(33.0), abs=0.05)
+
+    def test_default_epoch_is_2019(self):
+        # Should not raise with the default epoch for a 2019-only calibrator.
+        # 3C138 has 5 PA-defined nodes (1.45-15 GHz) — exactly enough for deg=4.
+        polindex, polangle = fit_pol_terms_from_catalogue("3C138", reffreq_ghz=3.0)
+        assert len(polindex) == 4
+        assert len(polangle) == 5
+
+    def test_3c147_polangle_fails_unpolarized_lband(self):
+        # 3C147 is essentially unpolarized below ~3 GHz: every L/S-band node
+        # has pol_angle_deg=None (leakage calibrator). Restricted to that
+        # range, the polangle fit must raise rather than fabricate an angle.
+        with pytest.raises(ValueError, match="polangle"):
+            fit_pol_terms_from_catalogue("3C147", reffreq_ghz=1.5, pol_freq_range_ghz=(1.0, 3.0))
+
+    def test_3c147_polangle_fits_above_3ghz(self):
+        # From 3.565 GHz up the catalogue tabulates PA for 3C147 (retained for
+        # fidelity), so an unrestricted C-band fit succeeds.
+        polindex, polangle = fit_pol_terms_from_catalogue("3C147", reffreq_ghz=6.0)
+        assert len(polangle) >= 1
+
+    def test_unknown_calibrator_raises(self):
+        with pytest.raises(KeyError, match="not found"):
+            fit_pol_terms_from_catalogue("J9999+0000", reffreq_ghz=3.0)
+
+    def test_unknown_epoch_raises(self):
+        with pytest.raises(KeyError, match="Epoch"):
+            fit_pol_terms_from_catalogue("3C286", reffreq_ghz=1.5, epoch="nope")
+
+    def test_lband_restriction_clamps_degree(self, caplog):
+        """A band restriction can leave too few nodes for the default degrees.
+
+        3C286 restricted to L-band (1-2 GHz) exposes only 3 pol nodes
+        (1.02/1.47/1.87 GHz). The default deg 3/4 would need 4/5 nodes; rather
+        than raising (the AB1345 G55.7+3.4 trap), the fit must clamp each degree
+        to (n_nodes - 1) = 2 and warn.
+        """
+        with caplog.at_level("WARNING"):
+            polindex, polangle = fit_pol_terms_from_catalogue(
+                "3C286",
+                reffreq_ghz=1.5,
+                pol_freq_range_ghz=(1.0, 2.0),
+            )
+        # deg 2 → 3 ascending coefficients each.
+        assert len(polindex) == 3
+        assert len(polangle) == 3
+        # c0 still tracks the in-band values (~9.8% pol, PA ~33°).
+        assert polindex[0] == pytest.approx(0.098, abs=0.01)
+        assert polangle[0] == pytest.approx(math.radians(33.0), abs=0.02)
+        assert "clamping fit degree" in caplog.text
+
+    def test_floor_of_two_nodes_enforced(self):
+        """Fewer than 2 in-band nodes carries no slope info → must still raise."""
+        with pytest.raises(ValueError, match="≥2 in-band nodes"):
+            fit_pol_terms_from_catalogue(
+                "3C286",
+                reffreq_ghz=1.0,
+                pol_freq_range_ghz=(1.0, 1.1),  # only the 1.02 GHz node
+            )

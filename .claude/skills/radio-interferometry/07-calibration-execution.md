@@ -10,12 +10,10 @@ Sequence: initial phase → delay → bandpass → gain (flux) → gain (phase, 
 
 ## Execution protocol
 
-Every tool call with `execute=False` generates a CASA script. That script is
-then run as a background job. **Wait for it to finish, however long it takes.**
-Do not impose artificial timeouts or retry counters. CASA calibration jobs
-on real data are long-running by nature — patience and persistence are required.
-Monitor by checking for the expected output (caltable on disk, return code 0)
-after the job exits. Never kill a job because it appears slow.
+Every `execute=False` tool call generates a CASA script that runs as a background
+job. **Wait for it to finish, however long it takes** — do not impose timeouts or
+retry counters; CASA solves on real data are long-running. Confirm success by the
+expected output (caltable on disk, return code 0) after the job exits.
 
 ---
 
@@ -41,6 +39,17 @@ Fill every `{PLACEHOLDER}` from Phase 1–2 tool outputs before calling any solv
 | `{INT_TIME_S}` | `ms_scan_list` | integration time in seconds |
 | `{PRIORCALS}` | `ms_verify_priorcals` | from `ms_verify_priorcals.priorcals_list` |
 | `{WORKDIR}` | provided in prompt | directory to write all caltables into |
+
+---
+
+## Field selection: names, never numeric IDs
+
+Pass field **names** to every `field`, `reference`, `transfer`, and `gainfield`
+argument — never numeric IDs. `split()` re-indexes fields (a `split(field='0,1,2,4')`
+renumbers to `0,1,2,3`), so an ID correct on the parent MS silently selects the
+wrong source on the split, corrupting the transfer with no error. Names survive
+`split()` unchanged. Use the `{*_FIELD}` placeholders; if a tool warns of numeric
+IDs, convert to names before proceeding.
 
 ---
 
@@ -110,6 +119,37 @@ Tables are written to `{WORKDIR}/`:
 | Bandpass | `bandpass.B` | Final bandpass; replaces BP0.b from initial_bandpass |
 | Gain (pre-fluxscale) | `gain.G` | Contains both flux and phase cal solutions |
 | Gain (flux-scaled) | `gain.fluxscaled` | Output of fluxscale; applied to target |
+
+---
+
+## Caltable solution flagging (after each table, before it's applied)
+
+Once a caltable is created and *before* it is applied on-the-fly as a prior in
+the next solve, run `ms_flag_caltable` on it to catch RFI-contaminated outlier
+solutions that still passed the solve-time SNR cut. This keeps a few bad
+solutions from propagating into every downstream solve.
+
+| Table | When | mode (auto) | sigma |
+|---|---|---|---|
+| `bandpass.B` | after Step 3, before Step 4 gain solve | tfcrop | 5.0 |
+| `gain.G` | after Step 4, before fluxscale | rflag | 5.0 |
+| `dterms.D` (polcal) | after the D-term solve (skill 09) | rflag | 5.0 |
+| `delay.K` | — | — | **do not flag** — one value per antenna; inspect with `ms_calsol_stats` and flag bad antennas explicitly instead |
+
+`ms_flag_caltable` auto-routes the mode from the table's VisCal type, so you
+normally pass only `caltable_path`, `workdir`, and `sigma`. Default `sigma=5.0`
+is gentle — it catches the worst outliers without over-flagging.
+
+**Read the reported flagged fraction:**
+
+| Flagged fraction after | Action |
+|---|---|
+| < 30% | Normal — outliers removed; proceed |
+| ≥ 30% | The a-priori (visibility) flagging was insufficient. **Do not just loosen sigma.** Improve the upstream preflag/RFI excision and redo *this* solve. If it is still ≥ 30% after redoing, raise `sigma` to 6.0 |
+
+The order matters: flagged caltable solutions are a *symptom* of unflagged RFI
+in the visibilities. Loosening sigma hides the symptom; fixing the preflag
+removes the cause.
 
 ---
 
@@ -238,6 +278,9 @@ ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B)
 | `outliers.amp_outliers` | list | empty | non-empty → antenna has anomalous amplitude shape; check against `amp_array` for that antenna |
 
 Both polarizations on a given antenna should show the same amplitude shape within ~10%.
+
+**Before using `bandpass.B` in Step 4, flag its solutions** with `ms_flag_caltable`
+(tfcrop, sigma=5.0) — see "Caltable solution flagging" above.
 
 ---
 
@@ -376,219 +419,10 @@ outliers.amp_outliers            # List of {antenna, spw, field, amp, n_sigma} e
 - Red flag: one antenna appears in `amp_outliers` across multiple SPWs → **Recovery 1: Caltable Not Produced**
   (refant dependency issue) OR **Recovery 4: Low Coverage**
 
-### Recovery Tree 1: Caltable Not Produced
-
-**Symptoms:** gaincal script completed, but `{WORKDIR}/gain.G` does not exist
-OR exists but is empty (`n_total_solutions = 0`).
-
-**Diagnostic path:**
-
-1. **Check refant availability in the MS:**
-   ```
-   ms_antenna_list(ms_path={VIS})
-   # Confirm {REFANT} name appears in antenna list
-   ```
-   If refant not found → use top 3 from `ms_refant` output, in order.
-
-2. **Check prior caltables (delay.K, bandpass.B):**
-   ```
-   ms_verify_caltables(...)
-   ```
-   If either missing or empty → restart from Step 2 (delay solve).
-
-3. **Check pre-solve flag fraction by field:**
-   ```
-   ms_flag_summary(ms_path={VIS}, field={FLUX_FIELD})
-   ```
-   - If > 50% of the data is flagged → escalate to **Pre-flagging review**
-     (Section CALIBRATION_PREFLAG in 10-precal-workflow.md)
-   - If < 50% but still high (30–50%) → gaincal may have failed due to insufficient SNR
-     → Try **Retry option A** below
-
-4. **Retry option A: Try alternative refants (recommended first)**
-   - Run gaincal three times with refants from `ms_refant` ranked list (1st, 2nd, 3rd)
-   - Each call: change only `refant={REFANT_N}` in the gaincal call; keep all other params
-   - **If any produces a caltable:** use it and proceed to inspection
-   - **If all three fail:** go to Retry option B
-
-5. **Retry option B: Relax solution thresholds**
-   - Change: `minsnr=3.0` (from 5.0) and `minblperant=3` (from 4)
-   - Keep: same refant (use the ranked list's top antenna)
-   - **If this produces a caltable:** note in summary as "degraded SNR, lower minblperant"
-   - **If still fails:** escalate (see **Escalation** below)
-
-6. **Escalation:** If all three refants + threshold relaxation fail, the gaincal
-   solve is fundamentally broken. Possible causes:
-   - Bandpass solve failed (re-do Step 3)
-   - All major antennas are flagged (check for online flags or RFI; loop to precal)
-   - Wrong field selection (re-check `{FLUX_FIELD}` from ms_field_list)
-   - CASA/caltask version incompatibility (check CASA version)
-
----
-
-### Recovery Tree 2: Low SNR (overall_snr_mean < 3.0)
-
-**Symptoms:** gaincal produced a caltable, but `snr_mean < 3.0` or > 20% of
-antennas have SNR < 2.0.
-
-**Diagnostic path:**
-
-1. **Assess the source and expected SNR:**
-   - Use source classification (above) to decide if low SNR is expected
-   - Bright cal (3C286, 3C147): SNR should be > 10; < 5 is bad
-   - Phase cal (faint): SNR > 3 is acceptable
-   - Weak source: SNR > 2 is acceptable if coverage is good
-   - Resolved cal: SNR > 5 expected (extended structures need high SNR)
-
-2. **Check if the problem is refant-dependent:**
-   ```
-   # Re-run gaincal with the 2nd and 3rd refants from ms_refant
-   ```
-   - **If SNR improves with a different refant:** use the better refant for all remaining steps
-   - **If SNR remains low regardless of refant:** the data quality is poor; continue to next option
-
-3. **Check if solint is too tight (too much vector-averaging):**
-   - Current: `solint='inf'` (one solution over all scans)
-   - **Retry with:** `solint='int'` (one solution per integration)
-   - **Rationale:** Per-integration solutions have more data per fit; time variations
-     are solved independently rather than averaged away
-   - **Risk:** produces more solutions to flag; limits applycal interpolation
-   - **If SNR improves:** use `solint='int'` and proceed
-   - **If SNR stays low:** continue to next option
-
-4. **Check bandpass quality:**
-   - Return to Step 3 and inspect bandpass with `ms_calsol_stats`
-   - If bandpass shows SNR < 5 itself → bandpass solve was weak
-   - **Re-solve bandpass (Step 3)** with modified parameters, then re-attempt gain solve
-
-5. **Check combine parameter (for weak sources only):**
-   - Current: `combine=''` (no combining)
-   - **Retry with:** `combine='scan'` (combine all scans on a calibrator)
-   - **Rationale:** weak sources benefit from combining scans; single-scan solutions may have too few baselines
-   - **Risk:** loses time resolution (may miss gain time-variation)
-   - **Only for weak calibrators; do not use for flux calibrators**
-
-6. **Escalation:** If SNR stays < 3 after trying different refants and modified solint:
-   - The observation has insufficient data quality for reliable gain solutions
-   - Possible causes: excessive RFI not caught by preflag, bad weather, equipment issue
-   - **Action:** Document in summary, flag as "low SNR"; consider whether the dataset is usable
-
----
-
-### Recovery Tree 3: Excessive Flag Jump (flag_delta > threshold)
-
-**Symptoms:** gaincal completed and caltable exists, but `flag_after - flag_before`
-exceeds the source-type threshold (e.g., > 8% for bright cal, > 12% for phase cal).
-
-**Diagnostic path:**
-
-1. **Classify the flag jump:**
-   - Small jump (3–5% above threshold): Expected minor RFI detection; acceptable with note
-   - Large jump (> 5% above threshold): Indicates real data-quality problem
-
-2. **Check if the source is resolved:**
-   - Use `ms_field_list` output and source catalogues (e.g., VLA calibrator manual)
-   - Resolved sources (Cas A, Cyg A, Tau A, 3C84) are sensitive to UV range
-   - **If resolved:** retry with tighter UV range
-     ```
-     # Add to gaincal call: uvrange='0~1000k' (or equivalent baseline limit)
-     ```
-   - **If point-like:** continue to next option
-
-3. **Check for RFI in online flags:**
-   ```
-   ms_online_flag_stats(flag_file={ORIGINAL_ASDM}/.flagonline.txt)
-   # Examine: reason_breakdown (look for RFI-like categories)
-   ```
-   - If heavy RFI flagging in online flags → data quality is already poor
-   - Consider looping to precal for additional RFI excision
-
-4. **Check per-antenna flag contribution:**
-   ```
-   ms_flag_summary(ms_path={VIS}, field={FLUX_FIELD}, per_antenna=True)
-   # Identify antennas where flag_delta is largest
-   ```
-   - **If concentrated in 1–2 antennas:** suspect hardware issue on those antennas
-     - Retry with `refant` set to an antenna NOT in the high-flag list
-   - **If spread across all antennas:** systematic RFI; loop to precal
-
-5. **Retry with longer solint (if source is unresolved):**
-   - Current: `solint='inf'`
-   - **Retry with:** `solint='10s'` or `solint='1min'` (example; adjust to data)
-   - **Rationale:** shorter integrations capture more data per fit; longer solutions reduce outlier detection
-   - **If flag_delta decreases:** use the longer solint
-   - **If flag_delta unchanged:** the issue is not integration time; escalate
-
-6. **Escalation:** If flag_delta remains > threshold after refant and solint tweaks:
-   - Possible causes: strong RFI environment, broken receiver chain, sky interference
-   - **Action:** Document the high flagging in the summary; consider whether the solutions are scientifically useful despite the flag delta
-
----
-
-### Recovery Tree 4: Low Coverage (< 50% solutions)
-
-**Symptoms:** gaincal produced a caltable, but `n_flagged_solutions / n_total_solutions > 0.5`
-(more than half the solutions are flagged).
-
-**Diagnostic path:**
-
-1. **Check which antennas are missing:**
-   ```
-   ms_calsol_stats(caltable_path={WORKDIR}/gain.G)
-   # Inspect: solutions_per_antenna (count non-flagged solutions per antenna)
-   ```
-   - **If 1–2 antennas are missing solutions:** likely refant issue or hardware problem
-   - **If > 3 antennas missing:** data quality problem or field selection error
-
-2. **Check if concentrated in a few antennas:**
-   - **If yes:** try alternate refants (Recovery Tree 1, Retry A)
-   - **If distributed:** continue to next option
-
-3. **Relax minblperant:**
-   - Current: `minblperant={MINBLPERANT}` (typically 4)
-   - **Retry with:** `minblperant=3` (or lower)
-   - **Rationale:** each antenna needs at least N baselines to contribute; lowering N allows peripheral antennas
-   - **Risk:** weaker solutions with lower SNR
-   - **If coverage improves to > 50%:** use this setting
-   - **If still low:** continue to next option
-
-4. **Check solint vs data density:**
-   - If `solint='inf'` and the calibrator was observed in very few scans (< 3)
-   - **Retry with:** `solint='int'` (per-integration solutions)
-   - **Rationale:** more solutions per antenna across more integrations
-   - **If coverage improves:** use per-integration solint
-   - **If still low:** continue to next option
-
-5. **Check prior caltables (delay.K, bandpass.B):**
-   - Missing or bad prior solutions will cause downstream gaincal to fail
-   - ```
-     ms_verify_caltables(ms_path={VIS}, init_gain_table=..., bp_table={WORKDIR}/bandpass.B)
-     ```
-   - If bandpass is corrupt → restart from Step 3
-
-6. **Escalation:** If coverage stays < 50% after all retries:
-   - The dataset has fundamentally poor SNR or flagging
-   - **Action:** Document and escalate to data-quality review
-
----
-
-### Escalation criteria (hard stop conditions)
-
-Stop and escalate to data-quality review if **any** of the following hold:
-
-| Condition | Action |
-|---|---|
-| All 3 refants fail to produce a caltable | Check MS structure (antenna table, MAIN table consistency) |
-| SNR stays < 2.0 after refant + solint + combine tries | Data quality too poor for this science goal |
-| Bright flux calibrator flags jump > 20% | Strong RFI or hardware issue; loop to precal + online flags review |
-| Coverage never reaches 50% | Possibly wrong field selection or MS corruption; verify with `listobs` |
-| Refant not found in antenna list | MS antenna table is corrupt or incomplete |
-
-When escalating: provide to the user:
-- Which refant was tried, in order
-- The SNR values or coverage % at each attempt
-- The original `gain.G` output (if produced)
-- A recommendation: retry preflag + RFI excision, or flag dataset as non-usable
+**If a post-flight check above routed you to a Recovery Tree, or to Escalation,
+read `07b-gaincal-recovery.md`** — it holds the diagnostic procedures for Recovery
+Trees 1–4 (Caltable Not Produced, Low SNR, Excessive Flag Jump, Low Coverage) and
+the hard-stop Escalation criteria. The happy path does not need it.
 
 ---
 
@@ -601,6 +435,10 @@ ms_calsol_stats(caltable_path = {WORKDIR}/gain.G)
 The `gain.G` table contains solutions for both flux and phase calibrators. Use
 `field_names` from the output to identify which field index corresponds to each.
 
+**Before fluxscale (Step 6), flag the `gain.G` solutions** with `ms_flag_caltable`
+(rflag, sigma=5.0) — see "Caltable solution flagging" above. Outlier gain
+solutions left in place will bias the fluxscale transfer.
+
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
 | `overall_flagged_frac` | scalar | < 0.08 | 0.08–0.15 → note; > 0.15 → loop to CALIBRATION_PREFLAG |
@@ -609,7 +447,7 @@ The `gain.G` table contains solutions for both flux and phase calibrators. Use
 | `phase_rms_deg[ant, spw, field=flux_idx]` | flux cal | < 20° | > 45° → ionospheric or bad data |
 | `amp_mean[ant, spw, field=flux_idx]` | flux cal | close to 1.0 | Large deviation → setjy model may be wrong |
 | `amp_mean[ant, spw, field=phase_idx]` | phase cal | systematically higher than flux cal | Expected — fluxscale will correct this |
-| `outliers.low_snr` | list | empty | non-empty → inspect named antennas; use Recovery Tree 2 if > 20% of antennas listed |
+| `outliers.low_snr` | list | empty | non-empty → inspect named antennas; use Recovery Tree 2 (07b) if > 20% of antennas listed |
 | `outliers.amp_outliers` | list | empty | non-empty → inspect named antennas; an amplitude outlier on the flux cal is a hard flag before applycal |
 
 ---
@@ -638,6 +476,17 @@ ms_fluxscale(
 phase calibrator against the VLA calibrator manual or known source monitoring.
 Values deviating by > 20% from the expected value suggest a problem with the
 prior caltables or the flux calibrator model.
+
+**An order-of-magnitude-low flux (e.g. ~10× low) is the signature of a mixed
+`usescratch` MODEL_DATA collision, not a calibration problem.** It happens when
+`ms_setjy_polcal` (always `usescratch=True`) created the physical `MODEL_DATA`
+column while the flux/bandpass cals were set with `ms_setjy(usescratch=False)`
+(virtual) — leaving their `MODEL_DATA` at the default 1 Jy. fluxscale then
+bootstraps off a 1 Jy reference instead of the true model flux. If you see this,
+do not retune the solve: re-run `ms_setjy` with `usescratch=True` for the flux
+cal so the whole MS uses one consistent physical model, then redo the gain solve
+and fluxscale. The rule: all setjy calls on one MS must share the same
+`usescratch` (see skill 09 Step 1).
 
 After fluxscale, gain amplitudes for both calibrators should be similar in
 magnitude — the phase calibrator corrections should no longer be systematically
@@ -706,6 +555,51 @@ for this observation. Flag them globally and re-solve.
 
 ---
 
+## Antenna-set consistency check — run before Step 7
+
+applycal applies a *stack* of caltables to each visibility. With `applymode='calflag'`,
+a visibility is flagged if it has no usable solution in **any** table in the stack, so
+the antennas that survive applycal are the **intersection** of the surviving antenna
+sets across all stacked tables — not any single table's set. Each table can pass its
+own `n_antennas_lost ≤ 3` gate while the intersection still collapses (observed on
+AB1345: a target applycal reduced to a 5-antenna intersection). Nothing else in this
+workflow intersects the sets, so the collapse is otherwise silent until it shows up as
+gutted CORRECTED data — by which point the FLAG damage is done and there is no
+flagversions rollback in this build.
+
+Compute the intersection explicitly before applycal:
+
+1. `ms_antenna_list(ms_path={VIS})` → array total `N` = number of antennas.
+2. For each table in the applycal stack (`delay.K`, `bandpass.B`, `gain.fluxscaled`,
+   plus any priorcals), run `ms_calsol_stats(caltable_path=...)` and compute the
+   surviving set: `surviving = set(ant_names) − set(antennas_lost)`.
+3. `common` = intersection of `surviving` across all tables.
+4. `fraction = len(common) / N`.
+
+Gate on `fraction` (denominator is the full array, from `ms_antenna_list`):
+
+| `fraction` | Action |
+|---|---|
+| ≥ 0.50 | Antenna set is consistent — proceed to Step 7 |
+| < 0.50 | Pathological collapse — **do not applycal blindly.** Branch on processing mode (below) |
+
+**If `fraction < 0.50`:**
+
+- **Interactive / intervention requested:** present this as a decision point. Report
+  `N`, `len(common)`, and per-table which antennas each table dropped (the set
+  difference `surviving_table − common`). Ask the user whether to diagnose the cause
+  or apply anyway with the reduced set.
+- **Hands-off / autonomous processing:** do **not** proceed to applycal. Treat the
+  collapse as a signal of a pathological upstream failure and inspect:
+  - a-priori flagging — `ms_flag_summary` per field/antenna, to find an antenna or SPW
+    flagged out across the board;
+  - the calibration solution logs and per-table `ms_calsol_stats`, to find an antenna
+    that died across multiple solves (e.g. a bad refant, a feed swap, a hardware-dead
+    antenna). Resolve the root cause and re-solve before applycal — switching
+    `applymode` will not recover antennas that have no solution at all.
+
+---
+
 ## Step 7 — Apply calibration
 
 Applycal is called separately for each field category to ensure the correct
@@ -715,10 +609,10 @@ gain solutions are interpolated correctly for each.
 - `gainfield`: selects which rows from `gain.fluxscaled` apply to each field
 - `interp`: `'nearest'` for calibrators; `'linear'` for target (interpolate between adjacent cal scans)
 - `calwt=False`: VLA data weights are not properly calibrated; calibrating them produces nonsensical results
-- `applymode`: calibrators use `'calflagstrict'`; science target uses `'calflagstrict'` if
-  per-calibrator flag fraction in `calibrators.ms` post-rflag is < 50%, otherwise `'calonly'`.
-  `calonly` leaves data without a matching gain solution uncalibrated but unflagged — prefer it
-  for the target when calibrator flagging was heavy.
+- `applymode`: default `'calonly'` for all fields — apply calibration without flagging, so
+  post-calibration RFI flagging (skill 13, `ms_postcal_flag`) owns the FLAG column. Use
+  `'calflagstrict'` only when you deliberately want apply-time flagging of missing/flagged
+  solutions (e.g. a quick-look without a post-cal flag pass).
 
 ### 7a — Flux calibrator
 
@@ -730,7 +624,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {FLUX_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
-    applymode  = 'calflagstrict',
+    applymode  = 'calonly',
     flagbackup = True,
     workdir    = {WORKDIR},
     execute    = False,
@@ -747,7 +641,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
-    applymode  = 'calflagstrict',
+    applymode  = 'calonly',
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,
@@ -764,7 +658,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'],
     calwt      = False,
-    applymode  = 'calonly',        # or 'calflagstrict' if calibrator flag fraction < 50%
+    applymode  = 'calonly',        # post-cal RFI flagging (skill 13) owns FLAG
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,
@@ -794,6 +688,14 @@ bandpass solutions (Step 3) before re-running applycal.
 
 If the phase calibrator shows anomalous time structure: consider flagging the
 affected scans and re-running Steps 4–6 before re-applying.
+
+**Residual rflag on the other calibrators belongs here.** This is the "later"
+pass deferred in 10-precal-workflow.md Step 8: now that applycal has populated a
+valid CORRECTED column for *all* calibrators (not just the bandpass cal), a
+residual rflag pass on them is finally meaningful. Call `ms_apply_initial_rflag`
+with `field` set to the calibrators whose CORRECTED is now valid — never an
+all-field pass over fields that were not in this applycal. Re-inspect with
+`ms_flag_summary` before/after.
 
 ---
 

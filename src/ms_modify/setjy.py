@@ -33,17 +33,20 @@ _DEFAULT_STANDARD = "Perley-Butler 2017"
 def _get_field_names(ms_str: str) -> list[str]:
     """Read field names from the FIELD subtable."""
     with open_table(ms_str + "/FIELD") as tb:
-        return list(tb.getcol("NAME"))
+        # Coerce numpy str_ to plain str: repr(np.str_(...)) renders as
+        # "np.str_('...')" under numpy >= 2, which is a NameError in the
+        # generated script (no numpy import there).
+        return [str(n) for n in tb.getcol("NAME")]
 
 
-def _build_setjy_block(field_name: str, standard: str) -> str:
+def _build_setjy_block(field_name: str, standard: str, usescratch: bool) -> str:
     """Return a single setjy() call string for the script."""
     return (
         f"setjy(\n"
         f"    vis=ms_path,\n"
         f"    field={field_name!r},\n"
         f"    standard={standard!r},\n"
-        f"    usescratch=False,\n"
+        f"    usescratch={usescratch},\n"
         f")"
     )
 
@@ -52,6 +55,7 @@ def _build_script(
     ms_str: str,
     flux_fields: list[str],
     standard: str,
+    usescratch: bool,
     warnings_inline: list[str],
 ) -> str:
     """Return a self-contained setjy Python script."""
@@ -60,7 +64,7 @@ def _build_script(
         warn_lines = "\n".join(f"# WARNING: {w}" for w in warnings_inline)
         warn_block = warn_lines + "\n\n"
 
-    setjy_blocks = "\n\n".join(_build_setjy_block(f, standard) for f in flux_fields)
+    setjy_blocks = "\n\n".join(_build_setjy_block(f, standard, usescratch) for f in flux_fields)
 
     no_flux_block = ""
     if not flux_fields:
@@ -88,17 +92,38 @@ def run(
     ms_path: str,
     workdir: str,
     standard: str = _DEFAULT_STANDARD,
+    usescratch: bool = True,
+    exclude_fields: str = "",
     execute: bool = False,
 ) -> dict:
     """
     Set flux density models for standard calibrators in the MS.
 
     Args:
-        ms_path:  Path to calibrators.ms (or full MS).
-        workdir:  Existing output directory for setjy.py script.
-        standard: Flux standard (default 'Perley-Butler 2017').
-        execute:  If False (default), write setjy.py and return.
-                  If True, run setjy in-process for each flux field.
+        ms_path:    Path to calibrators.ms (or full MS).
+        workdir:    Existing output directory for setjy.py script.
+        standard:   Flux standard (default 'Perley-Butler 2017').
+        exclude_fields: Comma-separated field NAMES to omit from the Stokes-I
+                    setjy pass, even if they are catalogued flux standards. Pass
+                    the pol-angle calibrator here when it overlaps a flux/BP cal:
+                    its full polarized model is set by ms_setjy_polcal
+                    (usescratch=True), and a plain Stokes-I setjy on that field
+                    would overwrite the polarization (MODEL is last-writer-wins
+                    per field). Excluded fields still get a consistent physical
+                    MODEL_DATA from ms_setjy_polcal, so usescratch consistency
+                    is preserved.
+        usescratch: If True (default), fill the physical MODEL_DATA column (so
+                    ms_residual_stats and polarization calibration work). If
+                    False, write a virtual model (no MODEL_DATA column).
+                    Must be consistent across ALL setjy calls on one MS: if
+                    polarization calibration is in scope, ms_setjy_polcal forces
+                    usescratch=True (virtual models fail on source models with
+                    non-zero RM — a known CASA bug), so the flux/bandpass cals
+                    must use usescratch=True here too. Mixing the two leaves the
+                    virtual-model fields at MODEL_DATA=1 Jy and corrupts the
+                    flux scale (fluxscale comes out order-of-magnitude low).
+        execute:    If False (default), write setjy.py and return.
+                    If True, run setjy in-process for each flux field.
 
     Returns:
         Standard response envelope with flux_fields, skipped_fields,
@@ -133,10 +158,18 @@ def run(
     # Cross-match against catalogue — only keep flux calibrators
     flux_fields: list[str] = []
     skipped_fields: list[str] = []
+    excluded_fields: list[str] = []
     inline_warnings: list[str] = []
+
+    exclude_set = {n.strip() for n in exclude_fields.split(",") if n.strip()}
 
     for fname in field_names:
         entry = lookup(fname)
+        if fname in exclude_set:
+            # Caller-requested skip: the field's model is set elsewhere
+            # (ms_setjy_polcal). Do not write a Stokes-I model over it.
+            excluded_fields.append(fname)
+            continue
         if entry is not None and "flux" in entry.role:
             flux_fields.append(fname)
             # Advisory warnings for specific sources
@@ -160,7 +193,7 @@ def run(
             skipped_fields.append(fname)
 
     script_path = str(workdir_path / "setjy.py")
-    script_content = _build_script(ms_str, flux_fields, standard, inline_warnings)
+    script_content = _build_script(ms_str, flux_fields, standard, usescratch, inline_warnings)
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
 
@@ -168,9 +201,19 @@ def run(
         "script_path": fmt_field(script_path),
         "flux_fields": fmt_field(flux_fields),
         "skipped_fields": fmt_field(skipped_fields),
+        "excluded_fields": fmt_field(excluded_fields),
         "standard": standard,
+        "usescratch": usescratch,
         "n_flux_fields": len(flux_fields),
     }
+
+    # Warn if a requested exclusion name never appeared in the MS (likely a typo).
+    unmatched_excludes = sorted(exclude_set - set(excluded_fields))
+    if unmatched_excludes:
+        warnings.append(
+            f"exclude_fields names not found in the MS FIELD table: {unmatched_excludes}. "
+            "Check the spelling against ms_field_list."
+        )
 
     if not execute:
         if not flux_fields:
@@ -203,13 +246,15 @@ def run(
 
     fields_done: list[str] = []
     for fname in flux_fields:
-        casa_calls.append(f"casatasks.setjy(field='{fname}', standard='{standard}')")
+        casa_calls.append(
+            f"casatasks.setjy(field='{fname}', standard='{standard}', usescratch={usescratch})"
+        )
         try:
             setjy(
                 vis=ms_str,
                 field=fname,
                 standard=standard,
-                usescratch=False,
+                usescratch=usescratch,
             )
             fields_done.append(fname)
         except Exception as exc:

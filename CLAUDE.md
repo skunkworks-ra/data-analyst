@@ -7,16 +7,21 @@ Checked into the repository root — applies to every contributor.
 
 ## What this project is
 
-`ms-inspect` is a **Model Context Protocol (MCP) server** that exposes a suite
-of read-only inspection tools over CASA Measurement Sets (MS). It is the data
-layer for an AI-assisted radio interferometric reduction pipeline targeting
-VLA/JVLA/EVLA, MeerKAT, and uGMRT.
+This repository ships **three Model Context Protocol (MCP) servers** for an
+AI-assisted radio interferometric reduction pipeline targeting VLA/JVLA/EVLA,
+MeerKAT, and uGMRT:
 
-**Phase 1 scope (this codebase):** Layer 1 (Orientation) and Layer 2
-(Instrument Sanity) — 12 tools total. Layers 3–5 are out of scope.
+- **ms-inspect** — read-only inspection and diagnostics (33 tools, port 8000)
+- **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
+- **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
 
-The design document is at `DESIGN.md` in this directory. Read it before making
-any non-trivial change.
+`ms-inspect` began as Phase 1 only — Layer 1 (Orientation) and Layer 2
+(Instrument Sanity), 13 tools — and has since grown to cover pre-calibration,
+calibration, and imaging inspection as those phases were implemented. The
+companion `ms-modify` / `ms-create` servers cover the write and ingestion paths.
+
+The design document is at `DESIGN.md` in this directory (§8 has the full,
+per-server tool inventory). Read it before making any non-trivial change.
 
 ---
 
@@ -59,6 +64,7 @@ ms-inspect/
 │   │   ├── __init__.py            ← version string
 │   │   ├── server.py              ← FastMCP entry point (ingestion utilities, port 8002)
 │   │   ├── exceptions.py          ← ASDMNotFoundError, ImportFailedError
+│   │   ├── sdm_summary.py         ← ms_sdm_summary tool (pre-conversion ASDM inspection)
 │   │   └── import_asdm.py         ← ms_import_asdm tool
 │   ├── ms_modify/
 │   │   ├── __init__.py            ← version string
@@ -77,6 +83,7 @@ ms-inspect/
 │   │   ├── fluxscale.py           ← ms_fluxscale
 │   │   ├── applycal.py            ← ms_applycal
 │   │   ├── tclean.py              ← ms_tclean
+│   │   ├── pathguard.py           ← output-caltable path validation + safe-delete guard
 │   │   └── slurm.py               ← SLURM batch submission utility (not an MCP tool)
 │   └── ms_inspect/
 │       ├── __init__.py            ← version string
@@ -94,6 +101,7 @@ ms-inspect/
 │       │   ├── flag_summary.py    ← ms_flag_summary
 │       │   ├── online_flags.py    ← ms_online_flag_stats
 │       │   ├── verify_import.py   ← ms_verify_import
+│       │   ├── verify_model.py    ← ms_verify_model
 │       │   ├── priorcals_check.py ← ms_verify_priorcals
 │       │   ├── caltables.py       ← ms_verify_caltables
 │       │   ├── calsol_stats.py    ← ms_calsol_stats
@@ -169,6 +177,7 @@ Environment variable reference:
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `RADIO_MCP_TRANSPORT` | `stdio` | `stdio` for Claude Desktop; `http` for remote |
+| `RADIO_MCP_HOST` | `127.0.0.1` | HTTP bind address. No authentication on the HTTP transport — keep it on localhost unless the network is trusted |
 | `RADIO_MCP_PORT` | `8000` | HTTP port (ms-inspect); ms-modify uses 8001, ms-create uses 8002 |
 | `RADIO_MCP_WORKERS` | `4` | Parallel worker count for FLAG column reads (cap 8) |
 | `RADIO_MCP_TEST_MS` | — | Path to pre-extracted MS for integration tests |
@@ -201,39 +210,45 @@ Environment variable reference:
 | `ms_flag_preflight` | `tools/flags.py` | Fast probe: row count, FLAG shape, data volume, runtime estimate, recommended workers |
 | `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` adaptive parallel reads; accepts `n_workers` override |
 
-### Calibration inspection (4 tools)
+### Calibration inspection (5 tools)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_calsol_stats` | `tools/calsol_stats.py` | Per-(antenna, SPW, field) stats from G/B/K caltables — flagged fraction, SNR, amplitude/phase arrays, delays |
-| `ms_calsol_plot` | `tools/calsol_plot.py` | Bokeh HTML dashboard + NPZ from a single caltable; calls `ms_calsol_stats` internally |
+| `ms_calsol_stats_detail` | `tools/calsol_stats.py` | Deep-dive reader over the `.calsol_stats.npz` sidecar written by `ms_calsol_stats`; full per-(antenna, SPW, field) detail (`kind='low_snr'|'amp_outliers'|'antenna'`) beyond the bounded summary |
+| `ms_calsol_plot` | `tools/calsol_plot.py` | Bokeh HTML dashboard from a single caltable, read directly from the caltable columns (does not call `ms_calsol_stats`); view routed by VisCal type |
 | `ms_plot_caltable_library` | `tools/calsol_plot_library.py` | Batch plot an explicit list of caltables in one call; partial-success — a bad table records an error entry rather than aborting |
 | `ms_gaincal_snr_predict` | `tools/gaincal_snr_predict.py` | Predict per-(antenna, SPW) SNR for a candidate solint; uses SEFD table + MS metadata; requires `flux_jy` from `ms_setjy` |
 
-### Pre-calibration inspection (5 tools)
+### Pre-calibration inspection (7 tools)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_verify_import` | `tools/verify_import.py` | Filesystem check: MS exists + table.info valid + .flagonline.txt non-empty |
+| `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms/priorcals/initial_bandpass present, corrected_populated, final_caltables/first_image present, and a categorical `next_recommended_step` |
+| `ms_verify_model` | `tools/verify_model.py` | Per-field MODEL_DATA sanity probe after setjy/setjy_polcal: flags default-pinned (MODEL=1 Jy → flux-scale trap), out-of-band amplitude, and — for `polcal_fields` — missing polarization (zero cross-hands = Stokes-I clobber). Requires usescratch=True |
 | `ms_online_flag_stats` | `tools/online_flags.py` | Parse .flagonline.txt — n_commands, antennas flagged, reason breakdown, time range |
 | `ms_flag_summary` | `tools/flag_summary.py` | Per-field/SPW flag fractions from flagdata summary mode |
 | `ms_verify_priorcals` | `tools/priorcals_check.py` | Check prior caltables (gc, opac, rq, ap) exist and are non-empty |
 | `ms_verify_caltables` | `tools/caltables.py` | Check init_gain.g + BP0.b from initial bandpass exist and have rows |
 
-### Instrument and RFI inspection (3 tools)
+### Instrument and RFI inspection (7 tools)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_refant` | `tools/refant.py` | Ranked reference antenna list by geometry + flag fraction heuristics |
+| `ms_phase_cal_lookup` | `util/phase_cal_catalog.py` | Cross-match a sky position against the NRAO VLA phase-calibrator catalog; nearest source within `max_sep_deg` with flux, UV limits, and per-config quality codes (P/S/W/C/X) |
 | `ms_rfi_channel_stats` | `tools/rfi.py` | Per-channel flag fractions; identifies persistent RFI bands |
+| `ms_spw_amp_severity` | `tools/spw_amp_severity.py` | Robust per-channel amplitude stats (median/MAD/min/max) of any data column, aggregated per SpW. Severity = band_floor vs a clean-SpW anchor (RFI-dominated drop signal) + estimated_discardable_frac (localized-RFI magnitude). Memory-bounded reservoir sampling. |
 | `ms_pol_cal_feasibility` | `tools/pol_cal_feasibility.py` | Parallactic angle spread + D-term feasibility gate |
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
+| `ms_corrected_stats` | `tools/corrected_stats.py` | Per-field parallel-hand amplitude (median/robust-std/p95) + phase RMS of a data column, **vector-averaged over the channel range** (so faint sources are not noise-biased). Post-applycal calibration sanity check. |
 
 ### Phase 3 — Imaging inspection (1 tool)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
-| `ms_image_stats` | `tools/image_stats.py` | Robust RMS (MAD-based), peak flux, dynamic range, restoring beam from a CASA image |
+| `ms_image_stats` | `tools/image_stats.py` | Robust RMS (MAD-based), peak flux, dynamic range, restoring beam from a CASA image. For a multi-plane image (frequency cube / multi-Stokes, e.g. IQUV pol cube) also returns `n_planes` + a per-(Stokes, channel) `planes` array |
 
 ---
 
@@ -244,7 +259,9 @@ It has its own FastMCP server entry point (`ms_create.server`, port 8002).
 
 | Tool | Module | What it does |
 |------|--------|-------------|
+| `ms_sdm_summary` | `ms_create/sdm_summary.py` | Pre-conversion ASDM inspection (read-only, no casatools): telescope, config, band, per-SPW continuum-vs-line classification, HI-21cm coverage, correlation products, sources+intents, scan balance, max target elevation. Decide *what* a dataset is before importing it. |
 | `ms_import_asdm` | `ms_create/import_asdm.py` | Convert ASDM → MS; `ocorr_mode='co'`, `savecmds=True`, `applyflags=False`; writes `import_asdm.py` + `.flagonline.txt` |
+| `ms_reduction_log` | `ms_create/reduction_log.py` | Working-calls ledger: shuttle known-good calls into a per-reduction JSONL recipe. `action='append'` records one validated call; `'render'` emits the ordered recipe + replay script; `'list'` gives a compact step summary |
 
 Fixed parameters (not exposed): `ocorr_mode='co'` (cross-correlations only),
 `savecmds=True` (always write online flag file), `applyflags=False` (flagging
@@ -264,17 +281,19 @@ Functions are also callable directly by skills and scripts.
 | `ms_set_intents` | `ms_modify/intents.py` | Populate STATE subtable and STATE_ID from calibrator catalogue matching |
 | `ms_apply_preflag` | `ms_modify/preflag.py` | Deterministic pre-cal flagging (online + shadow + clip + tfcrop) + calibrator split |
 | `ms_generate_priorcals` | `ms_modify/priorcals.py` | Generate gc/opac/rq/ap prior caltables via gencal |
-| `ms_setjy` | `ms_modify/setjy.py` | Set Perley-Butler 2017 flux models for standard calibrators |
+| `ms_setjy` | `ms_modify/setjy.py` | Set Perley-Butler 2017 flux models for standard calibrators. `exclude_fields` omits a field from the Stokes-I pass (use for a pol-angle cal that overlaps a flux/BP cal — its polarized model is set by `ms_setjy_polcal`, and a plain setjy would clobber it) |
 | `ms_setjy_polcal` | `ms_modify/setjy_polcal.py` | Set polarisation angle models for pol calibrators |
 | `ms_initial_bandpass` | `ms_modify/initial_bandpass.py` | gaincal → bandpass → applycal; populates CORRECTED |
-| `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass |
+| `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass; **requires** explicit `field` (only the field with valid CORRECTED) |
+| `ms_postcal_flag` | `ms_modify/postcal_flag.py` | Post-cal RFI flagging on phase cal + target CORRECTED in one list-mode pass: per-SpW robust clip (median + `clip_sigma`·1.4826·MAD, default 5σ; `uvrange`-scopable for extended sources) → tfcrop + rflag on kept SpWs → manual flag of drop-tier SpWs. Consumes `ms_spw_amp_severity` triage (skill 13); **requires** explicit `field` |
+| `ms_flag_caltable` | `ms_modify/flag_caltable.py` | Autoflag a caltable's solutions (mode auto-routed from VisCal: B→tfcrop, G/T/D→rflag, K refused) at a gentle sigma; reports flagged fraction before/after |
 | `ms_apply_rflag` | `ms_modify/rflag.py` | General-purpose rflag pass |
 | `ms_gaincal` | `ms_modify/gaincal.py` | Phase/amplitude/cross-hand delay gain calibration (supports gaintype='KCROSS' with smodel) |
 | `ms_polcal` | `ms_modify/polcal.py` | Polarisation calibration: D-term leakage (Df/Df+QU) or position angle (Xf) |
 | `ms_bandpass` | `ms_modify/bandpass.py` | Bandpass calibration |
 | `ms_fluxscale` | `ms_modify/fluxscale.py` | Bootstrap flux scale from flux standard |
 | `ms_applycal` | `ms_modify/applycal.py` | Apply caltables; write CORRECTED_DATA |
-| `ms_tclean` | `ms_modify/tclean.py` | Generate (and optionally execute) a tclean imaging script; validates CORRECTED_DATA; pbcor=True hardcoded |
+| `ms_tclean` | `ms_modify/tclean.py` | Generate (and optionally execute) a tclean imaging script; validates CORRECTED_DATA; pbcor=True hardcoded. Cube args (`nchan`/`start`/`width`/`outframe`) for frequency cubes incl. IQUV polarization cubes (specmode='cube'); ignored otherwise |
 | *(utility)* | `ms_modify/slurm.py` | SLURM batch submission: wrap scripts in sbatch files, chain with afterok dependencies |
 
 `set_intents` logic:
@@ -444,6 +463,7 @@ The skill is split into focused files to stay under the 200-line context limit:
 | `10-precal-workflow.md` | Pre-calibration pipeline (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
 | `11-imaging.md` | First-pass continuum/cube imaging with derived tclean parameters and ms_image_stats gate |
 | `12-selfcal.md` | Single-pass phase selfcal with before/after DR comparison and stop-and-recommend gate |
+| `13-postcal-rfi-flagging.md` | Post-cal RFI flagging on target/phase cal + SpW severity triage (drop vs salvage), thresholds read off the dataset's own distribution |
 
 ### MS simulator
 

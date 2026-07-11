@@ -824,7 +824,7 @@ On tool error:
 | `ms_scan_list` | msmd.timesforscans, msmd.intentsforscans, msmd.fieldsforscan | Duration per scan, integration time |
 | `ms_scan_intent_summary` | Aggregated from scan list | Time fractions per intent |
 | `ms_spectral_window_list` | msmd.chanfreqs, msmd.chanwidths; tb → POLARIZATION, DATA_DESCRIPTION | Band name, channel width, correlation products |
-| `ms_correlator_config` | msmd.exposuretime; tb → POLARIZATION | Dump time, polarization basis, full-Stokes flag |
+| `ms_correlator_config` | msmd.timesforscans (dump time); tb → POLARIZATION | Dump time, polarization basis, full-Stokes flag |
 
 ### Layer 2 — Instrument Sanity (6 tools)
 
@@ -837,16 +837,117 @@ On tool error:
 | `ms_shadowing_report` | msmd.shadowedAntennas (fallback: geometric) | Shadowed antenna IDs, duration |
 | `ms_antenna_flag_fraction` | tb → FLAG column (chunked) | Per-antenna flag fraction, online flag commands |
 
-**Total Phase 1: 12 tools.**
+**Phase 1 (Layers 1 & 2): 13 tools** — the tables above plus `ms_flag_preflight`.
+
+> **Note on scope.** This design document was originally written for Phase 1
+> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **33 tools**
+> as later calibration/imaging phases were implemented, and the read-only
+> contract now spans the whole reduction. The remaining `ms_inspect` tools are
+> catalogued below; `ms_modify` (§8b) and `ms_create` (§8c) are full MCP servers
+> in their own right. Sections §9–§11 describe the original Phase 1 boundary and
+> are retained for historical context.
+
+### Instrument sanity, extended
+
+| Tool | Primary CASA API | Key derived quantities |
+|------|-----------------|----------------------|
+| `ms_flag_preflight` | tb → FLAG shape/rows (no read) | Row count, data volume, runtime estimate, recommended `n_workers` |
+
+### Calibration inspection
+
+| Tool | What it returns |
+|------|----------------|
+| `ms_calsol_stats` | Per-(antenna, SpW, field) stats from G/B/K caltables — flagged fraction, SNR, amp/phase arrays, delays |
+| `ms_calsol_stats_detail` | Deep-dive reader over the `.calsol_stats.npz` sidecar; full per-solution detail (`low_snr`/`amp_outliers`/`antenna`) beyond the bounded summary |
+| `ms_calsol_plot` | Bokeh HTML dashboard from a single caltable (reads caltable columns directly; view routed by VisCal type) |
+| `ms_plot_caltable_library` | Batch-plot an explicit list of caltables in one call; partial-success per table |
+| `ms_gaincal_snr_predict` | Predict per-(antenna, SpW) SNR for a candidate solint from SEFD + MS metadata |
+| `ms_verify_caltables` | Structural validation of `init_gain.g` + `BP0.b` from initial bandpass |
+
+### Pre-calibration inspection
+
+| Tool | What it returns |
+|------|----------------|
+| `ms_verify_import` | Filesystem check: MS exists + `table.info` valid + `.flagonline.txt` non-empty |
+| `ms_verify_model` | Per-field MODEL_DATA sanity after setjy/setjy_polcal — default-pinned, out-of-band, and (for pol cals) missing-polarization smell tests |
+| `ms_online_flag_stats` | Parse `.flagonline.txt` — command counts, antennas flagged, reason breakdown, time range |
+| `ms_flag_summary` | Per-field/SpW flag fractions from `flagdata(mode='summary')` |
+| `ms_verify_priorcals` | Check prior caltables (gc, opac, rq, ap) exist and are non-empty |
+
+### Instrument and RFI inspection
+
+| Tool | What it returns |
+|------|----------------|
+| `ms_refant` | Ranked reference-antenna list by geometry + flag-fraction heuristics |
+| `ms_rfi_channel_stats` | Per-channel flag fractions; persistent RFI bands |
+| `ms_spw_amp_severity` | Robust per-channel amplitude stats aggregated per SpW; RFI severity + estimated discardable fraction (reservoir-sampled) |
+| `ms_pol_cal_feasibility` | Parallactic-angle spread + D-term feasibility gate |
+| `ms_residual_stats` | CORRECTED − MODEL amplitude distribution per SpW (pre-rflag threshold guide) |
+| `ms_corrected_stats` | Per-field parallel-hand amplitude + phase RMS of a data column, vector-averaged over the channel range (post-applycal sanity) |
+| `ms_phase_cal_lookup` | Cross-match a sky position against the NRAO VLA phase-calibrator catalog; nearest source, flux, UV limits, per-config quality codes |
+
+### Imaging inspection
+
+| Tool | What it returns |
+|------|----------------|
+| `ms_image_stats` | Robust MAD-based RMS, peak, dynamic range, restoring beam, per-plane detection verdict for cubes / IQUV |
+
+### Pipeline / workflow
+
+| Tool | What it returns |
+|------|----------------|
+| `ms_workflow_status` | State probe over MS + workdir: which pipeline stages are complete + `next_recommended_step` |
+
+**Total `ms_inspect`: 33 tools.**
 
 ---
 
 ## 8b. Write Utilities (ms_modify)
 
-While `ms_inspect` is strictly read-only, the companion `ms_modify` package
-provides utility functions that write to the MS. These are **not** MCP tools —
-they are called programmatically by skills and scripts when metadata repair is
-needed before calibration can proceed.
+The companion `ms_modify` package **writes** to the MS. It is a full FastMCP
+server in its own right (`ms_modify.server`, port 8001) exposing **16 tools**;
+the same functions are also callable programmatically by skills and scripts
+(e.g. for metadata repair before calibration can proceed).
+
+| Tool | What it does |
+|------|-------------|
+| `ms_set_intents` | Populate STATE subtable + STATE_ID from calibrator-catalogue matching (see below) |
+| `ms_apply_preflag` | Deterministic pre-cal flagging (online + shadow + clip + tfcrop) + calibrator split |
+| `ms_generate_priorcals` | Generate gc/opac/rq/ap prior caltables via `gencal` |
+| `ms_setjy` | Set Perley-Butler 2017 flux models; `exclude_fields` protects an overlapping pol-angle cal |
+| `ms_setjy_polcal` | Set polarization-angle models for pol calibrators |
+| `ms_initial_bandpass` | gaincal → bandpass → applycal; populates CORRECTED |
+| `ms_apply_initial_rflag` | rflag + tfcrop on CORRECTED − MODEL residuals; requires explicit `field` |
+| `ms_postcal_flag` | Post-cal RFI flagging (per-SpW robust clip → tfcrop + rflag → manual drop-tier); requires explicit `field` |
+| `ms_flag_caltable` | Autoflag a caltable's solutions (mode auto-routed from VisCal) |
+| `ms_apply_rflag` | General-purpose rflag pass |
+| `ms_gaincal` | Phase/amp/cross-hand-delay gain calibration (incl. `gaintype='KCROSS'`) |
+| `ms_polcal` | Polarization calibration: D-term leakage (Df/Df+QU) or position angle (Xf) |
+| `ms_bandpass` | Bandpass calibration |
+| `ms_fluxscale` | Bootstrap flux scale from a flux standard |
+| `ms_applycal` | Apply caltables; write CORRECTED_DATA |
+| `ms_tclean` | Generate (and optionally execute) a validated tclean imaging script |
+
+All modify tools default to `execute=False` (emit a reviewable script) and
+accept `execute=True` to run in-process.
+
+---
+
+## 8c. Ingestion Utilities (ms_create)
+
+The `ms_create` package converts raw ASDM data to Measurement Sets and tracks
+the reduction. It is a FastMCP server (`ms_create.server`, port 8002) with
+**3 tools**:
+
+| Tool | What it does |
+|------|-------------|
+| `ms_sdm_summary` | Pre-conversion ASDM inspection (read-only, no casatools): telescope, band, per-SPW line/continuum, sources + intents, scan balance |
+| `ms_import_asdm` | Convert ASDM → MS (`ocorr_mode='co'`, `savecmds=True`, `applyflags=False`); writes `import_asdm.py` + `.flagonline.txt` |
+| `ms_reduction_log` | Working-calls ledger: shuttle known-good calls into a per-reduction JSONL recipe (`append`/`render`/`list`) |
+
+---
+
+## 8d. `set_intents` detail (ms_modify)
 
 ### `set_intents` (ms_modify/intents.py)
 
@@ -877,9 +978,14 @@ legitimate intent metadata.
 
 ---
 
-## 9. Out of Scope for Phase 1
+## 9. Out of Scope for Phase 1 (historical)
 
-The following are explicitly deferred to later phases:
+> These were the Phase 1 boundaries as originally scoped. Calibration table
+> creation/application (`ms_modify`, §8b) and imaging (`ms_tclean`,
+> `ms_image_stats`) have since been implemented. The list below is retained to
+> document the original design intent.
+
+The following were explicitly deferred beyond Phase 1:
 
 - Any visibility data access (amplitudes, phases, closure quantities) — Layer 3
 - Calibration table creation or application — Layer 4

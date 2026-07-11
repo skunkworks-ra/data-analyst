@@ -53,6 +53,27 @@ Record confirmed values as `{TARGET_FIELD}`, `{IS_MOSAIC}`, and `{STOKES}`.
 
 ---
 
+## Step 0.5 — CORRECTED coherence gate (mandatory, before any tclean)
+
+Imaging cannot rescue incoherent CORRECTED data — it yields noise whose brightest
+residual spike mimics a source. Gate on `ms_corrected_stats` first, using the same
+in-band `chan_start/chan_end` as the gain/delay solves:
+
+```
+ms_corrected_stats(field='{PHASE_FIELD},{TARGET_FIELD}', chan_start=..., chan_end=...)
+```
+
+| Field | Check | Fail → action |
+|---|---|---|
+| phase cal | `phase_rms_deg` < 30° | calibration didn't take — do NOT image; re-solve (skill 07) |
+| phase cal | `amp_robust_std` < ~20% of `amp_median` | bad gains — fix first |
+| target | `amp_median` > 0, `amp_robust_std` not ≫ `amp_median` | decorrelated — imaging will be noise |
+
+A failed gate means the Step 9 verdict will read `marginal`/FAIL: that is
+calibration failure, not a faint source. Do not report the peak as a detection.
+
+---
+
 ## Step 1 — Choose imaging mode
 
 Determine `specmode` before deriving any other parameter.
@@ -102,16 +123,28 @@ Primary beam FWHM:
 pb_fwhm_arcsec = (1.02 * lambda_m / {DISH_DIAMETER_M}) * (180 * 3600 / pi)
 ```
 
+**Always image out to the first primary-beam sidelobe.** Stopping at the FWHM
+leaves bright sources in the first sidelobe (radius ≈ 1.6 × FWHM, where the PB
+gain is still a few percent) undeconvolved — their sidelobes alias back across
+the field and limit the dynamic range. The first null sits at ≈ 1.2 × FWHM
+radius and the first sidelobe peak at ≈ 1.6 × FWHM radius, so the image
+**diameter** must be ≈ 3 × FWHM.
+
 **Single pointing:**
 ```
-imsize_pixels = ceil(pb_fwhm_arcsec * 2 / cell_arcsec)
+imsize_pixels = ceil(pb_fwhm_arcsec * 3 / cell_arcsec)   # diameter = 3 × FWHM → covers first sidelobe (~1.6 FWHM radius)
 ```
 
 **Mosaic:** compute the bounding box of all pointing centres in `{POINTING_CENTERS}`,
-convert angular extent to pixels, then add `pb_fwhm_arcsec` padding on each side:
+convert angular extent to pixels, then pad by `1.5 * pb_fwhm_arcsec` on each side
+so every pointing's first sidelobe is imaged:
 ```
-imsize_pixels = ceil((mosaic_extent_arcsec + 2 * pb_fwhm_arcsec) / cell_arcsec)
+imsize_pixels = ceil((mosaic_extent_arcsec + 3 * pb_fwhm_arcsec) / cell_arcsec)
 ```
+
+(If compute or memory is the binding constraint, dropping to a `2 × FWHM`
+diameter — first null only — is the fallback, but record it explicitly as a
+deviation: bright first-sidelobe sources will not be cleaned.)
 
 Round `imsize_pixels` **up** to the nearest composite number of the form
 2ᵃ × 3ᵇ × 5ᶜ. Common values: 240, 256, 320, 360, 384, 480, 512, 600, 640,
@@ -241,3 +274,95 @@ Quality gates:
 If `rms_jy` is > 3× the radiometer estimate, run `ms_residual_stats` on the
 CORRECTED column before re-imaging — the problem is likely in the calibration,
 not the imaging parameters.
+
+A `detection_pass`=false verdict (peak-to-noise < 10; fail ≤ 5) means no reliable
+source — cross-check Step 0.5. If that gate failed, it's calibration decorrelation,
+not imaging.
+
+---
+
+## Polarization frequency cubes (IQUV)
+
+Use this path when the science needs Stokes Q/U as a function of frequency —
+rotation-measure (RM) work, depolarization studies, or any check that the
+polarization calibration (skill 09) holds across the band. Spectral-line cubes
+(continuum subtraction, velocity frames) are a separate workflow and out of
+scope here.
+
+### Why a cube, not wideband MFS
+
+`deconvolver='mtmfs', nterms=2` (Step 2's wideband continuum path) **cannot**
+image `stokes='IQUV'` — the Taylor-term expansion is defined for total
+intensity only, and CASA will error or silently mis-model Q/U/V. So for
+polarization spectral coverage you image a **frequency cube**:
+`specmode='cube'`, `stokes='IQUV'`, `deconvolver='hogbom'` (per-plane CLEAN; no
+joint spectral deconvolution). This trades the wideband sensitivity/spectral-
+index benefit of mtmfs for honest per-channel polarization.
+
+A wideband Stokes-I headline image (mtmfs) and an IQUV cube (hogbom) are
+complementary, not alternatives — run both if you need both the deep I image
+and the polarization spectrum.
+
+### Channelization
+
+Default to **per-SPW-chunk** planes, not per-native-channel. One plane per SPW
+(or per N-MHz chunk) gives enough λ² sampling for RM synthesis without the cost
+and per-plane noise of full spectral resolution. This mirrors the chunking
+`ms_setjy_polcal` already uses to fit the polarization model.
+
+- Derive `width` from the chunk size: e.g. a 1 GHz SPW split into 64 MHz
+  planes → `width='64MHz'`, `nchan=16`. Match the chunking you used in polcal
+  so the model and the cube share a frequency grid.
+- Set `start` to the band's low edge and `outframe='LSRK'` (TOPO is acceptable
+  for continuum polarization, but be explicit).
+- Use **per-native-channel** only for narrow fractional bandwidth, or when RM
+  is large enough that Q/U rotates within a chunk (chunk Δ(λ²) must keep the
+  intra-chunk RM rotation well below a radian — otherwise bandwidth
+  depolarization washes out the signal you are trying to measure).
+
+### Call
+
+Pass the cube args through `ms_tclean` (no separate tool):
+
+```
+ms_tclean(
+    ms_path     = {VIS},
+    imagename   = {WORKDIR}/{imagename}_iquv,
+    field       = {TARGET_FIELD},
+    stokes      = 'IQUV',
+    specmode    = 'cube',
+    deconvolver = 'hogbom',
+    nchan       = {N_CHUNKS},
+    start       = {BAND_LOW_EDGE},   # e.g. '1.0GHz'
+    width       = {CHUNK_WIDTH},     # e.g. '64MHz'
+    outframe    = 'LSRK',
+    gridder     = {gridder},         # Steps 5–6 as usual
+    cell        = {CELL},
+    imsize      = [{IMSIZE}, {IMSIZE}],
+    weighting   = 'briggs',
+    robust      = 0.5,
+    niter       = 50000,
+    threshold   = {threshold},
+    workdir     = {WORKDIR},
+    execute     = False,
+)
+```
+
+Cell size and imsize are derived as in Steps 3–4 using the **highest** frequency
+in the band (smallest beam → finest cell), so every plane is adequately sampled.
+
+### Quality gates (per-plane)
+
+`ms_image_stats` returns a `planes` array (per Stokes, per channel) for a cube.
+Reason over it — the tool does not interpret:
+
+| Check | Expectation | If violated |
+|---|---|---|
+| Stokes I `rms_jy` per plane | rises smoothly toward band edges / RFI-flagged chunks | a single spiking plane = residual RFI or a flagged-out chunk; flag and re-image or drop the plane |
+| Q, U `peak_jy` per plane | present and varying smoothly with frequency | Q/U at noise across all planes when the source is known-polarized = polcal (skill 09) didn't apply, or parang was off in applycal |
+| V `peak_jy` per plane | near noise (most sources have negligible circular pol) | significant V everywhere = leakage (D-term) error; revisit skill 09 |
+| fractional pol = sqrt(Q²+U²)/I | physically plausible (≲ a few–10% for most sources) | > ~20% smoothly across the band = I likely wrong (model/fluxscale); spiky = per-plane artefact |
+
+Compute fractional polarization and RM-related quantities yourself from the
+per-plane numbers — these are skill-level interpretations, deliberately not in
+the tool.

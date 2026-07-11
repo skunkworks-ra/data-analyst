@@ -448,7 +448,7 @@ class TestRunG:
         tbl.mkdir()
         ot = _patch_all_for_g(tbl)
         with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
-            result = calsol_stats.run(str(tbl))
+            result = calsol_stats.run(str(tbl), verbosity="full")
         assert result["data"]["table_type"]["value"] == "G"
 
     def test_axis_metadata(self, tmp_path):
@@ -456,7 +456,7 @@ class TestRunG:
         tbl.mkdir()
         ot = _patch_all_for_g(tbl)
         with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
-            result = calsol_stats.run(str(tbl))
+            result = calsol_stats.run(str(tbl), verbosity="full")
         d = result["data"]
         assert d["n_antennas"]["value"] == _N_ANT
         assert d["n_spw"]["value"] == 1
@@ -469,7 +469,7 @@ class TestRunG:
         tbl.mkdir()
         ot = _patch_all_for_g(tbl)
         with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
-            result = calsol_stats.run(str(tbl))
+            result = calsol_stats.run(str(tbl), verbosity="full")
         ff = result["data"]["flagged_frac"]["value"]
         # shape [n_ant=3, n_spw=1, n_field=2]
         assert len(ff) == _N_ANT
@@ -481,7 +481,7 @@ class TestRunG:
         tbl.mkdir()
         ot = _patch_all_for_g(tbl)
         with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
-            result = calsol_stats.run(str(tbl))
+            result = calsol_stats.run(str(tbl), verbosity="full")
         assert result["data"]["overall_flagged_frac"]["value"] == pytest.approx(0.0)
 
     def test_no_antennas_lost(self, tmp_path):
@@ -489,7 +489,7 @@ class TestRunG:
         tbl.mkdir()
         ot = _patch_all_for_g(tbl)
         with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
-            result = calsol_stats.run(str(tbl))
+            result = calsol_stats.run(str(tbl), verbosity="full")
         assert result["data"]["n_antennas_lost"]["value"] == 0
         assert result["data"]["antennas_lost"]["value"] == []
 

@@ -22,6 +22,44 @@ from ms_modify.exceptions import TcleanFailedError
 
 TOOL_NAME = "ms_tclean"
 
+# Global tclean stopcodes (casatasks imager_deconvolver). Converged = {2, 8}.
+_STOPCODE_DESC = {
+    1: "iteration limit reached before threshold",
+    2: "threshold reached",
+    3: "force stop",
+    4: "no change in peak residual across two major cycles",
+    5: "peak residual diverging (>3x previous major cycle)",
+    6: "peak residual diverging (>3x minimum reached)",
+    7: "zero mask (nothing to deconvolve)",
+    8: "n-sigma / combined exit criterion",
+}
+_CONVERGED_STOPCODES = {2, 8}
+
+
+def _convergence(summary: object) -> tuple[int | None, str, bool, str | None]:
+    """(stopcode, description, converged, warning) from a tclean summary dict."""
+    if not isinstance(summary, dict) or "stopcode" not in summary:
+        return (
+            None,
+            "unknown",
+            False,
+            ("tclean returned no summary dict; convergence could not be verified."),
+        )
+    code = int(summary["stopcode"])
+    desc = _STOPCODE_DESC.get(code, f"unrecognized stopcode {code}")
+    if code in _CONVERGED_STOPCODES:
+        return code, desc, True, None
+    return (
+        code,
+        desc,
+        False,
+        (
+            f"tclean did NOT converge: stopcode {code} ({desc}). Restored image is "
+            "likely deconvolution/sidelobe-limited, not a clean detection — inspect "
+            "before reporting."
+        ),
+    )
+
 
 def _script_path(workdir: Path, imagename: str) -> Path:
     stem = Path(imagename).name.replace(".", "_")
@@ -32,12 +70,14 @@ def _build_script(
     ms_str: str,
     imagename: str,
     field: str,
+    spw: str,
     stokes: str,
     specmode: str,
     deconvolver: str,
     nterms: int | None,
     gridder: str,
     wprojplanes: int | None,
+    cfcache: str | None,
     cell: str,
     imsize: list[int],
     weighting: str,
@@ -45,12 +85,31 @@ def _build_script(
     niter: int,
     threshold: str,
     savemodel: str,
+    pblimit: float,
+    nchan: int | None,
+    start: str | None,
+    width: str | None,
+    outframe: str | None,
 ) -> str:
     optional_lines = ""
+    if spw:
+        optional_lines += f"    spw          = {spw!r},\n"
     if deconvolver == "mtmfs" and nterms is not None:
         optional_lines += f"    nterms       = {nterms},\n"
     if wprojplanes is not None:
         optional_lines += f"    wprojplanes  = {wprojplanes},\n"
+    if cfcache is not None:
+        optional_lines += f"    cfcache      = {cfcache!r},\n"
+    # Cube channelization — only meaningful for specmode='cube'.
+    if specmode == "cube":
+        if nchan is not None:
+            optional_lines += f"    nchan        = {nchan},\n"
+        if start is not None:
+            optional_lines += f"    start        = {start!r},\n"
+        if width is not None:
+            optional_lines += f"    width        = {width!r},\n"
+        if outframe is not None:
+            optional_lines += f"    outframe     = {outframe!r},\n"
 
     script_name = Path(imagename).name.replace(".", "_")
 
@@ -68,14 +127,26 @@ from casatasks import tclean
 ms_path   = {ms_str!r}
 imagename = {imagename!r}
 
-# Remove all existing image products for this imagename before re-running.
+# Remove existing tclean products for this imagename before re-running.
+# Only known product suffixes are removed — never a bare glob of
+# imagename + ".*", which could match the MS itself or unrelated files.
+_PRODUCT_SUFFIXES = (
+    ".image", ".residual", ".psf", ".pb", ".model", ".sumwt", ".mask",
+    ".pbcor", ".weight", ".gridwt", ".workdirectory",
+)
 for p in glob.glob(imagename + ".*"):
+    rest = p[len(imagename):]
+    is_product = any(
+        rest == s or rest[: len(s) + 1] == s + "." for s in _PRODUCT_SUFFIXES
+    )
+    if not is_product:
+        continue
     if os.path.isdir(p):
         shutil.rmtree(p)
     elif os.path.isfile(p):
         os.remove(p)
 
-tclean(
+summary = tclean(
     vis          = ms_path,
     imagename    = imagename,
     field        = {field!r},
@@ -90,9 +161,22 @@ tclean(
     niter        = {niter},
     threshold    = {threshold!r},
     pbcor        = True,
+    pblimit      = {pblimit},
     savemodel    = {savemodel!r},
+    fullsummary  = False,
 )
-print("tclean complete. Images written with base name:", imagename)
+_code = summary.get("stopcode") if isinstance(summary, dict) else None
+_desc = {{
+    1: "iteration limit reached before threshold", 2: "threshold reached",
+    3: "force stop", 4: "no change in peak residual",
+    5: "diverging (>3x prev major cycle)", 6: "diverging (>3x minimum)",
+    7: "zero mask", 8: "n-sigma / combined",
+}}.get(_code, "unknown")
+if _code in (2, 8):
+    print(f"tclean CONVERGED (stopcode={{_code}}: {{_desc}}):", imagename)
+else:
+    print(f"tclean DID NOT CONVERGE (stopcode={{_code}}: {{_desc}}) -- image likely "
+          "deconvolution-limited, not a clean detection:", imagename)
 """
 
 
@@ -101,12 +185,14 @@ def run(
     imagename: str,
     field: str,
     workdir: str,
+    spw: str = "",
     stokes: str = "I",
     specmode: str = "mfs",
     deconvolver: str = "hogbom",
     nterms: int | None = None,
     gridder: str = "standard",
     wprojplanes: int | None = None,
+    cfcache: str | None = None,
     cell: str = "1.0arcsec",
     imsize: list[int] | None = None,
     weighting: str = "briggs",
@@ -114,6 +200,11 @@ def run(
     niter: int = 50000,
     threshold: str = "1.0mJy",
     savemodel: str = "modelcolumn",
+    pblimit: float = -0.01,
+    nchan: int | None = None,
+    start: str | None = None,
+    width: str | None = None,
+    outframe: str | None = None,
     execute: bool = False,
 ) -> dict:
     """
@@ -127,20 +218,45 @@ def run(
         imagename:   Base name for all output image products (no suffix).
         field:       CASA field selection for science target(s).
         workdir:     Existing directory for script and image output.
+        spw:         CASA SPW selection (default '' = all SPWs). Use to drop
+                     RFI-dominated SPWs, e.g. '0~8,10~15' to exclude SPW 9.
         stokes:      Stokes products to image (default 'I').
-        specmode:    'mfs' or 'cube' (default 'mfs').
+        specmode:    'mfs', 'cube', or 'mvc' (default 'mfs'). Use 'mvc' with
+                     gridder='awp2' — awp2 does not implement conjbeams, and
+                     plain 'mfs' needs several major cycles to converge the
+                     wideband flux normalization.
         deconvolver: 'hogbom' or 'mtmfs' (default 'hogbom').
         nterms:      Taylor terms for mtmfs (default None; pass 2 for mtmfs).
         gridder:     'standard', 'wproject', or 'awp2' (default 'standard').
         wprojplanes: W-projection planes (None = omit; set for wproject/awp2
-                     when W-terms are required per Fresnel criterion).
+                     when W-terms are required per Fresnel criterion). If
+                     omitted for those gridders, CASA silently defaults to 1
+                     (no W-projection) — a warning is emitted in the response.
+        cfcache:     Convolution-function cache path. Applies to
+                     gridder='awproject' only (awp2 does not use a cfcache).
+                     Without it, awproject recomputes CFs from scratch on
+                     every run — potentially many hours.
         cell:        Cell size string, e.g. '2.5arcsec'.
         imsize:      Image size as [nx, ny] (default [512, 512]).
         weighting:   UV weighting scheme (default 'briggs').
         robust:      Briggs robust parameter (default 0.5).
         niter:       Maximum clean iterations (default 50000).
         threshold:   Clean stopping threshold, e.g. '0.5mJy'.
+        pblimit:     Primary-beam gain cutoff. Default -0.01 (negative disables
+                     PB-based blanking, so low-gain regions and sources out in
+                     the PB sidelobes stay visible in the image — important for
+                     spotting outliers). CASA's own default is 0.2, which blanks
+                     everything below 20% PB.
         savemodel:   'modelcolumn' writes MODEL_DATA for self-cal (default).
+        nchan:       Number of output channels for the cube (specmode='cube'
+                     only; None = all). For a polarization frequency cube,
+                     one plane per SPW-chunk per skill 11.
+        start:       First channel of the cube as a CASA spectral string, e.g.
+                     '1.0GHz' or '0' (specmode='cube' only).
+        width:       Channel width of the cube, e.g. '64MHz' or '4'
+                     (specmode='cube' only).
+        outframe:    Output spectral reference frame, e.g. 'LSRK' (specmode=
+                     'cube' only). None lets CASA default.
         execute:     If False (default), write script and return.
                      If True, run tclean in-process (intended for test data only).
 
@@ -156,6 +272,51 @@ def run(
 
     if imsize is None:
         imsize = [512, 512]
+
+    if gridder in ("wproject", "awp2", "awproject") and wprojplanes is None:
+        warnings.append(
+            f"gridder='{gridder}' with wprojplanes unset: CASA defaults to "
+            "wprojplanes=1 (no W-projection). Pass wprojplanes explicitly if "
+            "W-terms are significant (Fresnel < 0.9)."
+        )
+
+    # awproject-family full-polarization guardrails (warn-only). Both are real
+    # CASA 6.7.5 costs/limits seen across three reduction runs, not tool bugs —
+    # the value is steering the parameter choice, so tclean still emits exactly
+    # what was asked.
+    _is_awp = gridder in ("awp2", "awproject")
+    _is_fullpol = bool(set(stokes.upper()) & {"Q", "U", "V"})
+    if _is_awp and _is_fullpol and deconvolver == "mtmfs" and specmode == "mvc":
+        warnings.append(
+            f"gridder='{gridder}' + stokes='{stokes}' + deconvolver='mtmfs' + "
+            "specmode='mvc' trips a CASA 6.7.5 shape assertion "
+            "(AlwaysAssert shapeIn.isEqual(shapeOut), Lattice.tcc) in the "
+            "mtmfs-via-cube PSF Taylor-term path — it dies during PSF creation "
+            "before any cleaning. To keep multi-term (Taylor) deconvolution, set "
+            "specmode='mfs' with deconvolver='mtmfs'."
+        )
+    if _is_awp and _is_fullpol:
+        warnings.append(
+            f"gridder='{gridder}' + stokes='{stokes}': the per-frequency A-term "
+            "convolution-function computation (full Mueller CF for full-pol) can "
+            "be intractable on a large unaveraged MS — e.g. ~1 h to reach 20% of "
+            "just the PSF on a ~160 GB MS. Consider split/time-averaging to a "
+            "compact MS first, or gridder='wproject' (image-plane pbcor) for a "
+            "near-axis single pointing."
+        )
+    if cfcache is not None and gridder != "awproject":
+        warnings.append(f"cfcache is only used by gridder='awproject'; ignored for '{gridder}'.")
+    if gridder == "awproject" and cfcache is None:
+        warnings.append(
+            "gridder='awproject' without cfcache: convolution functions will be "
+            "recomputed from scratch (potentially hours). Set cfcache to a "
+            "persistent path to reuse them across runs."
+        )
+    if specmode != "cube" and any(v is not None for v in (nchan, start, width, outframe)):
+        warnings.append(
+            f"specmode='{specmode}': cube args (nchan/start/width/outframe) are "
+            "ignored. Set specmode='cube' to image a frequency cube."
+        )
 
     workdir_path = Path(workdir)
     if not workdir_path.exists():
@@ -190,12 +351,14 @@ def run(
         ms_str=ms_str,
         imagename=imagename,
         field=field,
+        spw=spw,
         stokes=stokes,
         specmode=specmode,
         deconvolver=deconvolver,
         nterms=nterms,
         gridder=gridder,
         wprojplanes=wprojplanes,
+        cfcache=cfcache if gridder == "awproject" else None,
         cell=cell,
         imsize=imsize,
         weighting=weighting,
@@ -203,6 +366,11 @@ def run(
         niter=niter,
         threshold=threshold,
         savemodel=savemodel,
+        pblimit=pblimit,
+        nchan=nchan,
+        start=start,
+        width=width,
+        outframe=outframe,
     )
     script_file.write_text(script_content)
     casa_calls.append(f"write_script → {script_file}")
@@ -241,6 +409,7 @@ def run(
         imagename=imagename,
         field=field,
         stokes=stokes,
+        spw=spw,
         specmode=specmode,
         deconvolver=deconvolver,
         gridder=gridder,
@@ -251,23 +420,41 @@ def run(
         niter=niter,
         threshold=threshold,
         pbcor=True,
+        pblimit=pblimit,
         savemodel=savemodel,
+        fullsummary=False,
     )
     if deconvolver == "mtmfs" and nterms is not None:
         tclean_kwargs["nterms"] = nterms
     if wprojplanes is not None:
         tclean_kwargs["wprojplanes"] = wprojplanes
+    if cfcache is not None and gridder == "awproject":
+        tclean_kwargs["cfcache"] = cfcache
+    if specmode == "cube":
+        if nchan is not None:
+            tclean_kwargs["nchan"] = nchan
+        if start is not None:
+            tclean_kwargs["start"] = start
+        if width is not None:
+            tclean_kwargs["width"] = width
+        if outframe is not None:
+            tclean_kwargs["outframe"] = outframe
 
     casa_calls.append(f"casatasks.tclean(imagename={imagename!r}, ...)")
     try:
-        _tclean(**tclean_kwargs)
+        summary = _tclean(**tclean_kwargs)
     except Exception as exc:
         raise TcleanFailedError(
             f"tclean raised: {exc}",
             ms_path=ms_path,
         ) from exc
 
-    image_path = imagename + ".image"
+    # mtmfs (nterms>1) writes Taylor-term images: .image.tt0, .image.tt1, ...
+    # There is no plain .image in that case, so check the tt0 product.
+    if deconvolver == "mtmfs" and nterms is not None:
+        image_path = imagename + ".image.tt0"
+    else:
+        image_path = imagename + ".image"
     completed = Path(image_path).exists()
     if not completed:
         raise TcleanFailedError(
@@ -275,10 +462,21 @@ def run(
             ms_path=ms_path,
         )
 
+    # Existence of the image is not success: a clean that stopped on the
+    # iteration limit (or diverged) is deconvolution-limited, not a detection.
+    stopcode, stop_reason, converged, conv_warn = _convergence(summary)
+    if conv_warn:
+        warnings.append(conv_warn)
+
     data = {
         "script_path": fmt_field(str(script_file)),
         "imagename": fmt_field(imagename),
         "completed": fmt_field(completed),
+        "converged": fmt_field(
+            converged, flag="COMPLETE" if stopcode is not None else "UNAVAILABLE"
+        ),
+        "stopcode": fmt_field(stopcode),
+        "stop_reason": fmt_field(stop_reason),
     }
     return response_envelope(
         tool_name=TOOL_NAME,

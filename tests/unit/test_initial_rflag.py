@@ -2,8 +2,8 @@
 Unit tests for ms_apply_initial_rflag.
 
 No CASA required. Tests cover:
-- _build_cmds_content: command list file content
-- run: workdir validation, script/cmds file creation
+- _build_script: generated driver script content (two direct flagdata passes)
+- run: workdir validation, script file creation
 """
 
 from __future__ import annotations
@@ -12,42 +12,58 @@ from pathlib import Path
 
 import pytest
 
-from ms_modify.initial_rflag import _build_cmds_content
+from ms_modify.initial_rflag import _build_script
 
 # ---------------------------------------------------------------------------
-# _build_cmds_content
+# _build_script
 # ---------------------------------------------------------------------------
 
 
-class TestBuildCmdsContent:
+class TestBuildScript:
     def test_contains_rflag(self):
-        content = _build_cmds_content(5.0, 5.0, 4.0, 4.0)
-        assert "rflag" in content
+        script = _build_script("/data/x.ms", "0", 5.0, 5.0, 4.0, 4.0)
+        assert "rflag" in script
 
     def test_contains_tfcrop(self):
-        content = _build_cmds_content(5.0, 5.0, 4.0, 4.0)
-        assert "tfcrop" in content
+        script = _build_script("/data/x.ms", "0", 5.0, 5.0, 4.0, 4.0)
+        assert "tfcrop" in script
 
     def test_datacolumn_is_residual(self):
-        content = _build_cmds_content(5.0, 5.0, 4.0, 4.0)
-        assert "residual" in content
+        script = _build_script("/data/x.ms", "0", 5.0, 5.0, 4.0, 4.0)
+        assert 'datacolumn="residual"' in script
+
+    def test_field_embedded(self):
+        script = _build_script("/data/x.ms", "3C147", 5.0, 5.0, 4.0, 4.0)
+        assert "3C147" in script
 
     def test_custom_thresholds_embedded(self):
-        content = _build_cmds_content(3.5, 4.5, 2.0, 2.5)
-        assert "3.5" in content
-        assert "4.5" in content
-        assert "2.0" in content
-        assert "2.5" in content
+        script = _build_script("/data/x.ms", "0", 3.5, 4.5, 2.0, 2.5)
+        assert "3.5" in script
+        assert "4.5" in script
+        assert "2.0" in script
+        assert "2.5" in script
 
-    def test_no_action_key_in_lines(self):
-        # flagdata list-mode does not accept the 'action' key; it must be absent
-        content = _build_cmds_content(5.0, 5.0, 4.0, 4.0)
-        assert "action=" not in content
+    def test_no_list_mode(self):
+        # The whole point of the fix: never use flagdata(mode='list') — it
+        # aborts with KeyError 'nreport' in CASA 6.7.5. The list-mode call is
+        # the only place that uses inpfile, so its absence proves the switch.
+        script = _build_script("/data/x.ms", "0", 5.0, 5.0, 4.0, 4.0)
+        assert "inpfile" not in script
 
-    def test_exactly_two_command_lines(self):
-        content = _build_cmds_content(5.0, 5.0, 4.0, 4.0)
-        lines = [ln for ln in content.splitlines() if ln.strip()]
-        assert len(lines) == 2
+    def test_uses_action_apply(self):
+        # Direct (non-list) flagdata calls must pass action='apply'.
+        script = _build_script("/data/x.ms", "0", 5.0, 5.0, 4.0, 4.0)
+        assert 'action="apply"' in script
+
+    def test_saves_flag_version_once(self):
+        script = _build_script("/data/x.ms", "0", 5.0, 5.0, 4.0, 4.0)
+        assert "flagmanager" in script
+        assert "before_initial_rflag" in script
+
+    def test_flagbackup_false_on_passes(self):
+        script = _build_script("/data/x.ms", "0", 5.0, 5.0, 4.0, 4.0)
+        assert "flagbackup=False" in script
+        assert "flagbackup=True" not in script
 
 
 # ---------------------------------------------------------------------------
@@ -68,48 +84,49 @@ class TestInitialRflagRun:
 
         ms = self._make_ms(tmp_path)
         with pytest.raises(ComputationError, match="workdir does not exist"):
-            run(str(ms), str(tmp_path / "nodir"))
+            run(str(ms), str(tmp_path / "nodir"), "3C147")
 
-    def test_execute_false_writes_both_files(self, tmp_path):
+    def test_empty_field_raises(self, tmp_path):
+        from ms_inspect.exceptions import ComputationError
         from ms_modify.initial_rflag import run
 
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
-        result = run(str(ms), str(workdir), execute=False)
+        with pytest.raises(ComputationError, match="field is required"):
+            run(str(ms), str(workdir), "", execute=False)
+
+    def test_execute_false_writes_script(self, tmp_path):
+        from ms_modify.initial_rflag import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        result = run(str(ms), str(workdir), "3C147", execute=False)
         assert result["status"] == "ok"
-        assert (workdir / "initial_rflag_cmds.txt").exists()
         assert (workdir / "initial_rflag.py").exists()
+        # The retired cmds file must no longer be written.
+        assert not (workdir / "initial_rflag_cmds.txt").exists()
 
-    def test_cmds_file_contains_residual(self, tmp_path):
+    def test_script_contains_residual(self, tmp_path):
         from ms_modify.initial_rflag import run
 
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
-        run(str(ms), str(workdir), execute=False)
-        cmds = (workdir / "initial_rflag_cmds.txt").read_text()
-        assert "residual" in cmds
-
-    def test_script_references_cmds_file(self, tmp_path):
-        from ms_modify.initial_rflag import run
-
-        ms = self._make_ms(tmp_path)
-        workdir = tmp_path / "work"
-        workdir.mkdir()
-        run(str(ms), str(workdir), execute=False)
+        run(str(ms), str(workdir), "3C147", execute=False)
         script = (workdir / "initial_rflag.py").read_text()
-        assert "initial_rflag_cmds.txt" in script
+        assert "residual" in script
 
-    def test_script_has_flagbackup_true(self, tmp_path):
+    def test_script_not_list_mode(self, tmp_path):
         from ms_modify.initial_rflag import run
 
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
-        run(str(ms), str(workdir), execute=False)
+        run(str(ms), str(workdir), "3C147", execute=False)
         script = (workdir / "initial_rflag.py").read_text()
-        assert "flagbackup=True" in script
+        assert 'mode="list"' not in script
 
     def test_response_includes_thresholds(self, tmp_path):
         from ms_modify.initial_rflag import run
@@ -117,20 +134,22 @@ class TestInitialRflagRun:
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
-        result = run(str(ms), str(workdir), timedevscale=3.5, freqdevscale=4.5, execute=False)
+        result = run(
+            str(ms), str(workdir), "3C147", timedevscale=3.5, freqdevscale=4.5, execute=False
+        )
         assert result["data"]["rflag_timedevscale"] == 3.5
         assert result["data"]["rflag_freqdevscale"] == 4.5
 
-    def test_custom_thresholds_in_cmds_file(self, tmp_path):
+    def test_custom_thresholds_in_script(self, tmp_path):
         from ms_modify.initial_rflag import run
 
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
-        run(str(ms), str(workdir), timedevscale=7.0, freqdevscale=8.0, execute=False)
-        cmds = (workdir / "initial_rflag_cmds.txt").read_text()
-        assert "7.0" in cmds
-        assert "8.0" in cmds
+        run(str(ms), str(workdir), "3C147", timedevscale=7.0, freqdevscale=8.0, execute=False)
+        script = (workdir / "initial_rflag.py").read_text()
+        assert "7.0" in script
+        assert "8.0" in script
 
     def test_re_run_overwrites_files(self, tmp_path):
         """Deterministic filenames mean re-running replaces previous output."""
@@ -139,9 +158,8 @@ class TestInitialRflagRun:
         ms = self._make_ms(tmp_path)
         workdir = tmp_path / "work"
         workdir.mkdir()
-        run(str(ms), str(workdir), execute=False)
+        run(str(ms), str(workdir), "3C147", execute=False)
         mtime1 = (workdir / "initial_rflag.py").stat().st_mtime_ns
-        run(str(ms), str(workdir), execute=False)
+        run(str(ms), str(workdir), "3C147", execute=False)
         mtime2 = (workdir / "initial_rflag.py").stat().st_mtime_ns
-        # File should have been written again (same or newer mtime)
         assert mtime2 >= mtime1

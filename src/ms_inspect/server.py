@@ -18,19 +18,21 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect import __version__
 from ms_inspect.exceptions import RadioMSError
-from ms_inspect.util import phase_cal_catalog as _pcc
 from ms_inspect.tools import (
     antennas,
     calsol_plot,
     calsol_plot_library,
     calsol_stats,
+    calsol_stats_detail,
     caltables,
+    corrected_stats,
     fields,
     flag_summary,
     flags,
@@ -46,13 +48,20 @@ from ms_inspect.tools import (
     scans,
     shadowing,
     spectral,
+    spw_amp_severity,
     verify_import,
+    verify_model,
     workflow_status,
 )
+from ms_inspect.util import phase_cal_catalog as _pcc
+from ms_inspect.util.formatting import compact_fields
 
 # ---------------------------------------------------------------------------
 # Server initialisation
 # ---------------------------------------------------------------------------
+_mcp_host = os.environ.get("RADIO_MCP_HOST", "127.0.0.1")
+_mcp_port = int(os.environ.get("RADIO_MCP_PORT", "8000"))
+
 mcp = FastMCP(
     "radio_ms_mcp",
     instructions=(
@@ -61,6 +70,8 @@ mcp = FastMCP(
         "Consult the SKILL.md document for interferometrist reasoning guidance. "
         f"Version: {__version__}"
     ),
+    host=_mcp_host,
+    port=_mcp_port,
 )
 
 
@@ -113,7 +124,7 @@ class PolCalFeasibilityInput(BaseModel):
         default=60.0,
         description=(
             "Minimum parallactic angle spread (degrees) required for a reliable "
-            "D-term leakage solution (default 60°). Lower values relax the criterion."
+            "Df+QU (unknown-pol) leakage solution (default 30°; NRAO suggests 60°). Irrelevant to Xf and known-pol Df."
         ),
         ge=0.0,
         le=180.0,
@@ -160,6 +171,31 @@ class RfiChannelStatsInput(BaseModel):
         default=1,
         description="Minimum contiguous bad channels to report as a range (default 1).",
         ge=1,
+    )
+
+
+class SpwAmpSeverityInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
+    datacolumn: str = Field(
+        default="CORRECTED_DATA",
+        description="Column to measure: 'CORRECTED_DATA' (default), 'DATA', or 'MODEL_DATA'.",
+    )
+    field: str = Field(default="", description="CASA field selection (empty = all fields).")
+    sigma: float = Field(
+        default=5.0,
+        description="N in elevation threshold band_floor + N*robust_sigma (drives discardable-fraction estimate).",
+        gt=0.0,
+    )
+    max_samples_per_chan: int = Field(
+        default=5000,
+        description="Reservoir sample size per channel (memory knob).",
+        ge=100,
+    )
+    row_chunk: int = Field(
+        default=20_000,
+        description="Rows read per block (memory knob; smaller = less RAM, slower).",
+        ge=1000,
     )
 
 
@@ -250,6 +286,75 @@ class ResidualStatsInput(BaseModel):
     )
 
 
+class CorrectedStatsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(
+        ..., description="Path to the MS with the data column populated.", min_length=1
+    )
+    field: str = Field(
+        default="",
+        description="CASA field-name selection (comma-separated) or '' for all fields.",
+    )
+    chan_start: int | None = Field(
+        default=None, description="First channel to include (default 0). Use to drop band edges."
+    )
+    chan_end: int | None = Field(
+        default=None, description="One past the last channel (default n_chan)."
+    )
+    datacolumn: str = Field(
+        default="CORRECTED_DATA",
+        description="'CORRECTED_DATA' (default), 'DATA', or 'MODEL_DATA'.",
+    )
+    max_rows: int = Field(
+        default=500_000,
+        description="Per-field row cap; rows sampled uniformly above this (default 500 000).",
+        ge=1,
+    )
+
+
+class VerifyModelInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(
+        ..., description="Path to the MS with MODEL_DATA (usescratch=True).", min_length=1
+    )
+    field: str = Field(
+        default="",
+        description="CASA field-name selection (comma-separated) or '' for all fields.",
+    )
+    polcal_fields: str = Field(
+        default="",
+        description=(
+            "Field names expected to carry a POLARIZED model (pol-angle cals set via "
+            "ms_setjy_polcal). Only these get the cross-hand polarization-presence "
+            "check; Stokes-I flux/phase cals are never flagged for missing polarization."
+        ),
+    )
+    default_amp_tol: float = Field(
+        default=0.05,
+        description="|par_amp − 1.0| ≤ this AND flat phase ⇒ pinned at MODEL=1 Jy default.",
+        ge=0.0,
+    )
+    default_phase_rms_deg: float = Field(
+        default=1.0, description="Phase RMS ≤ this counts as 'flat' for the default check.", ge=0.0
+    )
+    plausible_min_jy: float = Field(
+        default=0.1, description="Lower physical amplitude bound; below ⇒ SUSPECT.", ge=0.0
+    )
+    plausible_max_jy: float = Field(
+        default=100.0, description="Upper physical amplitude bound; above ⇒ SUSPECT.", gt=0.0
+    )
+    crosshand_ratio_thresh: float = Field(
+        default=0.001,
+        description="cross_amp / par_amp ≥ this ⇒ polarization present.",
+        ge=0.0,
+    )
+    max_rows: int = Field(
+        default=200_000,
+        description="Per-field row cap; rows sampled uniformly above this (default 200 000).",
+        ge=1,
+    )
+
+
 class BaselineLengthInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to Measurement Set", min_length=1)
@@ -302,9 +407,33 @@ class CalsolStatsInput(BaseModel):
         default=5.0, ge=0.0, description="Amplitude outlier threshold in sigma (default 5.0)."
     )
     verbosity: str = Field(
-        default="full",
-        description="'full' (default) or 'compact'. Compact strips field() wrappers.",
+        default="compact",
+        description=(
+            "'compact' (default) returns per-antenna scalar summaries (averaged over "
+            "spw/field) plus outliers — sufficient for gate decisions. 'full' returns the "
+            "complete [n_ant, n_spw, n_field] matrices inline (large). Full detail is always "
+            "written to the NPZ sidecar regardless and is queryable via ms_calsol_stats_detail."
+        ),
     )
+
+
+class CalsolStatsDetailInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    npz_path: str = Field(
+        ...,
+        description="Path to the {caltable}.calsol_stats.npz sidecar written by ms_calsol_stats.",
+        min_length=1,
+    )
+    kind: str = Field(
+        default="low_snr",
+        description="'low_snr', 'amp_outliers', or 'antenna' (all quantities for one antenna).",
+    )
+    antenna: str = Field(
+        default="", description="Restrict to this antenna name (required for kind='antenna')."
+    )
+    spw: int | None = Field(default=None, description="Restrict to this SPW id.")
+    field: str = Field(default="", description="Restrict to this field name.")
+    max_rows: int = Field(default=300, ge=1, description="Row cap (hard-limited to 300).")
 
 
 class CalsolPlotInput(BaseModel):
@@ -364,17 +493,55 @@ class ImageStatsInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _run_tool(tool_fn, *args, **kwargs) -> str:
+# Per-MS locks: CASA table access is not thread-safe for concurrent opens of
+# the same MS within one process (observed: >=2 simultaneous opens can crash
+# the server, with no in-session recovery). CASA's own locking is per-MS, so
+# tools against *different* MSes may still run concurrently.
+_MS_LOCKS: dict[str, threading.Lock] = {}
+_MS_LOCKS_GUARD = threading.Lock()
+
+
+def _ms_lock(path: str) -> threading.Lock:
+    # realpath: the same MS may be referenced via symlinked aliases
+    # (e.g. /users/... -> /lustre/...); those must share one lock.
+    path = os.path.realpath(path)
+    with _MS_LOCKS_GUARD:
+        lock = _MS_LOCKS.get(path)
+        if lock is None:
+            lock = threading.Lock()
+            _MS_LOCKS[path] = lock
+        return lock
+
+
+def _run_tool_sync(tool_fn, *args, **kwargs) -> str:
+    """Run tool_fn synchronously; called from a thread via _run_tool."""
+    try:
+        result = tool_fn(*args, **kwargs)
+        return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
+    except RadioMSError as e:
+        return json.dumps(e.to_dict(), separators=(",", ":"))
+
+
+async def _run_tool(tool_fn, *args, **kwargs) -> str:
     """
-    Execute a tool function and return JSON-encoded result.
+    Execute a tool function off the event loop thread and return JSON-encoded result.
+
+    Runs synchronous (potentially long-running) tool functions in a thread pool
+    via asyncio.to_thread so they never block the MCP server's event loop.
+    Concurrent calls against the same primary resource path (first positional
+    argument — MS, image, or caltable) are serialized via a per-path lock.
     Catches RadioMSError and returns a well-formed error envelope.
     Unexpected exceptions are re-raised (let FastMCP handle them).
     """
-    try:
-        result = tool_fn(*args, **kwargs)
-        return json.dumps(result, indent=2, default=str)
-    except RadioMSError as e:
-        return json.dumps(e.to_dict(), indent=2)
+    import asyncio
+
+    def _locked() -> str:
+        if args:
+            with _ms_lock(str(args[0])):
+                return _run_tool_sync(tool_fn, *args, **kwargs)
+        return _run_tool_sync(tool_fn, *args, **kwargs)
+
+    return await asyncio.to_thread(_locked)
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +581,7 @@ async def ms_observation_info(params: MSPathInput) -> str:
         obs_start_utc, obs_end_utc, total_duration_s, total_duration_human,
         history_entries. Each field carries a completeness flag.
     """
-    return _run_tool(observation.run, params.ms_path)
+    return await _run_tool(observation.run, params.ms_path)
 
 
 @mcp.tool(
@@ -449,7 +616,7 @@ async def ms_field_list(params: MSPathInput) -> str:
         JSON array of field records: field_id, name, ra/dec in deg and HMS/DMS,
         intents, calibrator_match, calibrator_role, flux_standard, resolved_source.
     """
-    return _run_tool(fields.run, params.ms_path)
+    return await _run_tool(fields.run, params.ms_path)
 
 
 @mcp.tool(
@@ -481,7 +648,7 @@ async def ms_scan_list(params: MSPathInput) -> str:
     Returns:
         JSON with n_scans, n_fields, and ordered array of scan records.
     """
-    return _run_tool(scans.run_scan_list, params.ms_path)
+    return await _run_tool(scans.run_scan_list, params.ms_path)
 
 
 @mcp.tool(
@@ -514,7 +681,7 @@ async def ms_scan_intent_summary(params: MSPathInput) -> str:
         JSON with total_duration_s, total_duration_human, n_intents, intent_completeness,
         and by_intent array of {intent, total_s, fraction, human}.
     """
-    return _run_tool(scans.run_scan_intent_summary, params.ms_path)
+    return await _run_tool(scans.run_scan_intent_summary, params.ms_path)
 
 
 @mcp.tool(
@@ -548,7 +715,7 @@ async def ms_spectral_window_list(params: MSPathInput) -> str:
     Returns:
         JSON array of SpW records with completeness flags.
     """
-    return _run_tool(spectral.run_spectral_window_list, params.ms_path)
+    return await _run_tool(spectral.run_spectral_window_list, params.ms_path)
 
 
 @mcp.tool(
@@ -579,7 +746,7 @@ async def ms_correlator_config(params: MSPathInput) -> str:
         JSON with dump_time_s, polarization_basis, correlation_products, full_stokes,
         n_pol_setups, n_fields, n_scans, n_spw.
     """
-    return _run_tool(spectral.run_correlator_config, params.ms_path)
+    return await _run_tool(spectral.run_correlator_config, params.ms_path)
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +786,7 @@ async def ms_antenna_list(params: MSPathInput) -> str:
     Returns:
         JSON with n_antennas, n_baselines_cross, array_centre coords, and antenna array.
     """
-    return _run_tool(antennas.run_antenna_list, params.ms_path)
+    return await _run_tool(antennas.run_antenna_list, params.ms_path)
 
 
 @mcp.tool(
@@ -654,7 +821,9 @@ async def ms_baseline_lengths(params: BaselineLengthInput) -> str:
     Returns:
         JSON with baseline statistics and per_spw_derived array.
     """
-    return _run_tool(antennas.run_baseline_lengths, params.ms_path, params.spw_centre_freqs_hz)
+    return await _run_tool(
+        antennas.run_baseline_lengths, params.ms_path, params.spw_centre_freqs_hz
+    )
 
 
 @mcp.tool(
@@ -689,7 +858,7 @@ async def ms_elevation_vs_time(params: ElevationInput) -> str:
         JSON with per-field scan elevation records: el_start, el_mid, el_end,
         el_min, below_threshold flag.
     """
-    return _run_tool(geometry.run_elevation_vs_time, params.ms_path, params.threshold_deg)
+    return await _run_tool(geometry.run_elevation_vs_time, params.ms_path, params.threshold_deg)
 
 
 @mcp.tool(
@@ -727,7 +896,7 @@ async def ms_parallactic_angle_vs_time(params: MSPathInput) -> str:
         JSON with per-field pa_sky_start/end/range, pa_feed_start/end/range,
         convention_offset_deg, convention_note, validation_status.
     """
-    return _run_tool(geometry.run_parallactic_angle_vs_time, params.ms_path)
+    return await _run_tool(geometry.run_parallactic_angle_vs_time, params.ms_path)
 
 
 @mcp.tool(
@@ -762,7 +931,7 @@ async def ms_shadowing_report(params: ShadowingInput) -> str:
         method (with completeness flag), shadowed_events array, and
         flag_cmd_shadow_entries.
     """
-    return _run_tool(shadowing.run, params.ms_path, params.tolerance_m)
+    return await _run_tool(shadowing.run, params.ms_path, params.tolerance_m)
 
 
 @mcp.tool(
@@ -798,7 +967,7 @@ async def ms_flag_preflight(params: MSPathInput) -> str:
         estimated_runtime_s, estimated_runtime_min, recommended_workers,
         will_parallelize.
     """
-    return _run_tool(flags.run_preflight, params.ms_path)
+    return await _run_tool(flags.run_preflight, params.ms_path)
 
 
 @mcp.tool(
@@ -836,7 +1005,7 @@ async def ms_antenna_flag_fraction(params: AntennaFlagFractionInput) -> str:
         and per_antenna array of {antenna_id, name, flag_fraction, n_flagged_elements,
         n_total_elements, n_flag_commands_online}.
     """
-    return _run_tool(
+    return await _run_tool(
         flags.run, params.ms_path, n_workers=params.n_workers, verbosity=params.verbosity
     )
 
@@ -882,7 +1051,7 @@ async def ms_refant(params: RefAntInput) -> str:
         JSON with refant (top-ranked antenna name), refant_list (full ranked list),
         and ranked array with per-antenna geo_score, flag_score, combined_score.
     """
-    return _run_tool(
+    return await _run_tool(
         refant.run,
         params.ms_path,
         params.field,
@@ -929,7 +1098,7 @@ async def ms_verify_caltables(params: VerifyCaltablesInput) -> str:
     Returns:
         JSON with caltables_valid, and per-table exists/n_rows/valid fields.
     """
-    return _run_tool(
+    return await _run_tool(
         caltables.run,
         params.ms_path,
         params.init_gain_table,
@@ -967,7 +1136,54 @@ async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> str:
     Returns:
         JSON with per_spw array of bad channel ranges and RFI candidate annotations.
     """
-    return _run_tool(rfi.run, params.ms_path, params.flag_threshold, params.min_bad_chan_run)
+    return await _run_tool(rfi.run, params.ms_path, params.flag_threshold, params.min_bad_chan_run)
+
+
+@mcp.tool(
+    name="ms_spw_amp_severity",
+    description=(
+        "Per-channel robust amplitude statistics (median, MAD, robust-sigma, min, max) "
+        "of a data column, aggregated per SpW across all fields. Estimates how much of "
+        "each SpW is RFI-dominated and discardable. Read-only; no verdict, no flagging."
+    ),
+    annotations={
+        "title": "SpW Amplitude Severity",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> str:
+    """
+    Robust per-channel/per-SpW amplitude statistics for RFI-severity assessment.
+
+    Single memory-bounded pass: reads the data column in row chunks, one DDID at
+    a time, keeping a uniform reservoir sample plus exact min/max/counts per
+    channel. Returns per-SpW band floor, fraction of elevated channels, peak-to-
+    floor, and an estimated discardable fraction. Run on two columns to compare
+    before/after a flagging or applycal step.
+
+    Args:
+        params.ms_path:              Path to the Measurement Set.
+        params.datacolumn:           'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA'.
+        params.field:                CASA field selection (empty = all).
+        params.sigma:                Elevation threshold multiplier (default 5.0).
+        params.max_samples_per_chan: Reservoir size per channel (default 5000).
+        params.row_chunk:            Rows per read block (default 20000).
+
+    Returns:
+        JSON with per_spw → per-channel robust stats and per-SpW severity aggregates.
+    """
+    return await _run_tool(
+        spw_amp_severity.run,
+        params.ms_path,
+        params.datacolumn,
+        params.field,
+        params.sigma,
+        params.max_samples_per_chan,
+        params.row_chunk,
+    )
 
 
 @mcp.tool(
@@ -1000,7 +1216,7 @@ async def ms_flag_summary(params: FlagSummaryInput) -> str:
     Returns:
         JSON with total_flag_fraction, per_field, per_spw, per_antenna, per_scan.
     """
-    return _run_tool(
+    return await _run_tool(
         flag_summary.run, params.ms_path, params.field, params.spw, params.include_per_scan
     )
 
@@ -1040,13 +1256,13 @@ async def ms_pol_cal_feasibility(params: PolCalFeasibilityInput) -> str:
 
     Args:
         params.ms_path:                Path to the Measurement Set.
-        params.pa_spread_threshold_deg: PA spread threshold for D-term feasibility (default 60°).
+        params.pa_spread_threshold_deg: PA spread threshold for the Df+QU path (default 30°).
 
     Returns:
         JSON with band_centre_ghz, pol_angle_calibrator (source, frac_pol, PA, stable_pa),
         leakage_calibrator (pa_spread, n_scans, meets_threshold), verdict, and blocker.
     """
-    return _run_tool(
+    return await _run_tool(
         pol_cal_feasibility.run,
         params.ms_path,
         params.pa_spread_threshold_deg,
@@ -1087,7 +1303,7 @@ async def ms_online_flag_stats(params: OnlineFlagStatsInput) -> str:
         JSON with n_commands, n_antennas_flagged, antennas_flagged,
         reason_breakdown, and time_range (first and last seen).
     """
-    return _run_tool(online_flags.run, params.flag_file)
+    return await _run_tool(online_flags.run, params.flag_file)
 
 
 @mcp.tool(
@@ -1120,11 +1336,104 @@ async def ms_verify_priorcals(params: VerifyPriorcalsInput) -> str:
     Returns:
         JSON with all_valid, n_checked, n_valid, n_missing, and per-table check results.
     """
-    return _run_tool(
+    return await _run_tool(
         priorcals_check.run,
         params.ms_path,
         params.workdir,
         params.table_names or None,
+    )
+
+
+@mcp.tool(
+    name="ms_corrected_stats",
+    description=(
+        "Per-field parallel-hand amplitude (median / robust std / p95) and phase "
+        "RMS of a data column (CORRECTED_DATA by default) over a channel range. "
+        "Post-applycal calibration sanity check: a clean point-source calibrator "
+        "sits at its flux density with low amplitude scatter and near-zero phase. "
+        "Pass chan_start/chan_end to exclude band edges. Measures only."
+    ),
+    annotations={
+        "title": "Corrected Data Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_corrected_stats(params: CorrectedStatsInput) -> str:
+    """
+    Per-field amplitude/phase stats of a visibility column on parallel hands.
+
+    Args:
+        params.ms_path:    Path to the MS.
+        params.field:      CASA field-name selection or '' for all.
+        params.chan_start: First channel (default 0); use to drop band edges.
+        params.chan_end:   One past the last channel (default n_chan).
+        params.datacolumn: 'CORRECTED_DATA' (default), 'DATA', or 'MODEL_DATA'.
+        params.max_rows:   Per-field row cap (default 500 000).
+
+    Returns:
+        JSON with per_field amp_median, amp_robust_std, amp_p95, phase_rms_deg.
+    """
+    return await _run_tool(
+        corrected_stats.run,
+        params.ms_path,
+        params.field,
+        params.chan_start,
+        params.chan_end,
+        params.datacolumn,
+        params.max_rows,
+    )
+
+
+@mcp.tool(
+    name="ms_verify_model",
+    description=(
+        "Per-field sanity probe of MODEL_DATA after setjy / setjy_polcal. Flags "
+        "models pinned at the MODEL=1 Jy default (unwritten → flux-scale trap), "
+        "amplitudes outside a physical Jy band, and — for fields named in "
+        "polcal_fields — missing polarization (zero cross-hands, i.e. a Stokes-I "
+        "model or a polarized model clobbered by a later plain setjy). Requires "
+        "the physical MODEL_DATA column (usescratch=True). Measures only."
+    ),
+    annotations={
+        "title": "Verify MODEL_DATA",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_verify_model(params: VerifyModelInput) -> str:
+    """
+    Probe MODEL_DATA for untouched-default, out-of-band, and missing-polarization
+    models after a setjy / setjy_polcal step.
+
+    Args:
+        params.ms_path:        Path to the MS (MODEL_DATA / usescratch=True).
+        params.field:          CASA field-name selection or '' for all.
+        params.polcal_fields:  Fields expected to carry a polarized model.
+        params.default_amp_tol / default_phase_rms_deg: default-pinned thresholds.
+        params.plausible_min_jy / plausible_max_jy:      physical amplitude band.
+        params.crosshand_ratio_thresh:                   polarization-present cut.
+        params.max_rows:       Per-field row cap (default 200 000).
+
+    Returns:
+        JSON with per_field par_amp, par_phase_rms_deg, cross_amp, crosshand_ratio,
+        and a status field flagged COMPLETE / SUSPECT / UNAVAILABLE.
+    """
+    return await _run_tool(
+        verify_model.run,
+        params.ms_path,
+        params.field,
+        params.polcal_fields,
+        params.default_amp_tol,
+        params.default_phase_rms_deg,
+        params.plausible_min_jy,
+        params.plausible_max_jy,
+        params.crosshand_ratio_thresh,
+        params.max_rows,
     )
 
 
@@ -1158,7 +1467,7 @@ async def ms_residual_stats(params: ResidualStatsInput) -> str:
     Returns:
         JSON with per-spw median_amp, std_amp, p95_amp, n_unflagged, n_flagged.
     """
-    return _run_tool(
+    return await _run_tool(
         residual_stats.run,
         params.ms_path,
         params.field_id,
@@ -1199,12 +1508,56 @@ async def ms_calsol_stats(params: CalsolStatsInput) -> str:
         JSON with table_type, axis metadata, flagged_frac, snr_mean, amplitude/phase
         stats (G/B), delay_ns and delay_rms_ns (K), and scalar summaries.
     """
-    return _run_tool(
+    return await _run_tool(
         calsol_stats.run,
         params.caltable_path,
         snr_min=params.snr_min,
         amp_sigma=params.amp_sigma,
         verbosity=params.verbosity,
+    )
+
+
+@mcp.tool(
+    name="ms_calsol_stats_detail",
+    description=(
+        "Deep-dive reader over the {caltable}.calsol_stats.npz sidecar written by "
+        "ms_calsol_stats. Returns the full per-(antenna, SpW, field) detail that the "
+        "stats response caps: kind='low_snr'|'amp_outliers'|'antenna', filterable by "
+        "antenna/spw/field. Use when a gate needs detail beyond the bounded summary."
+    ),
+    annotations={
+        "title": "Calibration Solution Detail",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_calsol_stats_detail(params: CalsolStatsDetailInput) -> str:
+    """
+    Slice the raw NPZ sidecar from ms_calsol_stats for full outlier/antenna detail.
+
+    The stats tool returns a bounded summary (worst-N rows + per-antenna rollups);
+    this tool returns the complete enumeration from disk for a requested slice, so
+    drilling into a flagged antenna or SPW needs no re-solve and no generated script.
+
+    Args:
+        params.npz_path: Path to the {caltable}.calsol_stats.npz sidecar.
+        params.kind: 'low_snr', 'amp_outliers', or 'antenna'.
+        params.antenna / params.spw / params.field: optional filters.
+        params.max_rows: row cap (hard-limited to 300).
+
+    Returns:
+        JSON with kind, filters, n_total, n_returned, truncated, rows, thresholds.
+    """
+    return await _run_tool(
+        calsol_stats_detail.run,
+        params.npz_path,
+        kind=params.kind,
+        antenna=params.antenna,
+        spw=params.spw,
+        field=params.field,
+        max_rows=params.max_rows,
     )
 
 
@@ -1238,7 +1591,7 @@ async def ms_calsol_plot(params: CalsolPlotInput) -> str:
     Returns:
         JSON with npz_path, html_path, table_type, and axis dimensions.
     """
-    return _run_tool(calsol_plot.run, params.caltable_path, params.output_dir)
+    return await _run_tool(calsol_plot.run, params.caltable_path, params.output_dir)
 
 
 @mcp.tool(
@@ -1271,7 +1624,7 @@ async def ms_plot_caltable_library(params: CalsolPlotLibraryInput) -> str:
         JSON with a per-table plots list (status, html_path, npz_path,
         table_type, error), plus n_ok and n_error counts.
     """
-    return _run_tool(
+    return await _run_tool(
         calsol_plot_library.run,
         params.caltable_paths,
         params.output_dir,
@@ -1308,7 +1661,7 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
         JSON with ms_exists, ms_valid, flag_file_exists,
         flag_file_n_commands, and ready_for_preflag.
     """
-    return _run_tool(verify_import.run, params.ms_path, params.online_flag_file)
+    return await _run_tool(verify_import.run, params.ms_path, params.online_flag_file)
 
 
 @mcp.tool(
@@ -1329,7 +1682,7 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
 )
 async def ms_workflow_status(params: WorkflowStatusInput) -> str:
     """State probe over MS + workdir for pipeline resumption."""
-    return _run_tool(workflow_status.run, params.ms_path, params.workdir)
+    return await _run_tool(workflow_status.run, params.ms_path, params.workdir)
 
 
 @mcp.tool(
@@ -1350,7 +1703,7 @@ async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> str:
     """Predictive SNR for gaincal solint selection."""
     from ms_inspect.tools import gaincal_snr_predict
 
-    return _run_tool(
+    return await _run_tool(
         gaincal_snr_predict.run,
         params.ms_path,
         params.field,
@@ -1393,12 +1746,13 @@ async def ms_image_stats(params: ImageStatsInput) -> str:
         beam_major_arcsec, beam_minor_arcsec, beam_pa_deg.
         If psf_path provided, also psf_beam_major_arcsec etc.
     """
-    return _run_tool(image_stats.run, params.image_path, params.psf_path)
+    return await _run_tool(image_stats.run, params.image_path, params.psf_path)
 
 
 # ---------------------------------------------------------------------------
 # Phase calibrator catalog lookup
 # ---------------------------------------------------------------------------
+
 
 class PhaseCalLookupInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -1480,7 +1834,7 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
                 + (f" at band {params.band_code}/{params.array_config}" if params.band_code else "")
             ],
         }
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=(",", ":"))
 
     e = match.entry
     band_data: dict | None = None
@@ -1512,7 +1866,7 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
         },
         "warnings": [],
     }
-    return json.dumps(result, indent=2)
+    return json.dumps(result, separators=(",", ":"))
 
 
 # ---------------------------------------------------------------------------
@@ -1522,12 +1876,10 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
 
 def main() -> None:
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()
-    port = int(os.environ.get("RADIO_MCP_PORT", "8000"))
 
     if transport == "http":
-        mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
+        mcp.run(transport="streamable-http")
     else:
-        # stdio — default, for Claude Desktop and local use
         mcp.run(transport="stdio")
 
 

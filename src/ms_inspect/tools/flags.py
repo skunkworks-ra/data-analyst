@@ -79,7 +79,7 @@ def _flag_chunk_worker(args: tuple) -> tuple[np.ndarray, np.ndarray]:
     Following the blacklight pattern: instantiate casatools.table() directly,
     use getcol with startrow/nrow for chunked access.
     """
-    ms_path, start_row, n_rows, n_ant = args
+    ms_path, start_row, n_rows, n_ant, exclude_autocorr = args
 
     flagged = np.zeros(n_ant, dtype=np.int64)
     total = np.zeros(n_ant, dtype=np.int64)
@@ -88,22 +88,23 @@ def _flag_chunk_worker(args: tuple) -> tuple[np.ndarray, np.ndarray]:
 
     tb = table()
     tb.open(ms_path, nomodify=True)
+    try:
+        # FLAG shape: (n_corr, n_chan, n_rows_in_chunk)
+        flag_chunk = tb.getcol("FLAG", startrow=start_row, nrow=n_rows)
+        ant1 = tb.getcol("ANTENNA1", startrow=start_row, nrow=n_rows)
+        ant2 = tb.getcol("ANTENNA2", startrow=start_row, nrow=n_rows)
+    finally:
+        tb.close()
 
-    # FLAG shape: (n_corr, n_chan, n_rows_in_chunk)
-    flag_chunk = tb.getcol("FLAG", startrow=start_row, nrow=n_rows)
-    ant1 = tb.getcol("ANTENNA1", startrow=start_row, nrow=n_rows)
-    ant2 = tb.getcol("ANTENNA2", startrow=start_row, nrow=n_rows)
+    if exclude_autocorr:
+        # Mask out autocorrelations
+        cross = ant1 != ant2
+        if not cross.any():
+            return flagged, total
 
-    tb.close()
-
-    # Mask out autocorrelations
-    cross = ant1 != ant2
-    if not cross.any():
-        return flagged, total
-
-    ant1 = ant1[cross]
-    ant2 = ant2[cross]
-    flag_chunk = flag_chunk[:, :, cross]  # (n_corr, n_chan, n_cross_rows)
+        ant1 = ant1[cross]
+        ant2 = ant2[cross]
+        flag_chunk = flag_chunk[:, :, cross]  # (n_corr, n_chan, n_cross_rows)
 
     n_corr, n_chan, n_cross = flag_chunk.shape
     elements_per_row = n_corr * n_chan
@@ -277,7 +278,7 @@ def run(
         start = i * chunk_size
         size = chunk_size if i < n_workers - 1 else (n_total_rows - start)
         if size > 0:
-            chunks.append((ms_str, start, size, n_ant))
+            chunks.append((ms_str, start, size, n_ant, exclude_autocorr))
 
     casa_calls.append(
         f"tb.getcol(FLAG, ANTENNA1, ANTENNA2) "
@@ -285,10 +286,10 @@ def run(
     )
 
     # ------------------------------------------------------------------
-    # Parallel reads — fork context (safe for casatools table access)
+    # Parallel reads — spawn context (avoids inheriting asyncio event loop state)
     # ------------------------------------------------------------------
     try:
-        ctx = mp.get_context("fork")
+        ctx = mp.get_context("spawn")
         with ctx.Pool(processes=n_workers) as pool:
             chunk_results = pool.map(_flag_chunk_worker, chunks)
     except Exception as e:

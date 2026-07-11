@@ -22,16 +22,53 @@ from ms_modify.setjy import _DEFAULT_STANDARD, _build_setjy_block
 
 class TestBuildSetjyBlock:
     def test_contains_field_name(self):
-        block = _build_setjy_block("3C286", _DEFAULT_STANDARD)
+        block = _build_setjy_block("3C286", _DEFAULT_STANDARD, False)
         assert "3C286" in block
 
     def test_contains_standard(self):
-        block = _build_setjy_block("3C147", _DEFAULT_STANDARD)
+        block = _build_setjy_block("3C147", _DEFAULT_STANDARD, False)
         assert _DEFAULT_STANDARD in block
 
     def test_contains_setjy_call(self):
-        block = _build_setjy_block("3C48", _DEFAULT_STANDARD)
+        block = _build_setjy_block("3C48", _DEFAULT_STANDARD, False)
         assert "setjy(" in block
+
+    def test_usescratch_false_in_block(self):
+        block = _build_setjy_block("3C286", _DEFAULT_STANDARD, False)
+        assert "usescratch=False" in block
+
+    def test_usescratch_true_in_block(self):
+        block = _build_setjy_block("3C286", _DEFAULT_STANDARD, True)
+        assert "usescratch=True" in block
+
+
+# ---------------------------------------------------------------------------
+# _get_field_names — numpy str_ coercion
+# ---------------------------------------------------------------------------
+
+
+class TestGetFieldNamesCoercion:
+    def test_numpy_str_coerced_to_plain_str(self):
+        """tb.getcol returns numpy str_ values; repr(np.str_) renders as
+        np.str_('...') under numpy >= 2, breaking generated scripts."""
+        import numpy as np
+
+        from ms_modify.setjy import _get_field_names
+
+        class FakeTable:
+            def getcol(self, col):
+                return np.array(["3C286", "J1925+2106"])
+
+        from contextlib import contextmanager
+
+        @contextmanager
+        def fake_open_table(path):
+            yield FakeTable()
+
+        with patch("ms_modify.setjy.open_table", fake_open_table):
+            names = _get_field_names("/fake.ms")
+        assert all(type(n) is str for n in names)
+        assert all("np." not in repr(n) for n in names)
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +104,44 @@ class TestSetjyRun:
             result = run(str(ms), str(workdir), execute=False)
         flux_fields = result["data"]["flux_fields"]["value"]
         assert "3C286" in flux_fields
+
+    def test_exclude_fields_omits_overlap_field(self, tmp_path):
+        from ms_modify.setjy import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        # 3C286 is a catalogued flux cal; excluding it (pol cal overlap) must
+        # keep it out of flux_fields and record it under excluded_fields.
+        with patch("ms_modify.setjy._get_field_names", return_value=["3C286", "3C147"]):
+            result = run(str(ms), str(workdir), exclude_fields="3C286", execute=False)
+        flux_fields = result["data"]["flux_fields"]["value"]
+        excluded = result["data"]["excluded_fields"]["value"]
+        assert "3C286" not in flux_fields
+        assert "3C147" in flux_fields
+        assert "3C286" in excluded
+
+    def test_exclude_field_not_written_to_script(self, tmp_path):
+        from ms_modify.setjy import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        with patch("ms_modify.setjy._get_field_names", return_value=["3C286", "3C147"]):
+            run(str(ms), str(workdir), exclude_fields="3C286", execute=False)
+        script = (workdir / "setjy.py").read_text()
+        assert "3C147" in script
+        assert "field='3C286'" not in script
+
+    def test_unmatched_exclude_name_warns(self, tmp_path):
+        from ms_modify.setjy import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        with patch("ms_modify.setjy._get_field_names", return_value=["3C286"]):
+            result = run(str(ms), str(workdir), exclude_fields="typo_name", execute=False)
+        assert any("not found" in w for w in result["warnings"])
 
     def test_unknown_field_is_skipped(self, tmp_path):
         from ms_modify.setjy import run
@@ -132,3 +207,29 @@ class TestSetjyRun:
             run(str(ms), str(workdir), execute=False)
         script = (workdir / "setjy.py").read_text()
         assert "Perley-Butler 2017" in script
+
+    def test_usescratch_defaults_true_in_script(self, tmp_path):
+        from ms_modify.setjy import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        with patch("ms_modify.setjy._get_field_names", return_value=["3C286"]):
+            result = run(str(ms), str(workdir), execute=False)
+        script = (workdir / "setjy.py").read_text()
+        assert "usescratch=True" in script
+        assert "usescratch=False" not in script
+        assert result["data"]["usescratch"] is True
+
+    def test_usescratch_true_threads_into_script_and_response(self, tmp_path):
+        from ms_modify.setjy import run
+
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        with patch("ms_modify.setjy._get_field_names", return_value=["3C286"]):
+            result = run(str(ms), str(workdir), usescratch=True, execute=False)
+        script = (workdir / "setjy.py").read_text()
+        assert "usescratch=True" in script
+        assert "usescratch=False" not in script
+        assert result["data"]["usescratch"] is True

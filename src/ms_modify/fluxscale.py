@@ -20,12 +20,35 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ms_inspect.util.casa_context import validate_ms_path
+from ms_inspect.util.casa_context import describe_numeric_fields, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_modify.exceptions import FluxscaleFailedError
 
 TOOL_NAME = "ms_fluxscale"
+
+
+def _resolve_field_ids(caltable: str, names: list[str]) -> list[str]:
+    """Map field names to the field IDs that actually carry solutions in caltable.
+
+    Guards the duplicate-name case (an empty placeholder field sharing a name
+    with the real one): only IDs present in the caltable's FIELD_ID are returned,
+    so fluxscale gets an unambiguous id selection instead of a colliding name.
+    """
+    from ms_inspect.util.casa_context import open_table
+
+    with open_table(str(Path(caltable) / "FIELD")) as tb:
+        id_to_name = {i: str(n) for i, n in enumerate(tb.getcol("NAME"))}
+    with open_table(caltable) as tb:
+        present = {int(x) for x in tb.getcol("FIELD_ID")}
+    out: list[str] = []
+    for nm in names:
+        ids = [fid for fid, fn in id_to_name.items() if fn == nm and fid in present]
+        if ids:
+            out.extend(str(fid) for fid in ids)
+        else:
+            out.append(nm)
+    return out
 
 
 def _table_exists(path: str) -> bool:
@@ -41,6 +64,8 @@ def _build_script(
     transfer: list[str],
     incremental: bool,
 ) -> str:
+    from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
+
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -51,8 +76,8 @@ import os
 import shutil
 from casatasks import fluxscale
 
-if os.path.exists({fluxtable!r}):
-    shutil.rmtree({fluxtable!r})
+{safe_rm}
+_safe_rm_table({fluxtable!r})
 result = fluxscale(
     vis={ms_str!r},
     caltable={caltable!r},
@@ -100,6 +125,8 @@ def run(
     ms_str = str(p)
     casa_calls: list[str] = []
     warnings: list[str] = []
+    _flux_fields = ",".join([reference, *transfer])
+    warnings.extend(describe_numeric_fields(ms_path, _flux_fields))
 
     workdir_path = Path(workdir)
     if not workdir_path.exists():
@@ -110,6 +137,10 @@ def run(
             ms_path=ms_path,
         )
 
+    from ms_modify.pathguard import validate_output_caltable
+
+    validate_output_caltable(fluxtable, workdir, ms_str)
+
     if not Path(caltable).exists():
         from ms_inspect.exceptions import ComputationError
 
@@ -117,6 +148,10 @@ def run(
             f"Input caltable not found: {caltable}. Run ms_gaincal first.",
             ms_path=ms_path,
         )
+
+    # Resolve names → field IDs present in the caltable (handles duplicate names).
+    reference = _resolve_field_ids(caltable, [reference])[0]
+    transfer = _resolve_field_ids(caltable, transfer)
 
     script_path = str(workdir_path / "fluxscale.py")
     Path(script_path).write_text(

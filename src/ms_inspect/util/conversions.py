@@ -147,7 +147,7 @@ def freq_to_band_name(freq_hz: float, telescope: str) -> str | None:
     if "VLA" in t or "EVLA" in t or "JVLA" in t:
         if freq_ghz < 0.30:
             return "4-band (<300 MHz)"
-        elif freq_ghz < 1.00:
+        elif freq_ghz < 0.90:
             return "P-band (230–470 MHz)"
         elif freq_ghz < 2.00:
             return "L-band (1–2 GHz)"

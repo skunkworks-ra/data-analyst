@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ms_inspect.tools.image_stats import _extract_beam
+from ms_inspect.tools.image_stats import _extract_beam, _plane_labels
 
 
 class TestExtractBeam:
@@ -57,6 +57,55 @@ class TestExtractBeam:
         assert major is None
         assert minor is None
         assert pa is None
+
+
+class TestPlaneLabels:
+    def test_iquv_cube_order(self):
+        # Image axes [RA, Dec, Stokes, Freq]; remaining axes [2, 3].
+        # Stokes axis=2 (len 4), spectral axis=3 (len 2).
+        labels = _plane_labels(
+            remaining_axes=[2, 3],
+            remaining_shape=[4, 2],
+            stokes_pix_axis=2,
+            spec_pix_axis=3,
+            stokes_names=["I", "Q", "U", "V"],
+        )
+        # C-order: stokes varies slowest, channel fastest.
+        assert len(labels) == 8
+        assert labels[0] == {"stokes_index": 0, "stokes": "I", "chan": 0}
+        assert labels[1] == {"stokes_index": 0, "stokes": "I", "chan": 1}
+        assert labels[2] == {"stokes_index": 1, "stokes": "Q", "chan": 0}
+        assert labels[-1] == {"stokes_index": 3, "stokes": "V", "chan": 1}
+
+    def test_freq_first_axis_order(self):
+        # Image axes [RA, Dec, Freq, Stokes]; remaining [2, 3].
+        labels = _plane_labels(
+            remaining_axes=[2, 3],
+            remaining_shape=[3, 2],
+            stokes_pix_axis=3,
+            spec_pix_axis=2,
+            stokes_names=["I", "V"],
+        )
+        assert labels[0] == {"chan": 0, "stokes_index": 0, "stokes": "I"}
+        assert labels[1] == {"chan": 0, "stokes_index": 1, "stokes": "V"}
+        assert labels[2] == {"chan": 1, "stokes_index": 0, "stokes": "I"}
+
+    def test_no_stokes_names_falls_back_to_index(self):
+        labels = _plane_labels([2], [2], stokes_pix_axis=2, spec_pix_axis=None)
+        assert labels[0] == {"stokes_index": 0}
+        assert labels[1] == {"stokes_index": 1}
+
+
+class TestClassifyDetection:
+    def test_thresholds(self):
+        from ms_inspect.tools.image_stats import _classify_detection
+
+        assert _classify_detection(3.0) == ("marginal", False)
+        assert _classify_detection(5.0) == ("marginal", False)  # boundary: fail
+        assert _classify_detection(7.0) == ("marginal", True)
+        assert _classify_detection(10.0) == ("detection", True)  # boundary: pass
+        assert _classify_detection(120.0) == ("detection", True)
+        assert _classify_detection(None) == ("unknown", False)
 
 
 class TestRunPathValidation:

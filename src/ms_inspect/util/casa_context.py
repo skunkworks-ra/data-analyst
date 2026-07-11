@@ -117,7 +117,15 @@ def open_msmd(ms_path: str) -> Generator[Any, None, None]:
 
     msmd = casatools.msmetadata()
     try:
-        opened = msmd.open(str(p))
+        # Only the open() call is wrapped — exceptions raised by the caller's
+        # with-body must propagate untouched (they carry their own error type).
+        try:
+            opened = msmd.open(str(p))
+        except Exception as exc:
+            raise CASAOpenFailedError(
+                f"casatools.msmetadata raised an exception opening '{p}': {exc}",
+                ms_path=ms_path,
+            ) from exc
         if not opened:
             raise CASAOpenFailedError(
                 f"msmetadata.open() returned False for '{p}'. "
@@ -125,17 +133,8 @@ def open_msmd(ms_path: str) -> Generator[Any, None, None]:
                 ms_path=ms_path,
             )
         yield msmd
-    except CASAOpenFailedError:
-        raise
-    except Exception as exc:
-        raise CASAOpenFailedError(
-            f"casatools.msmetadata raised an exception opening '{p}': {exc}",
-            ms_path=ms_path,
-        ) from exc
     finally:
-        import contextlib
-
-        with contextlib.suppress(Exception):
+        with suppress(Exception):
             msmd.close()  # best-effort close; don't mask the original exception
 
 
@@ -161,19 +160,18 @@ def open_table(table_path: str, *, read_only: bool = True) -> Generator[Any, Non
     casatools = _require_casatools()
     tb = casatools.table()
     try:
-        opened = tb.open(table_path, nomodify=read_only)
+        try:
+            opened = tb.open(table_path, nomodify=read_only)
+        except Exception as exc:
+            raise CASAOpenFailedError(
+                f"casatools.table raised an exception opening '{table_path}': {exc}",
+            ) from exc
         if not opened:
             raise CASAOpenFailedError(
                 f"table.open() returned False for '{table_path}'. "
                 "The table may be locked, missing, or corrupted.",
             )
         yield tb
-    except CASAOpenFailedError:
-        raise
-    except Exception as exc:
-        raise CASAOpenFailedError(
-            f"casatools.table raised an exception opening '{table_path}': {exc}",
-        ) from exc
     finally:
         with suppress(Exception):
             tb.close()
@@ -205,20 +203,19 @@ def open_image(image_path: str) -> Generator[Any, None, None]:
     casatools = _require_casatools()
     ia = casatools.image()
     try:
-        opened = ia.open(str(p))
+        try:
+            opened = ia.open(str(p))
+        except Exception as exc:
+            raise CASAOpenFailedError(
+                f"casatools.image raised an exception opening '{p}': {exc}",
+                ms_path=image_path,
+            ) from exc
         if not opened:
             raise CASAOpenFailedError(
                 f"image.open() returned False for '{p}'. The image may be locked or corrupted.",
                 ms_path=image_path,
             )
         yield ia
-    except CASAOpenFailedError:
-        raise
-    except Exception as exc:
-        raise CASAOpenFailedError(
-            f"casatools.image raised an exception opening '{p}': {exc}",
-            ms_path=image_path,
-        ) from exc
     finally:
         with suppress(Exception):
             ia.done()
@@ -242,20 +239,72 @@ def open_ms(ms_path: str) -> Generator[Any, None, None]:
 
     ms = casatools.ms()
     try:
-        opened = ms.open(str(p), nomodify=True)
+        try:
+            opened = ms.open(str(p), nomodify=True)
+        except Exception as exc:
+            raise CASAOpenFailedError(
+                f"casatools.ms raised an exception opening '{p}': {exc}",
+                ms_path=ms_path,
+            ) from exc
         if not opened:
             raise CASAOpenFailedError(
                 f"ms.open() returned False for '{p}'.",
                 ms_path=ms_path,
             )
         yield ms
-    except CASAOpenFailedError:
-        raise
-    except Exception as exc:
-        raise CASAOpenFailedError(
-            f"casatools.ms raised an exception opening '{p}': {exc}",
-            ms_path=ms_path,
-        ) from exc
     finally:
         with suppress(Exception):
             ms.close()
+
+
+def describe_numeric_fields(ms_path: str, field_sel: str) -> list[str]:
+    """
+    Resolve any bare-integer tokens in a CASA field selection to their field
+    NAMEs and return human-readable warning lines.
+
+    Field selection by numeric ID is valid CASA syntax, but it is silently
+    wrong when an MS has been re-indexed (e.g. after split() the field IDs no
+    longer match the parent MS). Echoing the resolved names back to the caller
+    makes a mis-selection — like solving on '5' and hitting 3C84 instead of
+    3C147 — immediately visible.
+
+    This is a best-effort, non-fatal helper: it returns an empty list on any
+    problem (no CASA, MS not openable, no numeric tokens, out-of-range ID).
+    It never raises, so it is safe to call on the script-generation path.
+
+    Returns:
+        e.g. ["field selection contains numeric IDs — verify the mapping: "
+              "'1'→'J1331+3030', '4'→'0542+498=3C147'. After split() the IDs "
+              "may differ from the parent MS; prefer field NAMES."]
+        or [] when there is nothing to warn about.
+    """
+    if not field_sel or not str(field_sel).strip():
+        return []
+
+    # Collect bare integer tokens (skip ranges like '1~3', names, '*').
+    numeric_tokens = [tok.strip() for tok in str(field_sel).split(",") if tok.strip().isdigit()]
+    if not numeric_tokens:
+        return []
+
+    try:
+        with open_msmd(ms_path) as msmd:
+            names = list(msmd.fieldnames())
+    except Exception:
+        return []
+
+    mappings: list[str] = []
+    for tok in numeric_tokens:
+        idx = int(tok)
+        if 0 <= idx < len(names):
+            mappings.append(f"'{tok}'→'{names[idx]}'")
+        else:
+            mappings.append(f"'{tok}'→<out of range>")
+
+    if not mappings:
+        return []
+
+    return [
+        "field selection contains numeric IDs — verify the mapping: "
+        + ", ".join(mappings)
+        + ". After split() the IDs may differ from the parent MS; prefer field NAMES."
+    ]
