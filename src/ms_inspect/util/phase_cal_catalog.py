@@ -43,9 +43,9 @@ QUALITY_RANK: dict[str, int] = {"P": 4, "S": 3, "W": 2, "C": 1, "X": 0, "?": -1}
 
 @dataclass
 class BandEntry:
-    band_code: str      # L, C, X, U, K, Q, P
-    wavelength: str     # '20cm', '6cm', …
-    quality_A: str      # P / S / W / C / X / ?
+    band_code: str  # L, C, X, U, K, Q, P
+    wavelength: str  # '20cm', '6cm', …
+    quality_A: str  # P / S / W / C / X / ?
     quality_B: str
     quality_C: str
     quality_D: str
@@ -69,12 +69,12 @@ class BandEntry:
 
 @dataclass
 class PhaseCalEntry:
-    iau_name: str           # '0137+331'
-    ra_deg: float           # J2000 RA in decimal degrees
-    dec_deg: float          # J2000 Dec in decimal degrees
-    pos_accuracy: str       # A / B / C / T
-    pos_ref: str | None     # 'Aug01', 'May00', …
-    alt_name: str | None    # '3C48', 'JVAS', 'CJ2', …
+    iau_name: str  # '0137+331'
+    ra_deg: float  # J2000 RA in decimal degrees
+    dec_deg: float  # J2000 Dec in decimal degrees
+    pos_accuracy: str  # A / B / C / T
+    pos_ref: str | None  # 'Aug01', 'May00', …
+    alt_name: str | None  # '3C48', 'JVAS', 'CJ2', …
     bands: dict[str, BandEntry] = field(default_factory=dict)  # keyed by band_code
 
     def band(self, band_code: str) -> BandEntry | None:
@@ -85,8 +85,8 @@ class PhaseCalEntry:
 class PhaseCalMatch:
     entry: PhaseCalEntry
     separation_deg: float
-    band: BandEntry | None      # None if no entry for requested band
-    quality: str | None         # quality code at requested band/config; None if no band
+    band: BandEntry | None  # None if no entry for requested band
+    quality: str | None  # quality code at requested band/config; None if no band
 
 
 # ---------------------------------------------------------------------------
@@ -96,11 +96,11 @@ class PhaseCalMatch:
 _RA_RE = re.compile(r"(\d+)h(\d+)m([\d.]+)s")
 _DEC_RE = re.compile(r'(-?)(\d+)d(\d+)\'([\d."]+)')
 _BAND_RE = re.compile(
-    r"^\s*(\d+\.?\d*cm)\s+([A-Z])\s+"   # wavelength  band_code
+    r"^\s*(\d+\.?\d*cm)\s+([A-Z])\s+"  # wavelength  band_code
     r"([A-Z?])\s+([A-Z?])\s+([A-Z?])\s+([A-Z?])\s+"  # q_A q_B q_C q_D
-    r"([\d.]+)"                           # flux
-    r"(?:\s+([\d.]+))?"                   # uvmin (optional)
-    r"(?:\s+([\d.]+))?"                   # uvmax (optional)
+    r"([\d.]+)"  # flux
+    r"(?:\s+([\d.]+))?"  # uvmin (optional)
+    r"(?:\s+([\d.]+))?"  # uvmax (optional)
 )
 
 
@@ -173,6 +173,7 @@ def _parse_band_line(line: str) -> BandEntry | None:
 # Catalog loader
 # ---------------------------------------------------------------------------
 
+
 def _load_catalog(text: str) -> dict[str, PhaseCalEntry]:
     catalog: dict[str, PhaseCalEntry] = {}
     current: PhaseCalEntry | None = None
@@ -240,6 +241,7 @@ def _get_catalog() -> dict[str, PhaseCalEntry]:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def get_source(iau_name: str) -> PhaseCalEntry | None:
     """Return a catalog entry by IAU name, or None if not found."""
     return _get_catalog().get(iau_name)
@@ -293,11 +295,17 @@ def lookup_nearest(
         band_entry = entry.band(band_code) if band_code else None
 
         # If band/config filter requested, skip unusable sources
-        if band_code and array_config and (band_entry is None or not band_entry.is_usable(array_config, min_quality)):
+        if (
+            band_code
+            and array_config
+            and (band_entry is None or not band_entry.is_usable(array_config, min_quality))
+        ):
             continue
 
         best_sep = sep
-        quality = band_entry.quality_for_config(array_config) if (band_entry and array_config) else None
+        quality = (
+            band_entry.quality_for_config(array_config) if (band_entry and array_config) else None
+        )
         best = PhaseCalMatch(entry=entry, separation_deg=sep, band=band_entry, quality=quality)
 
     return best

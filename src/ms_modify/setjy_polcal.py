@@ -52,6 +52,7 @@ TOOL_NAME = "ms_setjy_polcal"
 _PB_STANDARD = "Perley-Butler 2017"
 _DEFAULT_MIN_CHUNK_MHZ = 32.0
 
+
 def _read_band_range_ghz(ms_str: str) -> tuple[float, float]:
     """Return (lo, hi) GHz spanning all channels of all spectral windows.
 

@@ -437,9 +437,7 @@ def run(
     amp_std_arr = np.full(shape, math.nan) if _complex else None
     phase_mean_arr = np.full(shape, math.nan) if _complex else None
     phase_rms_arr = np.full(shape, math.nan) if _complex else None
-    amp_array_4d = (
-        np.full((n_ant, n_spw, n_field, n_chan_max), math.nan) if _freq_dep else None
-    )
+    amp_array_4d = np.full((n_ant, n_spw, n_field, n_chan_max), math.nan) if _freq_dep else None
 
     # delay: store mean delay per (ant, spw, field, n_corr) — inferred from first slice
     delay_arr: np.ndarray | None = None

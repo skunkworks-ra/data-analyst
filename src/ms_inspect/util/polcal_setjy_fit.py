@@ -183,7 +183,9 @@ def fit_setjy_params(
         lo, hi = flux_freq_range_ghz
         mask_i &= (freq >= lo) & (freq <= hi)
     if mask_i.sum() < 2:
-        raise ValueError(f"Stokes I fit needs ≥2 in-band nodes; got {mask_i.sum()} after filtering.")
+        raise ValueError(
+            f"Stokes I fit needs ≥2 in-band nodes; got {mask_i.sum()} after filtering."
+        )
     flux_at_ref, spix = fit_stokes_i(freq[mask_i], flux[mask_i], reffreq_ghz, deg=spix_deg)
 
     # --- Pol fraction ---

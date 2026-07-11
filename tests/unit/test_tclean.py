@@ -89,9 +89,7 @@ class TestAwpFullPolGuardrails:
         assert not any("shapeIn.isEqual" in w for w in warnings)
 
     def test_awp_fullpol_warns_aterm_cost(self, tmp_path):
-        _, warnings = _run(
-            tmp_path, gridder="awp2", wprojplanes=16, stokes="IQUV", specmode="mfs"
-        )
+        _, warnings = _run(tmp_path, gridder="awp2", wprojplanes=16, stokes="IQUV", specmode="mfs")
         assert any("A-term" in w for w in warnings)
 
     def test_stokes_i_no_fullpol_warnings(self, tmp_path):

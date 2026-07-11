@@ -354,9 +354,7 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
                     intents = set()
                 if not intents:
                     continue
-                if angle_cal_entry is None and any(
-                    "POL_ANGLE" in i for i in intents
-                ):
+                if angle_cal_entry is None and any("POL_ANGLE" in i for i in intents):
                     # Field has CALIBRATE_POL_ANGLE intent — treat as angle cal.
                     # Look up in the pol catalogue using a substring match on the name.
                     entry = lookup_pol(fname)
@@ -368,9 +366,7 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
                             f"Field '{fname}' has CALIBRATE_POL_ANGLE intent but is not in "
                             "the pol calibrator catalogue — pol angle properties unavailable."
                         )
-                if leakage_cal_field_id is None and any(
-                    "POL_LEAKAGE" in i for i in intents
-                ):
+                if leakage_cal_field_id is None and any("POL_LEAKAGE" in i for i in intents):
                     # Field has CALIBRATE_POL_LEAKAGE intent — use as leakage cal.
                     # leakage_cal_entry stays None (no catalogue properties), but
                     # PA spread is still computed from scan times.
@@ -475,9 +471,7 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             if fid in skip_ids:
                 continue
             ra_c, dec_c = (
-                field_coords[fid]
-                if fid < len(field_coords)
-                else (float("nan"), float("nan"))
+                field_coords[fid] if fid < len(field_coords) else (float("nan"), float("nan"))
             )
             if math.isnan(ra_c) or math.isnan(dec_c):
                 continue

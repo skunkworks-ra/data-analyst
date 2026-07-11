@@ -199,9 +199,7 @@ def run(
     for spw_id, freqs in spw_chan_freqs.items():
         n_chan = len(freqs)
         if n_chan > 0:
-            spw_reservoirs[spw_id] = [
-                _ChanReservoir(max_samples_per_chan) for _ in range(n_chan)
-            ]
+            spw_reservoirs[spw_id] = [_ChanReservoir(max_samples_per_chan) for _ in range(n_chan)]
 
     field_clause = ""
     if field_ids is not None:
@@ -352,9 +350,7 @@ def run(
             den += res.n_unflagged
         discardable = (num / den) if den > 0 else 0.0
 
-        severity = (
-            round(band_floor / clean_floor, 3) if clean_floor and clean_floor > 0 else None
-        )
+        severity = round(band_floor / clean_floor, 3) if clean_floor and clean_floor > 0 else None
         ptf_vals = [r["peak_to_floor"] for r in chan_records if r.get("peak_to_floor") is not None]
 
         per_spw.append(

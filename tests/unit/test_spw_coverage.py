@@ -91,10 +91,10 @@ def _patch_msmd(monkeypatch, fields):
 
 # 3C286 split across two field IDs with disjoint SpWs; phase cal + target in 2-9.
 _AB1345_LIKE = [
-    ("3C286", ["CALIBRATE_BANDPASS#ON_SOURCE"], [0, 1]),          # 0 — wrong solve field
+    ("3C286", ["CALIBRATE_BANDPASS#ON_SOURCE"], [0, 1]),  # 0 — wrong solve field
     ("J1331+3030", ["CALIBRATE_BANDPASS#ON_SOURCE"], [2, 3, 4, 5]),  # 1 — correct ref
     ("J1925+2106", ["CALIBRATE_PHASE#ON_SOURCE"], [2, 3, 4, 5]),  # 2 — transfer
-    ("G55.7+3.4", ["OBSERVE_TARGET#ON_SOURCE"], [2, 3, 4, 5]),    # 3 — science target
+    ("G55.7+3.4", ["OBSERVE_TARGET#ON_SOURCE"], [2, 3, 4, 5]),  # 3 — science target
 ]
 
 

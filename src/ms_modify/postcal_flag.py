@@ -433,9 +433,7 @@ def run(
         casa_calls.append(f"flagmanager(mode='save', versionname={_FLAG_VERSION!r})")
         flagmanager(vis=ms_str, mode="save", versionname=_FLAG_VERSION)
         for kw in flag_calls:
-            casa_calls.append(
-                f"flagdata(mode={kw['mode']!r}, field={field!r}, action='apply')"
-            )
+            casa_calls.append(f"flagdata(mode={kw['mode']!r}, field={field!r}, action='apply')")
             flagdata(vis=ms_str, action="apply", flagbackup=False, **kw)
     except Exception as exc:
         raise ComputationError(

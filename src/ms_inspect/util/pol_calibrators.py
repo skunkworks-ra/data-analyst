@@ -88,72 +88,123 @@ POL_CATALOGUE: list[PolCalEntry] = [
             # the tabulated P.A. (radians). flux_jy is the tabulated I (Jy).
             "2019": [
                 PolFreqEntry(
-                    freq_ghz=1.02, frac_pol_pct=8.6, frac_pol_upper_limit=False,
-                    pol_angle_deg=33.0, flux_jy=17.46
+                    freq_ghz=1.02,
+                    frac_pol_pct=8.6,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0,
+                    flux_jy=17.46,
                 ),
                 PolFreqEntry(
-                    freq_ghz=1.47, frac_pol_pct=9.8, frac_pol_upper_limit=False,
-                    pol_angle_deg=33.0, flux_jy=14.64
+                    freq_ghz=1.47,
+                    frac_pol_pct=9.8,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0,
+                    flux_jy=14.64,
                 ),
                 PolFreqEntry(
-                    freq_ghz=1.87, frac_pol_pct=10.1, frac_pol_upper_limit=False,
-                    pol_angle_deg=33.0, flux_jy=13.03
+                    freq_ghz=1.87,
+                    frac_pol_pct=10.1,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0,
+                    flux_jy=13.03,
                 ),
                 PolFreqEntry(
-                    freq_ghz=2.57, frac_pol_pct=10.6, frac_pol_upper_limit=False,
-                    pol_angle_deg=33.0, flux_jy=10.85
+                    freq_ghz=2.57,
+                    frac_pol_pct=10.6,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0,
+                    flux_jy=10.85,
                 ),
                 PolFreqEntry(
-                    freq_ghz=3.57, frac_pol_pct=11.2, frac_pol_upper_limit=False,
-                    pol_angle_deg=33.0, flux_jy=8.94
+                    freq_ghz=3.57,
+                    frac_pol_pct=11.2,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0,
+                    flux_jy=8.94,
                 ),
                 PolFreqEntry(
-                    freq_ghz=4.89, frac_pol_pct=11.5, frac_pol_upper_limit=False,
-                    pol_angle_deg=33.0, flux_jy=7.33
+                    freq_ghz=4.89,
+                    frac_pol_pct=11.5,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0,
+                    flux_jy=7.33,
                 ),
                 PolFreqEntry(
-                    freq_ghz=6.68, frac_pol_pct=11.9, frac_pol_upper_limit=False,
-                    pol_angle_deg=33.0, flux_jy=5.97
+                    freq_ghz=6.68,
+                    frac_pol_pct=11.9,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0,
+                    flux_jy=5.97,
                 ),
                 PolFreqEntry(
-                    freq_ghz=8.43, frac_pol_pct=12.1, frac_pol_upper_limit=False,
-                    pol_angle_deg=33.0, flux_jy=5.12
+                    freq_ghz=8.43,
+                    frac_pol_pct=12.1,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=33.0,
+                    flux_jy=5.12,
                 ),
                 PolFreqEntry(
-                    freq_ghz=11.3, frac_pol_pct=12.3, frac_pol_upper_limit=False,
-                    pol_angle_deg=34.0, flux_jy=4.12
+                    freq_ghz=11.3,
+                    frac_pol_pct=12.3,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=34.0,
+                    flux_jy=4.12,
                 ),
                 PolFreqEntry(
-                    freq_ghz=14.1, frac_pol_pct=12.3, frac_pol_upper_limit=False,
-                    pol_angle_deg=34.0, flux_jy=3.54
+                    freq_ghz=14.1,
+                    frac_pol_pct=12.3,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=34.0,
+                    flux_jy=3.54,
                 ),
                 PolFreqEntry(
-                    freq_ghz=16.6, frac_pol_pct=12.5, frac_pol_upper_limit=False,
-                    pol_angle_deg=35.0, flux_jy=3.15
+                    freq_ghz=16.6,
+                    frac_pol_pct=12.5,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=35.0,
+                    flux_jy=3.15,
                 ),
                 PolFreqEntry(
-                    freq_ghz=19.1, frac_pol_pct=12.6, frac_pol_upper_limit=False,
-                    pol_angle_deg=35.0, flux_jy=2.85
+                    freq_ghz=19.1,
+                    frac_pol_pct=12.6,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=35.0,
+                    flux_jy=2.85,
                 ),
                 PolFreqEntry(
-                    freq_ghz=25.6, frac_pol_pct=12.7, frac_pol_upper_limit=False,
-                    pol_angle_deg=36.0, flux_jy=2.30
+                    freq_ghz=25.6,
+                    frac_pol_pct=12.7,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=36.0,
+                    flux_jy=2.30,
                 ),
                 PolFreqEntry(
-                    freq_ghz=32.1, frac_pol_pct=13.1, frac_pol_upper_limit=False,
-                    pol_angle_deg=36.0, flux_jy=1.92
+                    freq_ghz=32.1,
+                    frac_pol_pct=13.1,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=36.0,
+                    flux_jy=1.92,
                 ),
                 PolFreqEntry(
-                    freq_ghz=37.1, frac_pol_pct=13.5, frac_pol_upper_limit=False,
-                    pol_angle_deg=36.0, flux_jy=1.73
+                    freq_ghz=37.1,
+                    frac_pol_pct=13.5,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=36.0,
+                    flux_jy=1.73,
                 ),
                 PolFreqEntry(
-                    freq_ghz=42.1, frac_pol_pct=13.4, frac_pol_upper_limit=False,
-                    pol_angle_deg=37.0, flux_jy=1.57
+                    freq_ghz=42.1,
+                    frac_pol_pct=13.4,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=37.0,
+                    flux_jy=1.57,
                 ),
                 PolFreqEntry(
-                    freq_ghz=48.1, frac_pol_pct=14.6, frac_pol_upper_limit=False,
-                    pol_angle_deg=36.0, flux_jy=1.44
+                    freq_ghz=48.1,
+                    frac_pol_pct=14.6,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=36.0,
+                    flux_jy=1.44,
                 ),
             ],
         },
@@ -175,72 +226,123 @@ POL_CATALOGUE: list[PolCalEntry] = [
             # a typo for 16.564, the value used for the other calibrators).
             "2019": [
                 PolFreqEntry(
-                    freq_ghz=1.022, frac_pol_pct=5.462, frac_pol_upper_limit=False,
-                    pol_angle_deg=-13.28, flux_jy=10.07
+                    freq_ghz=1.022,
+                    frac_pol_pct=5.462,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-13.28,
+                    flux_jy=10.07,
                 ),
                 PolFreqEntry(
-                    freq_ghz=1.465, frac_pol_pct=7.795, frac_pol_upper_limit=False,
-                    pol_angle_deg=-9.56, flux_jy=8.26
+                    freq_ghz=1.465,
+                    frac_pol_pct=7.795,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-9.56,
+                    flux_jy=8.26,
                 ),
                 PolFreqEntry(
-                    freq_ghz=1.865, frac_pol_pct=8.955, frac_pol_upper_limit=False,
-                    pol_angle_deg=-9.3, flux_jy=7.21
+                    freq_ghz=1.865,
+                    frac_pol_pct=8.955,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-9.3,
+                    flux_jy=7.21,
                 ),
                 PolFreqEntry(
-                    freq_ghz=2.565, frac_pol_pct=9.848, frac_pol_upper_limit=False,
-                    pol_angle_deg=-10.15, flux_jy=6.0
+                    freq_ghz=2.565,
+                    frac_pol_pct=9.848,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-10.15,
+                    flux_jy=6.0,
                 ),
                 PolFreqEntry(
-                    freq_ghz=3.565, frac_pol_pct=10.337, frac_pol_upper_limit=False,
-                    pol_angle_deg=-9.52, flux_jy=4.89
+                    freq_ghz=3.565,
+                    frac_pol_pct=10.337,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-9.52,
+                    flux_jy=4.89,
                 ),
                 PolFreqEntry(
-                    freq_ghz=4.885, frac_pol_pct=10.524, frac_pol_upper_limit=False,
-                    pol_angle_deg=-10.53, flux_jy=4.0
+                    freq_ghz=4.885,
+                    frac_pol_pct=10.524,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-10.53,
+                    flux_jy=4.0,
                 ),
                 PolFreqEntry(
-                    freq_ghz=6.68, frac_pol_pct=10.219, frac_pol_upper_limit=False,
-                    pol_angle_deg=-11.49, flux_jy=3.23
+                    freq_ghz=6.68,
+                    frac_pol_pct=10.219,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-11.49,
+                    flux_jy=3.23,
                 ),
                 PolFreqEntry(
-                    freq_ghz=8.435, frac_pol_pct=10.939, frac_pol_upper_limit=False,
-                    pol_angle_deg=-9.4, flux_jy=2.76
+                    freq_ghz=8.435,
+                    frac_pol_pct=10.939,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-9.4,
+                    flux_jy=2.76,
                 ),
                 PolFreqEntry(
-                    freq_ghz=11.32, frac_pol_pct=9.063, frac_pol_upper_limit=False,
-                    pol_angle_deg=-7.94, flux_jy=2.24
+                    freq_ghz=11.32,
+                    frac_pol_pct=9.063,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-7.94,
+                    flux_jy=2.24,
                 ),
                 PolFreqEntry(
-                    freq_ghz=14.065, frac_pol_pct=8.231, frac_pol_upper_limit=False,
-                    pol_angle_deg=-10.48, flux_jy=1.9
+                    freq_ghz=14.065,
+                    frac_pol_pct=8.231,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-10.48,
+                    flux_jy=1.9,
                 ),
                 PolFreqEntry(
-                    freq_ghz=16.654, frac_pol_pct=8.186, frac_pol_upper_limit=False,
-                    pol_angle_deg=-13.23, flux_jy=1.69
+                    freq_ghz=16.654,
+                    frac_pol_pct=8.186,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-13.23,
+                    flux_jy=1.69,
                 ),
                 PolFreqEntry(
-                    freq_ghz=19.064, frac_pol_pct=8.437, frac_pol_upper_limit=False,
-                    pol_angle_deg=-16.05, flux_jy=1.54
+                    freq_ghz=19.064,
+                    frac_pol_pct=8.437,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-16.05,
+                    flux_jy=1.54,
                 ),
                 PolFreqEntry(
-                    freq_ghz=25.564, frac_pol_pct=8.422, frac_pol_upper_limit=False,
-                    pol_angle_deg=-18.16, flux_jy=1.25
+                    freq_ghz=25.564,
+                    frac_pol_pct=8.422,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-18.16,
+                    flux_jy=1.25,
                 ),
                 PolFreqEntry(
-                    freq_ghz=32.064, frac_pol_pct=8.541, frac_pol_upper_limit=False,
-                    pol_angle_deg=-19.43, flux_jy=1.06
+                    freq_ghz=32.064,
+                    frac_pol_pct=8.541,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-19.43,
+                    flux_jy=1.06,
                 ),
                 PolFreqEntry(
-                    freq_ghz=37.064, frac_pol_pct=8.694, frac_pol_upper_limit=False,
-                    pol_angle_deg=-19.53, flux_jy=0.96
+                    freq_ghz=37.064,
+                    frac_pol_pct=8.694,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-19.53,
+                    flux_jy=0.96,
                 ),
                 PolFreqEntry(
-                    freq_ghz=42.064, frac_pol_pct=8.772, frac_pol_upper_limit=False,
-                    pol_angle_deg=-23.21, flux_jy=0.88
+                    freq_ghz=42.064,
+                    frac_pol_pct=8.772,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-23.21,
+                    flux_jy=0.88,
                 ),
                 PolFreqEntry(
-                    freq_ghz=48.064, frac_pol_pct=9.147, frac_pol_upper_limit=False,
-                    pol_angle_deg=-24.12, flux_jy=0.82
+                    freq_ghz=48.064,
+                    frac_pol_pct=9.147,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-24.12,
+                    flux_jy=0.82,
                 ),
             ],
         },
@@ -410,72 +512,123 @@ POL_CATALOGUE: list[PolCalEntry] = [
             # angle is not used for angle calibration but is retained for fidelity.
             "2019": [
                 PolFreqEntry(
-                    freq_ghz=1.022, frac_pol_pct=0.028, frac_pol_upper_limit=True,
-                    pol_angle_deg=None, flux_jy=27.73
+                    freq_ghz=1.022,
+                    frac_pol_pct=0.028,
+                    frac_pol_upper_limit=True,
+                    pol_angle_deg=None,
+                    flux_jy=27.73,
                 ),
                 PolFreqEntry(
-                    freq_ghz=1.465, frac_pol_pct=0.018, frac_pol_upper_limit=True,
-                    pol_angle_deg=None, flux_jy=21.36
+                    freq_ghz=1.465,
+                    frac_pol_pct=0.018,
+                    frac_pol_upper_limit=True,
+                    pol_angle_deg=None,
+                    flux_jy=21.36,
                 ),
                 PolFreqEntry(
-                    freq_ghz=1.865, frac_pol_pct=0.021, frac_pol_upper_limit=True,
-                    pol_angle_deg=None, flux_jy=17.86
+                    freq_ghz=1.865,
+                    frac_pol_pct=0.021,
+                    frac_pol_upper_limit=True,
+                    pol_angle_deg=None,
+                    flux_jy=17.86,
                 ),
                 PolFreqEntry(
-                    freq_ghz=2.565, frac_pol_pct=0.015, frac_pol_upper_limit=True,
-                    pol_angle_deg=None, flux_jy=13.79
+                    freq_ghz=2.565,
+                    frac_pol_pct=0.015,
+                    frac_pol_upper_limit=True,
+                    pol_angle_deg=None,
+                    flux_jy=13.79,
                 ),
                 PolFreqEntry(
-                    freq_ghz=3.565, frac_pol_pct=0.052, frac_pol_upper_limit=False,
-                    pol_angle_deg=-34.1, flux_jy=10.4
+                    freq_ghz=3.565,
+                    frac_pol_pct=0.052,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-34.1,
+                    flux_jy=10.4,
                 ),
                 PolFreqEntry(
-                    freq_ghz=4.885, frac_pol_pct=0.157, frac_pol_upper_limit=False,
-                    pol_angle_deg=-13.18, flux_jy=7.88
+                    freq_ghz=4.885,
+                    frac_pol_pct=0.157,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-13.18,
+                    flux_jy=7.88,
                 ),
                 PolFreqEntry(
-                    freq_ghz=6.68, frac_pol_pct=0.514, frac_pol_upper_limit=False,
-                    pol_angle_deg=-57.35, flux_jy=5.91
+                    freq_ghz=6.68,
+                    frac_pol_pct=0.514,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-57.35,
+                    flux_jy=5.91,
                 ),
                 PolFreqEntry(
-                    freq_ghz=8.435, frac_pol_pct=0.476, frac_pol_upper_limit=False,
-                    pol_angle_deg=-19.04, flux_jy=4.81
+                    freq_ghz=8.435,
+                    frac_pol_pct=0.476,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=-19.04,
+                    flux_jy=4.81,
                 ),
                 PolFreqEntry(
-                    freq_ghz=11.32, frac_pol_pct=0.849, frac_pol_upper_limit=False,
-                    pol_angle_deg=26.68, flux_jy=3.67
+                    freq_ghz=11.32,
+                    frac_pol_pct=0.849,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=26.68,
+                    flux_jy=3.67,
                 ),
                 PolFreqEntry(
-                    freq_ghz=14.065, frac_pol_pct=1.791, frac_pol_upper_limit=False,
-                    pol_angle_deg=52.51, flux_jy=3.02
+                    freq_ghz=14.065,
+                    frac_pol_pct=1.791,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=52.51,
+                    flux_jy=3.02,
                 ),
                 PolFreqEntry(
-                    freq_ghz=16.564, frac_pol_pct=2.4, frac_pol_upper_limit=False,
-                    pol_angle_deg=59.82, flux_jy=2.61
+                    freq_ghz=16.564,
+                    frac_pol_pct=2.4,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=59.82,
+                    flux_jy=2.61,
                 ),
                 PolFreqEntry(
-                    freq_ghz=19.064, frac_pol_pct=2.904, frac_pol_upper_limit=False,
-                    pol_angle_deg=65.76, flux_jy=2.32
+                    freq_ghz=19.064,
+                    frac_pol_pct=2.904,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=65.76,
+                    flux_jy=2.32,
                 ),
                 PolFreqEntry(
-                    freq_ghz=25.564, frac_pol_pct=3.432, frac_pol_upper_limit=False,
-                    pol_angle_deg=78.69, flux_jy=1.82
+                    freq_ghz=25.564,
+                    frac_pol_pct=3.432,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=78.69,
+                    flux_jy=1.82,
                 ),
                 PolFreqEntry(
-                    freq_ghz=32.064, frac_pol_pct=4.033, frac_pol_upper_limit=False,
-                    pol_angle_deg=82.49, flux_jy=1.53
+                    freq_ghz=32.064,
+                    frac_pol_pct=4.033,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=82.49,
+                    flux_jy=1.53,
                 ),
                 PolFreqEntry(
-                    freq_ghz=37.064, frac_pol_pct=4.47, frac_pol_upper_limit=False,
-                    pol_angle_deg=87.44, flux_jy=1.38
+                    freq_ghz=37.064,
+                    frac_pol_pct=4.47,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=87.44,
+                    flux_jy=1.38,
                 ),
                 PolFreqEntry(
-                    freq_ghz=42.064, frac_pol_pct=4.943, frac_pol_upper_limit=False,
-                    pol_angle_deg=86.62, flux_jy=1.26
+                    freq_ghz=42.064,
+                    frac_pol_pct=4.943,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=86.62,
+                    flux_jy=1.26,
                 ),
                 PolFreqEntry(
-                    freq_ghz=48.064, frac_pol_pct=5.956, frac_pol_upper_limit=False,
-                    pol_angle_deg=85.34, flux_jy=1.14
+                    freq_ghz=48.064,
+                    frac_pol_pct=5.956,
+                    frac_pol_upper_limit=False,
+                    pol_angle_deg=85.34,
+                    flux_jy=1.14,
                 ),
             ],
         },

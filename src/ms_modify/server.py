@@ -636,7 +636,9 @@ class ApplyInitialRflagInput(BaseModel):
 class PostcalFlagInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(
-        ..., description="Path to the MS (CORRECTED populated on the selected fields).", min_length=1
+        ...,
+        description="Path to the MS (CORRECTED populated on the selected fields).",
+        min_length=1,
     )
     workdir: str = Field(..., description="Existing directory for generated scripts.", min_length=1)
     field: str = Field(
@@ -656,7 +658,9 @@ class PostcalFlagInput(BaseModel):
         default="",
         description="Drop-tier SpWs — fully flagged via manual command. Empty = drop nothing.",
     )
-    datacolumn: str = Field(default="corrected", description="Column to flag on (default 'corrected').")
+    datacolumn: str = Field(
+        default="corrected", description="Column to flag on (default 'corrected')."
+    )
     clip_sigma: float | None = Field(
         default=5.0,
         description="Per-SpW robust clip ceiling = median + clip_sigma*1.4826*MAD, computed per kept SpW. None disables.",
@@ -670,9 +674,13 @@ class PostcalFlagInput(BaseModel):
         description="Optional CASA uvrange applied to the clip only (e.g. '>2klambda') to protect short-spacing flux on extended sources.",
     )
     timedevscale: float = Field(default=5.0, description="rflag time deviation threshold.", gt=0.0)
-    freqdevscale: float = Field(default=5.0, description="rflag frequency deviation threshold.", gt=0.0)
+    freqdevscale: float = Field(
+        default=5.0, description="rflag frequency deviation threshold.", gt=0.0
+    )
     timecutoff: float = Field(default=4.0, description="tfcrop time deviation threshold.", gt=0.0)
-    freqcutoff: float = Field(default=4.0, description="tfcrop frequency deviation threshold.", gt=0.0)
+    freqcutoff: float = Field(
+        default=4.0, description="tfcrop frequency deviation threshold.", gt=0.0
+    )
     execute: bool = Field(
         default=False,
         description="If False (default), write scripts and return. If True, run flagdata(mode='list') in-process.",

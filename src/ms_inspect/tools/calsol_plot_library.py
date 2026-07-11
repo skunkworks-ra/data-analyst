@@ -18,7 +18,9 @@ from ms_inspect.util.formatting import response_envelope
 TOOL_NAME = "ms_plot_caltable_library"
 
 
-def run(caltable_paths: list[str], output_dir: str, combined_name: str = "caltables_overview.html") -> dict:
+def run(
+    caltable_paths: list[str], output_dir: str, combined_name: str = "caltables_overview.html"
+) -> dict:
     """
     Plot a list of caltables into a single combined HTML (one tab each).
 
@@ -52,7 +54,9 @@ def run(caltable_paths: list[str], output_dir: str, combined_name: str = "caltab
         try:
             built = calsol_plot.build_layout(str(p))
             panels.append(TabPanel(child=built["layout"], title=name))
-            entries.append({"caltable": str(p), "status": "ok", "viscal": built["vc"], "view": built["view"]})
+            entries.append(
+                {"caltable": str(p), "status": "ok", "viscal": built["vc"], "view": built["view"]}
+            )
         except Exception as exc:  # partial success — one bad table is an error tab
             warnings.append(f"{name}: {exc}")
             entries.append({"caltable": str(p), "status": "error", "error": str(exc)})

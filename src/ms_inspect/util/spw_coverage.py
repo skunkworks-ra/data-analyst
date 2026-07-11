@@ -245,6 +245,4 @@ def check_spw_coverage(
         logger.debug("SpW coverage check skipped: msmd unavailable for %s", ms_path)
         return []
 
-    return evaluate_coverage(
-        solve_spws, target_spws, selected_spws, solve_label, target_label
-    )
+    return evaluate_coverage(solve_spws, target_spws, selected_spws, solve_label, target_label)

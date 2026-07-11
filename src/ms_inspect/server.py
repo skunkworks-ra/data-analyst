@@ -25,7 +25,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect import __version__
 from ms_inspect.exceptions import RadioMSError
-from ms_inspect.util import phase_cal_catalog as _pcc
 from ms_inspect.tools import (
     antennas,
     calsol_plot,
@@ -434,9 +433,7 @@ class CalsolStatsDetailInput(BaseModel):
     )
     spw: int | None = Field(default=None, description="Restrict to this SPW id.")
     field: str = Field(default="", description="Restrict to this field name.")
-    max_rows: int = Field(
-        default=300, ge=1, description="Row cap (hard-limited to 300)."
-    )
+    max_rows: int = Field(default=300, ge=1, description="Row cap (hard-limited to 300).")
 
 
 class CalsolPlotInput(BaseModel):

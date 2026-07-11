@@ -119,13 +119,10 @@ def classify(
     reasons: list[str] = []
 
     if abs(par_amp - 1.0) <= default_amp_tol and par_phase_rms <= default_phase_rms_deg:
-        reasons.append(
-            "pinned at MODEL=1 Jy default (amp≈1, flat phase) — model likely unwritten"
-        )
+        reasons.append("pinned at MODEL=1 Jy default (amp≈1, flat phase) — model likely unwritten")
     if par_amp < plausible_min_jy or par_amp > plausible_max_jy:
         reasons.append(
-            f"par_amp {par_amp} Jy outside plausible band "
-            f"[{plausible_min_jy}, {plausible_max_jy}]"
+            f"par_amp {par_amp} Jy outside plausible band [{plausible_min_jy}, {plausible_max_jy}]"
         )
 
     ratio: float | None = None

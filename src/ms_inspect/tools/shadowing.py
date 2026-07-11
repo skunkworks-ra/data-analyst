@@ -84,9 +84,7 @@ def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
                     shadowed_antennas.append(
                         {
                             "antenna_name": ant_name,
-                            "shadow_flag_fraction": round(
-                                n_ant_flagged / max(n_ant_total, 1), 4
-                            ),
+                            "shadow_flag_fraction": round(n_ant_flagged / max(n_ant_total, 1), 4),
                             "n_flagged": n_ant_flagged,
                             "n_total": n_ant_total,
                         }

@@ -217,7 +217,11 @@ def run(ms_path: str) -> dict:
         for rec in fields_out:
             fid = rec["field_id"]
             intent_f = rec.get("intents", {})
-            if isinstance(intent_f, dict) and intent_f.get("flag") == "UNAVAILABLE" and fid in inferred:
+            if (
+                isinstance(intent_f, dict)
+                and intent_f.get("flag") == "UNAVAILABLE"
+                and fid in inferred
+            ):
                 roles, reason = inferred[fid]
                 rec["intents"] = field(
                     infer_intents_from_role(roles),
@@ -402,6 +406,7 @@ def _infer_roles_from_scan_pattern(
 
     # Count scans per field
     from collections import Counter
+
     scan_count: Counter[int] = Counter(fid for _, fid, _ in scan_sequence)
     if not scan_count:
         return {}
@@ -424,6 +429,7 @@ def _infer_roles_from_scan_pattern(
 
     # Median scan duration per field
     from statistics import median
+
     durations: dict[int, list[float]] = {}
     for _, fid, dur in scan_sequence:
         durations.setdefault(fid, []).append(dur)
@@ -448,7 +454,12 @@ def _infer_roles_from_scan_pattern(
 
         # Angular separation check
         fid_ra, fid_dec = coords.get(fid, (None, None))
-        if target_ra is not None and target_dec is not None and fid_ra is not None and fid_dec is not None:
+        if (
+            target_ra is not None
+            and target_dec is not None
+            and fid_ra is not None
+            and fid_dec is not None
+        ):
             sep = _angular_sep_deg(target_ra, target_dec, fid_ra, fid_dec)
             if sep > phase_cal_sep_deg:
                 continue

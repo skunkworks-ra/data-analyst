@@ -46,8 +46,16 @@ def test_per_spw_robust_clip_calls():
         freqcutoff=4.0,
     )
     # one clip call per SpW, sorted, with that SpW's own ceiling and the uvrange
-    assert calls[0]["mode"] == "clip" and calls[0]["spw"] == "0" and calls[0]["clipminmax"] == [0.0, 1.2]
-    assert calls[1]["mode"] == "clip" and calls[1]["spw"] == "4" and calls[1]["clipminmax"] == [0.0, 2.5]
+    assert (
+        calls[0]["mode"] == "clip"
+        and calls[0]["spw"] == "0"
+        and calls[0]["clipminmax"] == [0.0, 1.2]
+    )
+    assert (
+        calls[1]["mode"] == "clip"
+        and calls[1]["spw"] == "4"
+        and calls[1]["clipminmax"] == [0.0, 2.5]
+    )
     assert calls[0]["uvrange"] == ">2klambda"
 
 

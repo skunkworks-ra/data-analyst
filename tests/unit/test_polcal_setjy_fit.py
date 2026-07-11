@@ -376,11 +376,18 @@ class TestFitPolTermsFromCatalogue:
         assert len(polindex) == 4
         assert len(polangle) == 5
 
-    def test_3c147_polangle_fails_unpolarized(self):
-        # 3C147 has no defined position angle (leakage calibrator) — polangle
-        # fit must raise rather than fabricate an angle.
+    def test_3c147_polangle_fails_unpolarized_lband(self):
+        # 3C147 is essentially unpolarized below ~3 GHz: every L/S-band node
+        # has pol_angle_deg=None (leakage calibrator). Restricted to that
+        # range, the polangle fit must raise rather than fabricate an angle.
         with pytest.raises(ValueError, match="polangle"):
-            fit_pol_terms_from_catalogue("3C147", reffreq_ghz=6.0)
+            fit_pol_terms_from_catalogue("3C147", reffreq_ghz=1.5, pol_freq_range_ghz=(1.0, 3.0))
+
+    def test_3c147_polangle_fits_above_3ghz(self):
+        # From 3.565 GHz up the catalogue tabulates PA for 3C147 (retained for
+        # fidelity), so an unrestricted C-band fit succeeds.
+        polindex, polangle = fit_pol_terms_from_catalogue("3C147", reffreq_ghz=6.0)
+        assert len(polangle) >= 1
 
     def test_unknown_calibrator_raises(self):
         with pytest.raises(KeyError, match="not found"):
