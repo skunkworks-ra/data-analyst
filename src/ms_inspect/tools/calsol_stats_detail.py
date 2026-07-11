@@ -125,9 +125,7 @@ def run(
     if not p.exists() or not p.is_file():
         from ms_inspect.util.formatting import error_envelope
 
-        return error_envelope(
-            TOOL_NAME, npz_path, "NPZ_NOT_FOUND", f"Raw stats NPZ not found: {p}"
-        )
+        return error_envelope(TOOL_NAME, npz_path, "NPZ_NOT_FOUND", f"Raw stats NPZ not found: {p}")
 
     if kind not in _VALID_KINDS:
         from ms_inspect.util.formatting import error_envelope
@@ -139,7 +137,9 @@ def run(
             f"kind must be one of {sorted(_VALID_KINDS)}; got '{kind}'.",
         )
 
-    npz = np.load(p, allow_pickle=True)
+    # The sidecar contains only plain numeric/str arrays (see _save_raw_npz);
+    # allow_pickle stays off so a hostile .npz cannot execute code on load.
+    npz = np.load(p, allow_pickle=False)
     ants = [str(a) for a in npz["ant_names"]]
     spws = [int(s) for s in npz["spw_ids"]]
     fields = [str(f) for f in npz["field_names"]]
@@ -181,9 +181,7 @@ def run(
     n_total = len(rows)
     data = {
         "kind": fmt_field(kind),
-        "filters": fmt_field(
-            {"antenna": antenna or None, "spw": spw, "field": field or None}
-        ),
+        "filters": fmt_field({"antenna": antenna or None, "spw": spw, "field": field or None}),
         "n_total": fmt_field(n_total),
         "n_returned": fmt_field(min(n_total, cap)),
         "truncated": fmt_field(n_total > cap),
