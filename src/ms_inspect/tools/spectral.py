@@ -19,25 +19,24 @@ import numpy as np
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path, validate_subtable
 from ms_inspect.util.conversions import (
     corr_codes_to_labels,
-    freq_to_band_name,
     hz_to_human,
     is_full_stokes,
     polarization_basis,
 )
 from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.telescope import resolve_telescope
 
 TOOL_SPW = "ms_spectral_window_list"
 TOOL_CORR = "ms_correlator_config"
 
 
-def _get_telescope_name(ms_path_str: str) -> str | None:
-    """Read telescope name from OBSERVATION subtable. Returns None on failure."""
+def _read_spw_names(ms_path_str: str) -> dict[int, str]:
+    """Read SPECTRAL_WINDOW.NAME per SpW (used for ALMA receiver-band parsing)."""
     try:
-        with open_table(ms_path_str + "/OBSERVATION") as tb:
-            names = tb.getcol("TELESCOPE_NAME")
-            return str(names[0]).strip() if len(names) > 0 else None
+        with open_table(ms_path_str + "/SPECTRAL_WINDOW") as tb:
+            return {i: str(n) for i, n in enumerate(tb.getcol("NAME"))}
     except Exception:
-        return None
+        return {}
 
 
 def _read_polarization_table(ms_path_str: str) -> tuple[dict[int, list[int]], list[str]]:
@@ -87,7 +86,8 @@ def run_spectral_window_list(ms_path: str) -> dict:
     casa_calls: list[str] = []
     warnings: list[str] = []
 
-    telescope = _get_telescope_name(ms_str)
+    profile = resolve_telescope(ms_str)
+    spw_names = _read_spw_names(ms_str)
 
     # Read polarization and data_description tables
     validate_subtable(p, "POLARIZATION")
@@ -129,10 +129,10 @@ def run_spectral_window_list(ms_path: str) -> dict:
             freq_centre = float(chan_freqs.mean())
             total_bw = float(abs_widths.sum())
 
-            band_name = freq_to_band_name(freq_centre, telescope or "")
-            band_flag = "COMPLETE" if (telescope and band_name) else "UNAVAILABLE"
-            if not telescope:
-                band_flag = "UNAVAILABLE"
+            band_name = (
+                profile.band_label(freq_centre, spw_names.get(spw_id)) if profile else None
+            )
+            band_flag = "COMPLETE" if (profile and band_name) else "UNAVAILABLE"
 
             # Single-channel SpW (frequency-averaged)
             if n_chan == 1:
@@ -167,7 +167,7 @@ def run_spectral_window_list(ms_path: str) -> dict:
                 "channel_width_uniform": width_uniform,
                 "correlations": corr_field,
                 "band_name": field(
-                    band_name, flag=band_flag, note=None if telescope else "Telescope unknown"
+                    band_name, flag=band_flag, note=None if profile else "Telescope unknown"
                 ),
             }
 
@@ -214,7 +214,7 @@ def run_spectral_window_list(ms_path: str) -> dict:
 
     data = {
         "n_spw": n_spw,
-        "telescope": telescope or "UNKNOWN",
+        "telescope": profile.canonical if profile else "UNKNOWN",
         "spectral_windows": spws_out,
         "suggested": {
             "center_channels_string": ",".join(center_parts),

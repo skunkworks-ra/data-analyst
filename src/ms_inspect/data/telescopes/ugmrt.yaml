@@ -1,0 +1,25 @@
+# uGMRT frequency bands and sensitivity.
+# Source: "The GMRT: System Parameters and Current Status", 15 Dec 2025,
+# https://www.gmrt.ncra.tifr.res.in/doc/GMRT_specs.pdf — §system table (p5) and
+# feed section (p7-8). Four wideband receivers since the 2019 upgrade.
+# (The overview quotes Band-2 as 120–250 MHz; the sensitivity table and feed
+# section quote 125–250 — we use the latter, consistent across both tables.)
+canonical: uGMRT
+aliases: [UGMRT, GMRT]
+bands:
+  - {code: "2", min_ghz: 0.125, max_ghz: 0.250, label: "Band 2 (125–250 MHz)"}
+  - {code: "3", min_ghz: 0.250, max_ghz: 0.500, label: "Band 3 (250–500 MHz)"}
+  - {code: "4", min_ghz: 0.550, max_ghz: 0.850, label: "Band 4 (550–850 MHz)"}
+  - {code: "5", min_ghz: 1.000, max_ghz: 1.460, label: "Band 5 (1000–1460 MHz)"}
+# SEFD (Jy) = Tsys(K) / Gain(K/Jy), from the p5 table. Band-2 and Band-5 Tsys
+# vary strongly across the band (sky-dominated at low freq); values here are
+# band representatives — Band-2 ranges ~730 (250 MHz) to ~2300 Jy (125 MHz).
+#   Band-2: Tsys~500 (mid of 760–240) / 0.33  ≈ 1500
+#   Band-3: Tsys~132 (mid of 165–100) / 0.38  ≈ 350
+#   Band-4: Tsys~100              / 0.35       ≈ 285
+#   Band-5: Tsys~75 / 0.25 (mid of 0.22–0.28)  ≈ 300
+sefd_jy:
+  "2": 1500
+  "3": 350
+  "4": 285
+  "5": 300

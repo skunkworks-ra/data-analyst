@@ -16,34 +16,15 @@ import math
 import numpy as np
 
 from ms_inspect.util.calibrators import lookup as cal_lookup
-from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
-from ms_inspect.util.conversions import freq_to_band_name
+from ms_inspect.util.casa_context import open_msmd, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.telescope import resolve_telescope
 
 TOOL_NAME = "ms_gaincal_snr_predict"
 
-# SEFD table — verbatim from 11-imaging.md §Step 7
-SEFD_JY: dict[str, dict[str, float]] = {
-    "EVLA": {"P": 2600, "L": 420, "S": 370, "C": 310, "X": 280},
-    "MeerKAT": {"L": 400, "S": 380, "C": 420},
-    "uGMRT": {"P": 1800, "L": 600, "S": 560},
-}
-
-# Telescope name normalisation — OBSERVATION.TELESCOPE_NAME values
-_TELESCOPE_ALIAS: dict[str, str] = {
-    "EVLA": "EVLA",
-    "VLA": "EVLA",
-    "JVLA": "EVLA",
-    "MEERKAT": "MeerKAT",
-    "MEERKAT+": "MeerKAT",
-    "UGMRT": "uGMRT",
-    "GMRT": "uGMRT",
-}
-
-
-def _normalise_telescope(name: str) -> str | None:
-    return _TELESCOPE_ALIAS.get(name.upper().strip())
+# SEFD (Jy) is carried per-telescope by the TelescopeProfile (loaded from
+# data/telescopes/*.yaml, keyed by band code) — see util/telescope.py.
 
 
 def run(
@@ -71,20 +52,17 @@ def run(
     casa_calls: list[str] = []
     warnings: list[str] = []
 
-    # 1. Read telescope name
-    telescope_raw: str = "UNKNOWN"
-    try:
-        with open_table(ms_str + "/OBSERVATION") as tb:
-            casa_calls.append("tb.open(OBSERVATION) → TELESCOPE_NAME")
-            names = tb.getcol("TELESCOPE_NAME")
-            telescope_raw = str(names[0]).strip() if len(names) > 0 else "UNKNOWN"
-    except Exception as e:
-        warnings.append(f"Could not read telescope name: {e}")
-
-    telescope = _normalise_telescope(telescope_raw)
-    if telescope is None:
+    # 1. Resolve telescope (single seam — reads + normalises OBSERVATION name once)
+    profile = resolve_telescope(ms_str)
+    casa_calls.append("resolve_telescope() → OBSERVATION.TELESCOPE_NAME")
+    telescope_raw = profile.raw_name if profile else "UNKNOWN"
+    if profile is None:
         warnings.append(
-            f"Telescope '{telescope_raw}' not in SEFD table. SNR prediction unavailable."
+            "Telescope name unrecognised — no profile/SEFD. SNR prediction unavailable."
+        )
+    elif not profile.sefd:
+        warnings.append(
+            f"No SEFD table for {profile.canonical}. SNR prediction unavailable."
         )
 
     # 2. Flux density — must be supplied by caller.
@@ -140,7 +118,7 @@ def run(
             chan_widths = np.asarray(np.abs(msmd.chanwidths(spw_id)))
             centre_hz = float(chan_freqs.mean())
             bw_hz = float(chan_widths.sum())
-            band = freq_to_band_name(centre_hz, telescope_raw) if telescope else None
+            band = profile.band_label(centre_hz) if profile else None
             spw_info.append(
                 {
                     "spw_id": spw_id,
@@ -181,9 +159,10 @@ def run(
 
     for spw in spw_info:
         band = spw["band"]
-        sefd_jy: float | None = None
-        if telescope and band:
-            sefd_jy = SEFD_JY.get(telescope, {}).get(band)
+        # Key SEFD by unambiguous band code (DEFECT-003: label != code).
+        sefd_jy: float | None = (
+            profile.sefd_for_freq(spw["centre_hz"]) if profile else None
+        )
 
         if sefd_jy is None or t_solint is None or t_solint <= 0:
             per_spw.append(

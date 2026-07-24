@@ -24,7 +24,6 @@ from pathlib import Path
 
 from ms_create.exceptions import ASDMNotFoundError
 from ms_inspect.util.conversions import (
-    freq_to_band_name,
     hz_to_human,
     mjd_seconds_to_utc,
     rad_to_dms,
@@ -33,6 +32,7 @@ from ms_inspect.util.conversions import (
 )
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.telescope import profile_from_name
 
 TOOL_NAME = "ms_sdm_summary"
 
@@ -251,7 +251,8 @@ def run(sdm_path: str) -> dict:
         )
 
     # --- Derived: band + max target elevation (EVLA geometry only) ----------
-    band = freq_to_band_name(ref_freq_hz, telescope) if (ref_freq_hz and telescope) else None
+    _tp = profile_from_name(telescope) if telescope else None
+    band = _tp.band_label(ref_freq_hz) if (_tp and ref_freq_hz) else None
     max_el = None
     if telescope and ("VLA" in telescope.upper()) and target_decs_deg:
         # Max elevation at upper culmination: 90 - |lat - dec|.

@@ -16,7 +16,6 @@ from ms_inspect.util.conversions import (
     corr_codes_to_labels,
     deg_to_rad,
     ecef_to_geodetic,
-    freq_to_band_name,
     hz_to_human,
     is_full_stokes,
     largest_angular_scale_arcsec,
@@ -137,77 +136,7 @@ class TestHzToHuman:
         assert hz_to_human(50.0) == "50.00 Hz"
 
 
-class TestFreqToBandName:
-    # VLA
-    def test_vla_l_band(self):
-        result = freq_to_band_name(1.5e9, "VLA")
-        assert "L-band" in result
-
-    def test_vla_c_band(self):
-        result = freq_to_band_name(6.0e9, "EVLA")
-        assert "C-band" in result
-
-    def test_vla_x_band(self):
-        result = freq_to_band_name(10.0e9, "JVLA")
-        assert "X-band" in result
-
-    def test_vla_p_band(self):
-        result = freq_to_band_name(350e6, "VLA")
-        assert "P-band" in result
-
-    def test_vla_s_band(self):
-        result = freq_to_band_name(3.0e9, "VLA")
-        assert "S-band" in result
-
-    def test_vla_ku_band(self):
-        result = freq_to_band_name(15.0e9, "VLA")
-        assert "Ku-band" in result
-
-    def test_vla_k_band(self):
-        result = freq_to_band_name(22.0e9, "VLA")
-        assert "K-band" in result
-
-    def test_vla_ka_band(self):
-        result = freq_to_band_name(33.0e9, "VLA")
-        assert "Ka-band" in result
-
-    def test_vla_q_band(self):
-        result = freq_to_band_name(44.0e9, "VLA")
-        assert "Q-band" in result
-
-    def test_vla_4_band(self):
-        result = freq_to_band_name(70e6, "VLA")
-        assert "4-band" in result
-
-    # MeerKAT
-    def test_meerkat_l_band(self):
-        result = freq_to_band_name(1.28e9, "MeerKAT")
-        assert "L-band" in result
-
-    def test_meerkat_uhf(self):
-        result = freq_to_band_name(800e6, "MeerKAT")
-        assert "UHF" in result
-
-    def test_meerkat_s_band(self):
-        result = freq_to_band_name(2.5e9, "MeerKAT")
-        assert "S-band" in result
-
-    def test_meerkat_unknown(self):
-        result = freq_to_band_name(5.0e9, "MeerKAT")
-        assert "Unknown" in result
-
-    # uGMRT
-    def test_gmrt_band2(self):
-        result = freq_to_band_name(400e6, "uGMRT")
-        assert "Band 2" in result
-
-    def test_gmrt_band5(self):
-        result = freq_to_band_name(1.2e9, "GMRT")
-        assert "Band 5" in result
-
-    # Unknown telescope
-    def test_unknown_telescope(self):
-        assert freq_to_band_name(1.4e9, "ALMA") is None
+# Frequency → band name moved to util/telescope.py — see tests/unit/test_telescope.py.
 
 
 # ---------------------------------------------------------------------------
