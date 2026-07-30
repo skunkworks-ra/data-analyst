@@ -98,9 +98,11 @@ Docs: `11-imaging.md` now always sizes images out to the **first PB sidelobe** (
 
 ## 6. Scaffold gaps still OPEN (documented, not fixed)
 
-- **token footprint (broad):** only `calsol_stats` compacted; the `{value,flag}` envelope is
-  still verbose across all tools. Centralized fix: at each server's `_run_tool`, drop `flag`
-  when COMPLETE and collapse `{value:v}`→`v` (keeps run() dict contract; unit tests still pass).
+- ~~**token footprint (broad)**~~ — **CLOSED.** `compact_fields()`
+  (`ms_inspect/util/formatting.py`) drops `flag` when COMPLETE and collapses
+  `{value:v}`→`v` at the serialization boundary, and all three servers apply it in
+  `_run_tool`. The `run()` dict contract is unchanged. Remaining token work is
+  per-tool payload shaping (`offload_detail`), not the envelope.
 - **setjy_polcal epoch is MJD-conditional**, NOT a blanket 2019: obs before 2019 → 2013 values,
   ≥2019 → 2019. Catalogue currently bundles only the 2019 epoch; needs the 2013 epoch too.
   (SN1006 is MJD 56424 = 2013, so 2013 is the *correct* epoch; we used 2019 as the only one
