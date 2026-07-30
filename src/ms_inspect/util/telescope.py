@@ -50,8 +50,7 @@ class Band(BaseModel):
     def _check_interval(self) -> Band:
         if self.max_ghz <= self.min_ghz:
             raise ValueError(
-                f"band {self.code!r}: max_ghz ({self.max_ghz}) must exceed "
-                f"min_ghz ({self.min_ghz})"
+                f"band {self.code!r}: max_ghz ({self.max_ghz}) must exceed min_ghz ({self.min_ghz})"
             )
         return self
 
@@ -83,9 +82,7 @@ _SPECS: dict[str, TelescopeSpec] = _load_specs()
 
 # Exact alias lookup: upper-cased alias/canonical -> spec.
 _ALIAS: dict[str, TelescopeSpec] = {
-    alias.upper(): spec
-    for spec in _SPECS.values()
-    for alias in (*spec.aliases, spec.canonical)
+    alias.upper(): spec for spec in _SPECS.values() for alias in (*spec.aliases, spec.canonical)
 }
 
 

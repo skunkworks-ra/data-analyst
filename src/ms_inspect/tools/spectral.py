@@ -129,9 +129,7 @@ def run_spectral_window_list(ms_path: str) -> dict:
             freq_centre = float(chan_freqs.mean())
             total_bw = float(abs_widths.sum())
 
-            band_name = (
-                profile.band_label(freq_centre, spw_names.get(spw_id)) if profile else None
-            )
+            band_name = profile.band_label(freq_centre, spw_names.get(spw_id)) if profile else None
             band_flag = "COMPLETE" if (profile and band_name) else "UNAVAILABLE"
 
             # Single-channel SpW (frequency-averaged)

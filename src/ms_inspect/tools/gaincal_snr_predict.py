@@ -61,9 +61,7 @@ def run(
             "Telescope name unrecognised — no profile/SEFD. SNR prediction unavailable."
         )
     elif not profile.sefd:
-        warnings.append(
-            f"No SEFD table for {profile.canonical}. SNR prediction unavailable."
-        )
+        warnings.append(f"No SEFD table for {profile.canonical}. SNR prediction unavailable.")
 
     # 2. Flux density — must be supplied by caller.
     # The bundled catalogue stores role/notes only; not flux. A predictive
@@ -160,9 +158,7 @@ def run(
     for spw in spw_info:
         band = spw["band"]
         # Key SEFD by unambiguous band code (DEFECT-003: label != code).
-        sefd_jy: float | None = (
-            profile.sefd_for_freq(spw["centre_hz"]) if profile else None
-        )
+        sefd_jy: float | None = profile.sefd_for_freq(spw["centre_hz"]) if profile else None
 
         if sefd_jy is None or t_solint is None or t_solint <= 0:
             per_spw.append(
