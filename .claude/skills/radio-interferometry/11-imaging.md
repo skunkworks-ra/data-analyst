@@ -275,9 +275,15 @@ If `rms_jy` is > 3× the radiometer estimate, run `ms_residual_stats` on the
 CORRECTED column before re-imaging — the problem is likely in the calibration,
 not the imaging parameters.
 
-A `detection_pass`=false verdict (peak-to-noise < 10; fail ≤ 5) means no reliable
-source — cross-check Step 0.5. If that gate failed, it's calibration decorrelation,
-not imaging.
+`ms_image_stats` labels `dynamic_range` as `detection` or `marginal` against two
+reference constants it also returns, `detection_low_reference` (5) and
+`detection_high_reference` (10): at or below 5 the label is `marginal`, from 5
+up to 10 it is still `marginal`, at or above 10 it is `detection`. The tool does
+not decide go/no-go on this; that call is yours. Treat `marginal` at or below
+the low reference as no reliable source: the peak is consistent with a
+residual/sidelobe spike, not a source, so do not report it as a detection.
+Cross-check Step 0.5 first; if that gate failed, the cause is calibration
+decorrelation, not imaging.
 
 ---
 

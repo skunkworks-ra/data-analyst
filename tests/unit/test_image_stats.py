@@ -100,12 +100,12 @@ class TestClassifyDetection:
     def test_thresholds(self):
         from ms_inspect.tools.image_stats import _classify_detection
 
-        assert _classify_detection(3.0) == ("marginal", False)
-        assert _classify_detection(5.0) == ("marginal", False)  # boundary: fail
-        assert _classify_detection(7.0) == ("marginal", True)
-        assert _classify_detection(10.0) == ("detection", True)  # boundary: pass
-        assert _classify_detection(120.0) == ("detection", True)
-        assert _classify_detection(None) == ("unknown", False)
+        assert _classify_detection(3.0) == "undetected"
+        assert _classify_detection(5.0) == "undetected"  # boundary, <= _P2N_FAIL
+        assert _classify_detection(7.0) == "marginal"
+        assert _classify_detection(10.0) == "detection"  # boundary
+        assert _classify_detection(120.0) == "detection"
+        assert _classify_detection(None) == "unknown"
 
 
 class TestRunPathValidation:

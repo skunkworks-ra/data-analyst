@@ -46,6 +46,7 @@ TOOL_NAME = "ms_spw_amp_severity"
 _DEFAULT_SIGMA = 5.0
 _DEFAULT_MAX_SAMPLES = 5000
 _DEFAULT_ROW_CHUNK = 20_000
+_DEFAULT_MAX_CHAN_RECORDS = 256
 _SEED = 1234  # fixed for reproducibility
 
 
@@ -97,6 +98,31 @@ class _ChanReservoir:
         }
 
 
+def _bound_chan_records(chan_records: list[dict], max_records: int) -> tuple[list[dict], int]:
+    """Bound a per-channel record list to `max_records` entries.
+
+    Keeps the `max_records` channels with the highest `peak_to_floor` (the
+    RFI headline statistic this tool exists to surface), then re-sorts the
+    kept set back into channel order so the returned list still reads
+    left-to-right across the band. Records with no `peak_to_floor` (no
+    unflagged data) sort last, i.e. are the first candidates for omission.
+
+    Returns (bounded_records, n_omitted). n_omitted is 0 when
+    len(chan_records) <= max_records — no truncation occurred.
+    """
+    n = len(chan_records)
+    if n <= max_records:
+        return chan_records, 0
+
+    def _key(r: dict) -> float:
+        ptf = r.get("peak_to_floor")
+        return ptf if ptf is not None else -1.0
+
+    worst = sorted(chan_records, key=_key, reverse=True)[:max_records]
+    worst.sort(key=lambda r: r["chan"])
+    return worst, n - max_records
+
+
 def _corr_first_axis(arr: np.ndarray) -> np.ndarray:
     """Return amplitude array as [n_chan, n_elements] folding corr + rows together.
 
@@ -115,6 +141,7 @@ def run(
     sigma: float = _DEFAULT_SIGMA,
     max_samples_per_chan: int = _DEFAULT_MAX_SAMPLES,
     row_chunk: int = _DEFAULT_ROW_CHUNK,
+    max_chan_records: int = _DEFAULT_MAX_CHAN_RECORDS,
 ) -> dict:
     """
     Per-channel robust amplitude stats of a data column, aggregated per SpW.
@@ -129,10 +156,21 @@ def run(
                               Only used to derive the discardable-fraction estimate.
         max_samples_per_chan: Reservoir size per channel (memory knob).
         row_chunk:            Rows read per block (memory knob; smaller = less RAM).
+        max_chan_records:     Per-SpW cap on `per_chan` records returned inline.
+                              The per-SpW aggregates (band_floor, severity,
+                              estimated_discardable_frac) are never capped —
+                              only the per-channel drill-down detail is. When
+                              a SpW's channel count exceeds this, the worst
+                              `max_chan_records` channels by peak_to_floor are
+                              returned inline and the full, uncapped per-channel
+                              array for every SpW is always written to a JSON
+                              sidecar next to the MS (see `detail_path` in the
+                              response) for drill-down.
 
     Returns:
-        Standard envelope with per_spw → per-channel robust stats + per-SpW
-        aggregate severity numbers. No verdict, no flagging.
+        Standard envelope with per_spw → per-channel robust stats (possibly
+        bounded; see `max_chan_records`) + per-SpW aggregate severity numbers.
+        No verdict, no flagging.
     """
     field = normalize_field_sel(field)
     p = validate_ms_path(ms_path)
@@ -368,6 +406,75 @@ def run(
             }
         )
 
+    # ------------------------------------------------------------------
+    # Bound the per-channel drill-down for the wire response. The per-SpW
+    # aggregates above (band_floor, severity, estimated_discardable_frac) are
+    # never bounded — they are the tool's primary output and are small
+    # regardless of channel count. `per_chan` is detail; a wideband dataset
+    # (e.g. MeerKAT 32k-channel mode) can put tens of thousands of records
+    # per SpW into a single response, which is what this cap prevents.
+    #
+    # When any SpW exceeds the cap, the full uncapped per-channel arrays for
+    # every SpW are written to a JSON sidecar first, so no detail is lost —
+    # only the inline response is bounded. See util/formatting.offload_detail()
+    # for the precedent (used by ms_antenna_list / ms_baseline_lengths and by
+    # the ms_calsol_stats → ms_calsol_stats_detail NPZ sidecar pattern).
+    #
+    # Unlike offload_detail, the sidecar here is written ONLY when bounding
+    # actually occurs. offload_detail always strips its heavy keys, so its
+    # sidecar is always the sole copy of that detail; here, if every SpW fits
+    # under the cap the inline response is already complete and a sidecar
+    # would be pure duplication. This tool is read-only, so it should not
+    # write next to the caller's MS unless the write buys something.
+    # ------------------------------------------------------------------
+    detail_path = ms_str + ".spw_amp_severity_detail.json"
+    bounding_needed = any(len(s["per_chan"]) > max_chan_records for s in per_spw)
+    sidecar_written = False
+    if bounding_needed:
+        sidecar_written = True
+        try:
+            import json as _json
+
+            with open(detail_path, "w") as fh:
+                _json.dump(
+                    {
+                        "per_spw": [
+                            {"spw_id": s["spw_id"], "per_chan": s["per_chan"]} for s in per_spw
+                        ]
+                    },
+                    fh,
+                    separators=(",", ":"),
+                    default=str,
+                )
+        except OSError as exc:
+            sidecar_written = False
+            warnings.append(f"Could not write per-channel detail sidecar to {detail_path}: {exc}")
+
+    for spw_entry in per_spw:
+        full_records = spw_entry["per_chan"]
+        bounded, n_omitted = _bound_chan_records(full_records, max_chan_records)
+        spw_entry["per_chan"] = bounded
+        if n_omitted > 0:
+            if sidecar_written:
+                note = (
+                    f"{n_omitted} of {len(full_records)} channels omitted from this "
+                    f"response (kept the {max_chan_records} worst by peak_to_floor). "
+                    f"Full per-channel array for every SpW at detail_path."
+                )
+                flag = "PARTIAL"
+            else:
+                note = (
+                    f"{n_omitted} of {len(full_records)} channels omitted from this "
+                    f"response (kept the {max_chan_records} worst by peak_to_floor). "
+                    f"Sidecar write failed — see warnings; full detail unavailable."
+                )
+                flag = "UNAVAILABLE"
+            spw_entry["per_chan_completeness"] = fmt_field(
+                f"{len(bounded)} of {len(full_records)} channels shown",
+                flag,
+                note=note,
+            )
+
     data = {
         "datacolumn": datacolumn,
         "clean_floor_anchor": round(clean_floor, 6) if clean_floor is not None else None,
@@ -375,6 +482,12 @@ def run(
         "sigma": sigma,
         "max_samples_per_chan": max_samples_per_chan,
         "row_chunk": row_chunk,
+        "max_chan_records": max_chan_records,
+        "detail_path": fmt_field(
+            detail_path if sidecar_written else None,
+            "COMPLETE" if sidecar_written else "UNAVAILABLE",
+            note="Full, uncapped per-channel arrays for every SpW (compact JSON).",
+        ),
         "note": (
             "band_floor = median of per-channel medians (robust SpW floor). "
             "clean_floor_anchor = median of the lowest-quartile band_floors (thermal "
@@ -384,7 +497,10 @@ def run(
             "elements above band_floor + sigma*band_robust_sigma (localized RFI "
             "magnitude). Per-channel discardable_frac localizes the contamination. "
             "Intermittent-vs-persistent (time structure) is out of scope for this "
-            "tool — it pools over time; use a time-resolved pass for that."
+            "tool — it pools over time; use a time-resolved pass for that. "
+            "per_chan is capped at max_chan_records channels per SpW (worst by "
+            "peak_to_floor); when a SpW is truncated its per_chan_completeness "
+            "field says so and detail_path points to the full, uncapped arrays."
         ),
         "n_spw": len(per_spw),
         "per_spw": per_spw,

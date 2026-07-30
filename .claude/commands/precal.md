@@ -26,13 +26,13 @@ decision gate.
 3. If intents are missing from Phase-1 orientation: `ms_set_intents(ms_path)`.
 
 4. `ms_online_flag_stats(online_flag_file)` — assess online flags.
-   Apply 10-precal-workflow.md §Step 1 decision table.
+   Apply 10-precal-workflow.md §Step 2 decision table.
 
 5. `ms_apply_preflag(ms_path, workdir, cal_fields, online_flag_file, execute=False)`
    → run the generated script as a background job, wait for completion.
 
 6. `ms_flag_summary(calibrators.ms)` — baseline flag fraction.
-   Apply §Step 2 decision table.
+   Apply §Step 3 decision table.
 
 7. `ms_generate_priorcals(calibrators.ms, workdir, execute=False)` → run.
    Then `ms_verify_priorcals(workdir)` — all required tables present?

@@ -114,8 +114,10 @@ Docs: `11-imaging.md` now always sizes images out to the **first PB sidelobe** (
 - **No multiscale deconvolver / `scales`** in `ms_tclean` (only hogbom/mtmfs) — extended
   emission cleaning imperfect; used hogbom.
 - **`gridder='widefield'` not exposed** (only standard/wproject/awp2) — used wproject.
-- **`ms_shadowing_report` non-functional** in this CASA version (msmd.shadowedAntennas missing,
-  geometric fallback unimplemented) — blind to shadowing at compact config / low el.
+- ~~**`ms_shadowing_report` non-functional**~~ — **stale as of 2026-07-30.** The
+  tool was rewritten to use `flagdata(mode='shadow', action='calculate')`
+  (`tools/shadowing.py:58-70`), which is present in CASA 6.7.x and read-only.
+  It is functional but has no integration coverage yet.
 
 ## 7. Converged design decisions for the TWO-EB combination (next big task)
 

@@ -31,18 +31,57 @@ per-server tool inventory). Read it before making any non-trivial change.
 
 Every tool in `src/ms_inspect/tools/` must obey three rules:
 
-1. **One question, one answer.** A tool returns numbers and completeness flags.
-   It never interprets, never suggests a next step, never chains to another tool.
-2. **Numbers, not narratives.** All returned text is structured data or a
-   provenance annotation. Prose interpretation belongs in `skill/SKILL.md`.
+1. **One question, one answer.** A tool answers one question and does not chain
+   to another tool.
+2. **Values, not permission.** A tool may return measurements, derived
+   quantities, rankings, and descriptive labels — always with the inputs that
+   produced them. A tool may **not** return a gate: any field whose semantic is
+   "you may or may not proceed." See the table below.
 3. **Explicit uncertainty.** Every field that could not be retrieved carries a
    `CompletionFlag` (`COMPLETE`, `INFERRED`, `PARTIAL`, `SUSPECT`, `UNAVAILABLE`).
    Silence is never used to indicate failure.
 
-Violating the contract — adding interpretation, collapsing flags, adding
-tool-chaining logic — will break the Skill's reasoning model and produce silent
-scientific errors. If you are unsure whether something belongs in a tool or in
-the Skill, it belongs in the Skill.
+| Permitted | Condition |
+|-----------|-----------|
+| Measurements from MS / caltable / image | — |
+| Derived quantities (ratios, robust stats, residuals vs a catalogue value, documented predictions) | Return the inputs too. `severity` ships with `band_floor` and its anchor. |
+| Rankings (antennas, SpWs, candidate calibrators) | Return per-item scores **and their inputs**, so the ordering is falsifiable from the output alone. |
+| Descriptive labels (`detection: "marginal"`) | Label sits beside the number and the reference it was compared to. |
+| Reference values / thresholds | Returned as a labelled constant with provenance. Returning a threshold is fine; returning the result of *applying* it is not. |
+
+| Forbidden | Example |
+|-----------|---------|
+| Gates | `verdict`, `blocker`, `xf_feasible`, `df_feasible`, `meets_threshold`, `detection_pass` |
+| Acting on a gate | silently substituting a different calibrator because a threshold test failed — return ranked candidates instead |
+| Prose telling the reader what to conclude or not claim | provenance and unit/convention notes are fine |
+
+The line is not scalars versus prose. It is whether the field carries a decision
+that depends on the science goal and the risk tolerance — which only the Skill
+knows. A derived ratio is a measurement of a relationship, not an
+interpretation. A boolean feasibility flag is a decision wearing a number's
+clothes.
+
+**Why gates specifically.** A gate whose failure is loud and cheap costs a CASA
+error. A gate whose failure is silent costs science never attempted, with
+nothing in the output recording what was forgone — and the threshold behind it
+was a constant chosen for a typical case. The continuous measurement usually
+supports a better answer: "24° of PA coverage against a 45° reference, proceed
+but limit fractional-polarization claims to the few percent level" cannot be
+expressed as GO or NO-GO.
+
+**Prefer posterior verification to prior permission.** Put the check *after*
+the operation, as a measurement against a known value — recovered Stokes I
+against the catalogue flux density, recovered EVPA against the catalogue angle,
+D-term amplitude against the expected few percent. Loud, specific, and
+continuous.
+
+**Named exception:** `ms_workflow_status.next_recommended_step` gates on
+filesystem state, not on a scientific claim, and fails visibly rather than
+silently. It is the only exception; another requires an explicit argument in
+`DESIGN.md` §1.1.1.
+
+If you are unsure whether something belongs in a tool or in the Skill, it
+belongs in the Skill.
 
 ---
 
@@ -65,7 +104,8 @@ ms-inspect/
 │   │   ├── server.py              ← FastMCP entry point (ingestion utilities, port 8002)
 │   │   ├── exceptions.py          ← ASDMNotFoundError, ImportFailedError
 │   │   ├── sdm_summary.py         ← ms_sdm_summary tool (pre-conversion ASDM inspection)
-│   │   └── import_asdm.py         ← ms_import_asdm tool
+│   │   ├── import_asdm.py         ← ms_import_asdm tool
+│   │   └── reduction_log.py       ← ms_reduction_log (working-calls JSONL ledger)
 │   ├── ms_modify/
 │   │   ├── __init__.py            ← version string
 │   │   ├── server.py              ← FastMCP entry point (write utilities, port 8001)
@@ -78,7 +118,10 @@ ms-inspect/
 │   │   ├── initial_bandpass.py    ← ms_initial_bandpass
 │   │   ├── initial_rflag.py       ← ms_apply_initial_rflag
 │   │   ├── rflag.py               ← ms_apply_rflag
+│   │   ├── postcal_flag.py        ← ms_postcal_flag
+│   │   ├── flag_caltable.py       ← ms_flag_caltable
 │   │   ├── gaincal.py             ← ms_gaincal
+│   │   ├── polcal.py              ← ms_polcal
 │   │   ├── bandpass.py            ← ms_bandpass
 │   │   ├── fluxscale.py           ← ms_fluxscale
 │   │   ├── applycal.py            ← ms_applycal
@@ -104,32 +147,43 @@ ms-inspect/
 │       │   ├── verify_model.py    ← ms_verify_model
 │       │   ├── priorcals_check.py ← ms_verify_priorcals
 │       │   ├── caltables.py       ← ms_verify_caltables
-│       │   ├── calsol_stats.py    ← ms_calsol_stats
+│       │   ├── calsol_stats.py    ← ms_calsol_stats (+ .calsol_stats.npz sidecar)
+│       │   ├── calsol_stats_detail.py ← ms_calsol_stats_detail (reads the npz sidecar)
 │       │   ├── calsol_plot.py     ← ms_calsol_plot
+│       │   ├── calsol_plot_library.py ← ms_plot_caltable_library
+│       │   ├── gaincal_snr_predict.py ← ms_gaincal_snr_predict
 │       │   ├── refant.py          ← ms_refant
 │       │   ├── residual_stats.py  ← ms_residual_stats
+│       │   ├── corrected_stats.py ← ms_corrected_stats
 │       │   ├── rfi.py             ← ms_rfi_channel_stats
+│       │   ├── spw_amp_severity.py ← ms_spw_amp_severity
+│       │   ├── workflow_status.py ← ms_workflow_status
 │       │   ├── pol_cal_feasibility.py ← ms_pol_cal_feasibility
 │       │   └── image_stats.py     ← ms_image_stats
 │       └── util/
 │           ├── casa_context.py    ← context managers: open_msmd, open_table, open_ms, open_image
-│           ├── calibrators.py     ← bundled calibrator catalogue + resolved-source logic
+│           ├── dispatch.py        ← shared MCP tool dispatch + CASA concurrency lock (all 3 servers)
+│           ├── calibrators.py     ← bundled flux/BP calibrator catalogue + resolved-source logic
+│           ├── vla_calibrators.py ← NRAO VLA calibrator list scrape + disk cache + cone search
+│           ├── phase_cal_catalog.py ← VLA phase-cal reference catalog (parses PhaseCalList.txt)
+│           ├── PhaseCalList.txt   ← shipped package data for the above
+│           ├── pol_calibrators.py ← VLA pol angle / leakage calibrator reference data
+│           ├── polcal_setjy_fit.py ← polynomial coefficient fits for setjy(standard='manual')
+│           ├── spw_coverage.py    ← solve-vs-target SpW coverage guardrail
 │           ├── conversions.py     ← MJD→UTC, Hz→GHz, ECEF→geodetic, corr codes, etc.
 │           └── formatting.py      ← response envelope, CompletionFlag, round_dict
 ├── tests/
-│   ├── unit/                      ← no CASA required, runs everywhere
-│   │   ├── test_conversions.py
-│   │   ├── test_calibrators.py
-│   │   ├── test_formatting.py
-│   │   ├── test_set_intents.py
-│   │   ├── test_import_asdm.py
-│   │   └── test_verify_import.py
+│   ├── unit/                      ← no CASA required, runs everywhere (34 modules)
 │   └── integration/               ← requires casatools; auto-uses 3C391 tarball if present
 │       ├── conftest.py            ← 3C391 tarball extraction fixture
 │       ├── test_tools.py
 │       └── test_set_intents.py
-└── skill/
-    └── SKILL.md                   ← interferometrist reasoning document (separate)
+├── docs/                          ← surveys, session context, handoffs (not contract)
+└── .claude/
+    ├── commands/                  ← /project:* slash commands
+    └── skills/
+        ├── radio-interferometry/  ← interferometrist reasoning document (SKILL.md + 00-13)
+        └── ms-simulator/          ← MS simulation skill (SKILL.md + 01-05)
 ```
 
 ---
@@ -182,6 +236,7 @@ Environment variable reference:
 | `RADIO_MCP_WORKERS` | `4` | Parallel worker count for FLAG column reads (cap 8) |
 | `RADIO_MCP_TEST_MS` | — | Path to pre-extracted MS for integration tests |
 | `RADIO_MCP_TEST_MS_TGZ` | — | Path to `.ms.tgz` tarball; auto-extracted by conftest.py |
+| `RADIO_MCP_TEST_CALTABLE` | — | Path to a G or B caltable; the caltable integration tests skip without it |
 
 ---
 
@@ -198,7 +253,7 @@ Environment variable reference:
 | `ms_spectral_window_list` | `tools/spectral.py` | `msmd.chanfreqs()`, `msmd.chanwidths()`, `tb → POLARIZATION` |
 | `ms_correlator_config` | `tools/spectral.py` | `tb → POLARIZATION`, `msmd.exposuretime()` |
 
-### Layer 2 — Instrument Sanity (6 tools)
+### Layer 2 — Instrument Sanity (7 tools)
 
 | Tool | Module | Primary CASA call |
 |------|--------|-------------------|
@@ -206,7 +261,7 @@ Environment variable reference:
 | `ms_baseline_lengths` | `tools/antennas.py` | computed from ECEF positions |
 | `ms_elevation_vs_time` | `tools/geometry.py` | astropy AltAz (not CASA measures) |
 | `ms_parallactic_angle_vs_time` | `tools/geometry.py` | astropy LST + atan2 |
-| `ms_shadowing_report` | `tools/shadowing.py` | `msmd.shadowedAntennas()` |
+| `ms_shadowing_report` | `tools/shadowing.py` | `flagdata(mode='shadow', action='calculate')` |
 | `ms_flag_preflight` | `tools/flags.py` | Fast probe: row count, FLAG shape, data volume, runtime estimate, recommended workers |
 | `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` adaptive parallel reads; accepts `n_workers` override |
 
@@ -225,7 +280,7 @@ Environment variable reference:
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_verify_import` | `tools/verify_import.py` | Filesystem check: MS exists + table.info valid + .flagonline.txt non-empty |
-| `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms/priorcals/initial_bandpass present, corrected_populated, final_caltables/first_image present, and a categorical `next_recommended_step` |
+| `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms/priorcals/initial_bandpass present, corrected_populated, final_caltables/first_image present, and a categorical `next_recommended_step`. A probe that could not be read returns `UNAVAILABLE` and yields `next_recommended_step = "unknown_probe_failed:<probe>"` rather than silently reporting the stage incomplete |
 | `ms_verify_model` | `tools/verify_model.py` | Per-field MODEL_DATA sanity probe after setjy/setjy_polcal: flags default-pinned (MODEL=1 Jy → flux-scale trap), out-of-band amplitude, and — for `polcal_fields` — missing polarization (zero cross-hands = Stokes-I clobber). Requires usescratch=True |
 | `ms_online_flag_stats` | `tools/online_flags.py` | Parse .flagonline.txt — n_commands, antennas flagged, reason breakdown, time range |
 | `ms_flag_summary` | `tools/flag_summary.py` | Per-field/SPW flag fractions from flagdata summary mode |
@@ -236,10 +291,10 @@ Environment variable reference:
 
 | Tool | Module | What it does |
 |------|--------|-------------|
-| `ms_refant` | `tools/refant.py` | Ranked reference antenna list by geometry + flag fraction heuristics |
+| `ms_refant` | `tools/refant.py` | Ranked reference antenna list by geometry + flag fraction heuristics. Ranking is permitted under §1.1.1 and ships its inputs: `distance_from_centre_m` + `max_distance_m` (so geometry-score saturation in extended configs is visible) and per-antenna `worst_spw_flag_frac` / `worst_spw_id` / `median_spw_flag_frac` / `worst_spw_excess`. **Judge per-SpW health on `worst_spw_excess` (worst − median), not the raw worst** — shadowing in VLA C/D config flags an antenna uniformly across all SpWs and preferentially hits the central antennas geometry ranks highest, so a good compact-config candidate shows a high worst with ~0 excess. `per_spw_breakdown=False` skips the second flagdata pass on very large MSs |
 | `ms_phase_cal_lookup` | `util/phase_cal_catalog.py` | Cross-match a sky position against the NRAO VLA phase-calibrator catalog; nearest source within `max_sep_deg` with flux, UV limits, and per-config quality codes (P/S/W/C/X) |
 | `ms_rfi_channel_stats` | `tools/rfi.py` | Per-channel flag fractions; identifies persistent RFI bands |
-| `ms_spw_amp_severity` | `tools/spw_amp_severity.py` | Robust per-channel amplitude stats (median/MAD/min/max) of any data column, aggregated per SpW. Severity = band_floor vs a clean-SpW anchor (RFI-dominated drop signal) + estimated_discardable_frac (localized-RFI magnitude). Memory-bounded reservoir sampling. |
+| `ms_spw_amp_severity` | `tools/spw_amp_severity.py` | Robust per-channel amplitude stats (median/MAD/min/max) of any data column, aggregated per SpW. Severity = band_floor vs a clean-SpW anchor (RFI-dominated drop signal) + estimated_discardable_frac (localized-RFI magnitude). Memory-bounded reservoir sampling. Per-SpW aggregates are never capped; the `per_chan` drill-down is bounded to `max_chan_records` (default 256, worst by peak_to_floor), and when any SpW is capped the full uncapped arrays go to a `.spw_amp_severity_detail.json` sidecar with `PARTIAL` on the affected SpW |
 | `ms_pol_cal_feasibility` | `tools/pol_cal_feasibility.py` | Parallactic angle spread + D-term feasibility gate |
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | `tools/corrected_stats.py` | Per-field parallel-hand amplitude (median/robust-std/p95) + phase RMS of a data column, **vector-averaged over the channel range** (so faint sources are not noise-biased). Post-applycal calibration sanity check. |
@@ -248,7 +303,7 @@ Environment variable reference:
 
 | Tool | Module | What it does |
 |------|--------|-------------|
-| `ms_image_stats` | `tools/image_stats.py` | Robust RMS (MAD-based), peak flux, dynamic range, restoring beam from a CASA image. For a multi-plane image (frequency cube / multi-Stokes, e.g. IQUV pol cube) also returns `n_planes` + a per-(Stokes, channel) `planes` array |
+| `ms_image_stats` | `tools/image_stats.py` | Robust RMS (MAD-based), peak flux, dynamic range, restoring beam from a CASA image. For a multi-plane image (frequency cube / multi-Stokes, e.g. IQUV pol cube) also returns `n_planes` + a per-(Stokes, channel) `planes` array. Returns a `detection` label beside `dynamic_range` with `detection_low_reference` / `detection_high_reference`; the go/no-go decision lives in skill 11, not here |
 
 ---
 

@@ -147,6 +147,15 @@ class RefAntInput(BaseModel):
         default=True,
         description="Score antennas by unflagged data fraction.",
     )
+    per_spw_breakdown: bool = Field(
+        default=True,
+        description=(
+            "Also return worst_spw_flag_frac / worst_spw_id per antenna. Costs a "
+            "second flagdata pass (roughly doubles runtime). Catches an antenna "
+            "fully flagged in one SpW that still scores near the top of the "
+            "aggregate flag score. Set False only on a very large MS."
+        ),
+    )
 
 
 class VerifyCaltablesInput(BaseModel):
@@ -194,6 +203,15 @@ class SpwAmpSeverityInput(BaseModel):
         default=20_000,
         description="Rows read per block (memory knob; smaller = less RAM, slower).",
         ge=1000,
+    )
+    max_chan_records: int = Field(
+        default=256,
+        description=(
+            "Per-SpW cap on per_chan records returned inline (worst by peak_to_floor "
+            "kept). Per-SpW aggregates are never capped. Full per-channel arrays for "
+            "every SpW are always written to a JSON sidecar (see detail_path)."
+        ),
+        ge=1,
     )
 
 
@@ -1012,6 +1030,7 @@ async def ms_refant(params: RefAntInput) -> str:
         params.field,
         params.use_geometry,
         params.use_flagging,
+        params.per_spw_breakdown,
     )
 
 
@@ -1138,6 +1157,7 @@ async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> str:
         params.sigma,
         params.max_samples_per_chan,
         params.row_chunk,
+        params.max_chan_records,
     )
 
 

@@ -15,15 +15,84 @@ Layers 3–5 (Data Quality, Calibration Readiness, Imaging Preparation) are out 
 > **An MCP tool answers exactly one question with numbers.**  
 > **The Skill answers: given these numbers, what do they mean, and what do I look at next?**
 
-No tool interprets. No tool suggests. No tool chains to another.  
-Interpretation, diagnostic reasoning, and workflow sequencing live exclusively in the Skill document.
+No tool gates. No tool chains to another.  
+Diagnostic reasoning and workflow sequencing live exclusively in the Skill document.
 
 This mirrors the professional practice: CASA tools return measurements. The interferometrist's brain — encoded in the Skill — does the science.
+
+### 1.1.1 What a tool may and may not return
+
+The dividing line is **not** scalars versus prose. It is whether the returned
+field carries a decision that depends on the science goal.
+
+**Permitted:**
+
+- **Measurements** read from the MS, a caltable, or an image.
+- **Derived quantities** — arithmetic over measurements, including ratios,
+  robust statistics, residuals against a catalogue value, and predictions from
+  a documented formula. A derived value is a measurement of a relationship,
+  not an interpretation. Condition: **the inputs travel with the output.**
+  `severity` ships with `band_floor` and the anchor it was divided by;
+  a measured-minus-catalogue residual ships with both terms.
+- **Rankings** — an ordering over antennas, SpWs, fields, or candidate
+  calibrators, produced by a documented and deterministic weighting. An
+  ordering is not a decision: the model can override it, and it can check the
+  ordering against the per-item numbers. Condition: **the per-item scores and
+  the inputs to those scores are returned**, so the ranking is falsifiable
+  from the output alone. There is a hard practical argument here too — a model
+  is a poor and expensive calculator over 27 antennas by 16 SpWs, and
+  determinism is a feature.
+- **Descriptive labels** — a categorical name for where a measurement falls
+  relative to a stated reference (`detection: "marginal"`,
+  `effective_role_at_band: "leakage_zero_pol"`). Condition: **the label sits
+  beside the number that produced it and the reference it was compared to**,
+  so a value near a boundary is visible as such.
+- **Reference values** — a threshold returned as a labelled constant with its
+  provenance, e.g. `pa_spread_reference_deg: 45` sourced to the NRAO pol guide.
+  Returning a threshold is fine. Returning the result of *applying* it is not.
+
+**Forbidden:**
+
+- **Gates** — any field whose semantic is "you may or may not proceed."
+  `verdict`, `blocker`, `xf_feasible`, `df_feasible`, `meets_threshold`,
+  `detection_pass`. Gating requires knowing the science goal and the risk
+  tolerance for this observation, and only the Skill has those.
+- **Acting on a gate.** A tool must not silently substitute a different
+  calibrator, field, or parameter because an internal threshold test failed.
+  Return the ranked candidates and let the Skill choose.
+- **Prose that tells the reader what to conclude or what not to claim.**
+  Provenance annotations and unit/convention notes are not prose in this sense.
+
+**Why gates specifically.** The asymmetry is in how a wrong gate fails. A gate
+whose failure is loud and cheap costs you a CASA error and teaches you
+something. A gate whose failure is silent costs you science you never attempt,
+and nothing in the output records what was forgone. A `NOT_FEASIBLE` on
+D-terms, believed, means the polarization is never imaged — and the threshold
+that produced it was a constant chosen for a typical case, invisible in the
+report handed to a collaborator. The continuous measurement almost always
+supports a better answer than the boolean: "24° of coverage against a 45°
+reference, proceed and limit fractional-polarization claims to the few percent
+level" is not expressible as GO or NO-GO, and the Skill has the room to say it.
+
+**Prefer posterior verification to prior permission.** Where a check is worth
+having, put it *after* the operation, as a measurement against a known value —
+recovered Stokes I against the catalogue flux density, recovered EVPA against
+the catalogue angle, D-term amplitude against the expected few-percent level.
+That is a derived value with its inputs, its failure is loud and specific about
+what broke, and the residual is a continuous number the Skill can reason over.
+
+**Named exception.** `ms_workflow_status.next_recommended_step` is a gate by
+this rule and is retained deliberately. It gates on filesystem state
+("calibrators.ms does not exist yet"), not on a scientific claim, and its
+failure mode is a visibly wrong step rather than silently abandoned science.
+It is the only such exception; adding another requires the same explicit
+argument in this section.
 
 ### 1.2 Zen Principles Applied
 
 - **One tool, one question.** If a tool is tempted to answer two questions, it should be two tools.
-- **Numbers, not narratives.** Tools return structured data. The LLM narrates.
+- **Measure, do not permit.** Tools return values, orderings, and labels with
+  their inputs. Tools do not return permission to proceed. See §1.1.1.
 - **Explicit uncertainty.** Every field that could not be retrieved carries a completeness flag. Silence is never used to indicate failure.
 - **Provenance always.** Every returned value states which CASA call produced it, so results are independently verifiable.
 - **Graceful degradation over hard failure.** A tool with partial data returns what it has plus a clear account of what is missing and why.
@@ -537,7 +606,8 @@ Plus a summary block:
 - Derived: angular resolution (arcsec) = `λ / B_max` at centre frequency of each SpW  
   `λ / B_min` = maximum recoverable angular scale (largest angular scale, LAS)
 
-**Note:** This tool computes from antenna positions, not from the UVW column. The UVW column reflects the actual projected baselines during observation — that is a Layer 3 tool (`ms_uv_coverage_stats`). Position-based baseline lengths give the physical maximum; UVW-based gives the actual UV sampling. Both are needed. This tool is Layer 2 (instrument sanity); the UV coverage tool is Layer 3.
+**Note:** This tool computes from antenna positions, not from the UVW column. The UVW column reflects the actual projected baselines during observation — that would be a Layer 3 tool (`ms_uv_coverage_stats`, **not implemented** —
+no UVW-based coverage tool exists yet). Position-based baseline lengths give the physical maximum; UVW-based gives the actual UV sampling. Both are needed. This tool is Layer 2 (instrument sanity); the UV coverage tool is Layer 3.
 
 **Returns:**
 ```json
@@ -670,9 +740,16 @@ This offset is **mount-type and telescope dependent.** The correction table is:
 **Question answered:** Were any antennas shadowed by others during the observation, and how much data is affected?
 
 **CASA calls:**
-- `msmd.shadowedAntennas(tolerance=0.0)` → antenna IDs shadowed per scan, if available
-- Fallback if `shadowedAntennas` not available: geometric computation from antenna positions and dish diameters vs elevation/azimuth — note this as `INFERRED`
+- `casatasks.flagdata(vis=..., mode='shadow', tolerance=..., action='calculate', savepars=False, flagbackup=False)`
+  → `{'total': {...}, 'antenna': {...}}`, per-antenna shadowed row counts.
+  `action='calculate'` makes this read-only: nothing is written to the MS.
+- If `casatasks` is unavailable, `method.flag` is `INFERRED` and
+  `method.value` is `"casatasks unavailable"`.
 - FLAG_CMD subtable: check for pre-existing shadow flags applied online
+
+> `msmd.shadowedAntennas()` is **not** used — it is absent from CASA 6.7.x.
+> An earlier revision of this section specified it; the implementation at
+> `tools/shadowing.py:58-70` uses `flagdata(mode='shadow')` instead.
 
 **Returns:**
 ```json
@@ -691,7 +768,7 @@ This offset is **mount-type and telescope dependent.** The correction table is:
     }
   ],
   "total_shadowed_seconds": 1080,
-  "method": { "value": "msmd.shadowedAntennas", "flag": "COMPLETE" }
+  "method": { "value": "flagdata(mode='shadow', action='calculate')", "flag": "COMPLETE" }
 }
 ```
 
@@ -826,7 +903,7 @@ On tool error:
 | `ms_spectral_window_list` | msmd.chanfreqs, msmd.chanwidths; tb → POLARIZATION, DATA_DESCRIPTION | Band name, channel width, correlation products |
 | `ms_correlator_config` | msmd.timesforscans (dump time); tb → POLARIZATION | Dump time, polarization basis, full-Stokes flag |
 
-### Layer 2 — Instrument Sanity (6 tools)
+### Layer 2 — Instrument Sanity (7 tools)
 
 | Tool | Primary CASA API | Key derived quantities |
 |------|-----------------|----------------------|
@@ -834,10 +911,11 @@ On tool error:
 | `ms_baseline_lengths` | Computed from antenna positions | λ/B_max resolution, LAS per SpW |
 | `ms_elevation_vs_time` | astropy (field coords + array geodetic pos + scan times) | Low-elevation warnings per scan |
 | `ms_parallactic_angle_vs_time` | astropy | PA range per field, D-term solvability note |
-| `ms_shadowing_report` | msmd.shadowedAntennas (fallback: geometric) | Shadowed antenna IDs, duration |
+| `ms_shadowing_report` | flagdata(mode='shadow', action='calculate') | Shadowed antenna IDs, duration |
+| `ms_flag_preflight` | tb → MAIN row count, FLAG cell shape | Data volume, runtime estimate, recommended worker count |
 | `ms_antenna_flag_fraction` | tb → FLAG column (chunked) | Per-antenna flag fraction, online flag commands |
 
-**Phase 1 (Layers 1 & 2): 13 tools** — the tables above plus `ms_flag_preflight`.
+**Phase 1 (Layers 1 & 2): 13 tools** — the two tables above.
 
 > **Note on scope.** This design document was originally written for Phase 1
 > (Layers 1 & 2) only. The `ms_inspect` server has since grown to **33 tools**

@@ -9,7 +9,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ms_inspect.tools.refant import _flag_score, _geo_score
+from ms_inspect.tools.refant import (
+    _distances_from_centre,
+    _flag_score,
+    _geo_score,
+    _worst_spw_per_antenna,
+)
 
 # ---------------------------------------------------------------------------
 # _geo_score tests
@@ -94,6 +99,69 @@ class TestGeoScore:
 
         # The median of [0, 0, 1000] = 0, so antenna 0 is at the centre
         assert scores[0] == pytest.approx(float(n_ant))
+
+
+# ---------------------------------------------------------------------------
+# _distances_from_centre tests
+# ---------------------------------------------------------------------------
+
+
+class TestDistancesFromCentre:
+    def test_matches_geo_score_inputs(self):
+        """distances/max_dist should reproduce what _geo_score computes internally."""
+        positions = np.array(
+            [
+                [-100.0, 0.0, 100.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+            ]
+        )
+        flags = [False, False, False]
+        distances, max_dist = _distances_from_centre(positions, flags)
+
+        assert distances[1] == pytest.approx(0.0)
+        assert distances[0] == pytest.approx(100.0)
+        assert distances[2] == pytest.approx(100.0)
+        assert max_dist == pytest.approx(100.0)
+
+    def test_all_flagged_returns_zero_max_dist(self):
+        positions = np.array([[0.0, 500.0], [0.0, 0.0], [0.0, 0.0]])
+        distances, max_dist = _distances_from_centre(positions, [True, True])
+        assert max_dist == 0.0
+        assert np.all(distances == 0.0)
+
+    def test_extended_configuration_saturates_geo_score(self):
+        """
+        Reproduces the VLA A-config / uGMRT failure mode: one very distant
+        antenna sets max_distance_m, so every antenna in a compact core
+        scores above ~0.94 * n_antennas even though their actual distances
+        differ. distance_from_centre_m must expose that saturation.
+        """
+        # 5 antennas: one at ~18 km (sets max_dist), four within 1 km of
+        # centre but at different distances from each other.
+        positions = np.array(
+            [
+                [0.0, 200.0, 500.0, 900.0, 18000.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0],
+            ]
+        )
+        flags = [False] * 5
+        distances, max_dist = _distances_from_centre(positions, flags)
+        geo = _geo_score(positions, flags)
+
+        assert max_dist == pytest.approx(17500.0, rel=1e-3)
+        # The four core antennas have materially different distances...
+        assert distances[0] != pytest.approx(distances[1])
+        assert distances[1] != pytest.approx(distances[2])
+        assert distances[2] != pytest.approx(distances[3])
+        # ...but geo_score alone collapses them to near-identical, saturated
+        # values close to n_antennas (5), which is exactly what
+        # distance_from_centre_m / max_distance_m must make visible.
+        n_ant = 5
+        assert geo[0] > 0.94 * n_ant
+        assert geo[3] > 0.94 * n_ant
+        assert (geo[0] - geo[3]) < 0.06 * n_ant
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +265,93 @@ class TestCombinedRanking:
 
         best_idx = int(np.argmax(combined))
         assert ant_names[best_idx] == "ea02"
+
+    def test_worst_spw_hidden_by_aggregate_score(self):
+        """
+        Reproduces the per-SpW blindness failure mode: an antenna fully
+        flagged in one SpW out of several, clean elsewhere, scores near the
+        top of the aggregate flag_score, but _worst_spw_per_antenna must
+        still surface the bad SpW.
+        """
+        ant_names = ["ea01", "ea02"]
+        # Aggregate: ea01 flagged in 1 of 4 equal-sized SpWs -> 25% overall,
+        # still scores well above an antenna that's uniformly flagged.
+        agg_summary = {
+            "antenna": {
+                "ea01": {"flagged": 250, "total": 1000},
+                "ea02": {"flagged": 0, "total": 1000},
+            }
+        }
+        agg_scores = _flag_score(ant_names, agg_summary)
+        assert agg_scores[0] > 0.7 * len(ant_names)  # looks fine in aggregate
+
+        spw_summaries = {
+            "0": {
+                "antenna": {
+                    "ea01": {"flagged": 250, "total": 250},
+                    "ea02": {"flagged": 0, "total": 250},
+                }
+            },
+            "1": {
+                "antenna": {
+                    "ea01": {"flagged": 0, "total": 250},
+                    "ea02": {"flagged": 0, "total": 250},
+                }
+            },
+            "2": {
+                "antenna": {
+                    "ea01": {"flagged": 0, "total": 250},
+                    "ea02": {"flagged": 0, "total": 250},
+                }
+            },
+            "3": {
+                "antenna": {
+                    "ea01": {"flagged": 0, "total": 250},
+                    "ea02": {"flagged": 0, "total": 250},
+                }
+            },
+        }
+        worst = _worst_spw_per_antenna(ant_names, spw_summaries)
+
+        # ea01 is dead in SpW 0 and clean in the other three. The worst value
+        # alone is 1.0, but what makes it disqualifying is that the median is
+        # 0.0, so the excess is the full 1.0.
+        assert worst["ea01"]["worst_spw_flag_frac"] == 1.0
+        assert worst["ea01"]["worst_spw_id"] == "0"
+        assert worst["ea01"]["median_spw_flag_frac"] == 0.0
+        assert worst["ea01"]["worst_spw_excess"] == 1.0
+        assert worst["ea01"]["n_spw_measured"] == 4
+
+        assert worst["ea02"]["worst_spw_flag_frac"] == 0.0
+        assert worst["ea02"]["worst_spw_excess"] == 0.0
+
+    def test_uniform_flagging_yields_zero_excess(self):
+        """
+        The compact-configuration case. Shadowing in VLA C/D config flags an
+        antenna across every SpW at once, and it hits the central antennas the
+        geometry score ranks highest. Such an antenna must NOT look
+        SpW-pathological: the worst fraction is high but the excess is ~0, so a
+        skill thresholding on excess does not reject the best D-config refant
+        candidates.
+        """
+        ant_names = ["ea01"]
+        # 40% flagged in every SpW — heavy, but perfectly uniform.
+        spw_summaries = {
+            str(i): {"antenna": {"ea01": {"flagged": 400, "total": 1000}}} for i in range(4)
+        }
+        worst = _worst_spw_per_antenna(ant_names, spw_summaries)
+
+        assert worst["ea01"]["worst_spw_flag_frac"] == pytest.approx(0.4)
+        assert worst["ea01"]["median_spw_flag_frac"] == pytest.approx(0.4)
+        assert worst["ea01"]["worst_spw_excess"] == pytest.approx(0.0)
+
+    def test_no_usable_data_returns_none(self):
+        worst = _worst_spw_per_antenna(["ea01"], {"0": {"antenna": {}}})
+        assert worst["ea01"]["worst_spw_flag_frac"] is None
+        assert worst["ea01"]["worst_spw_id"] is None
+        assert worst["ea01"]["median_spw_flag_frac"] is None
+        assert worst["ea01"]["worst_spw_excess"] is None
+        assert worst["ea01"]["n_spw_measured"] == 0
 
     def test_disagreement_flagging_overrides_geometry(self):
         """

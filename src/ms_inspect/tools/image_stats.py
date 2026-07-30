@@ -10,10 +10,16 @@ Reads the restored (or pbcor) image and returns:
   - beam_major_arcsec, beam_minor_arcsec, beam_pa_deg: restoring beam
 
 For a multi-plane image (frequency cube and/or multi-Stokes, e.g. an IQUV
-polarization cube) it additionally returns `n_planes` and `planes` — a
+polarization cube) it additionally returns `n_planes` and `planes`, a
 per-(Stokes, channel) list of rms_jy / peak_jy / dynamic_range. The scalar
-fields above remain whole-image summaries. Numbers only; interpretation
-(fractional polarization, spectral flatness) belongs in the skill.
+fields above remain whole-image summaries.
+
+`detection` is a descriptive label ("marginal" or "detection") for where
+dynamic_range falls relative to two labelled reference constants that are
+also returned, `detection_low_reference` and `detection_high_reference`, so
+the label is checkable from the output alone. This tool does not gate; it
+does not decide whether a detection should be reported or acted on. That
+call belongs to the skill (see radio-interferometry/11-imaging.md).
 
 All parameters are read from the image header and pixel data;
 no MS access is performed.
@@ -32,23 +38,36 @@ TOOL_NAME = "ms_image_stats"
 
 _MAD_TO_SIGMA = 1.4826
 
-# Peak-to-noise (dynamic range) verdict thresholds.
-#   <= 5        : marginal detection, FAIL
-#   > 5, < 10   : marginal detection, pass
-#   >= 10       : detection, pass
+# Peak-to-noise (dynamic range) label boundaries. Both are surfaced in the
+# response as detection_low_reference / detection_high_reference so the
+# "marginal" / "detection" label is checkable from the output alone.
+#   <= 5        : "undetected"
+#   > 5, < 10   : "marginal"
+#   >= 10       : "detection"
 _P2N_FAIL = 5.0
 _P2N_MARGINAL = 10.0
 
 
-def _classify_detection(dr: float | None) -> tuple[str, bool]:
-    """(label, passed) from a peak-to-noise (dynamic range) value."""
+def _classify_detection(dr: float | None) -> str:
+    """Descriptive label for a peak-to-noise (dynamic range) value.
+
+    Boundaries are the module constants _P2N_FAIL and _P2N_MARGINAL, both of
+    which are also surfaced in the response so the label is checkable from
+    the output alone.
+
+    Three levels, so the label keeps the resolution the two constants imply:
+    'undetected' at or below _P2N_FAIL, 'marginal' between the two, and
+    'detection' at or above _P2N_MARGINAL. These are descriptions of where the
+    value falls, not permission to proceed. What is publishable at a given
+    level depends on the science goal, so that call belongs to skill 11.
+    """
     if dr is None:
-        return "unknown", False
+        return "unknown"
     if dr <= _P2N_FAIL:
-        return "marginal", False
+        return "undetected"
     if dr < _P2N_MARGINAL:
-        return "marginal", True
-    return "detection", True
+        return "marginal"
+    return "detection"
 
 
 def _plane_labels(
@@ -167,13 +186,11 @@ def _per_plane_stats(ia, casa_calls: list[str], warnings: list[str]) -> list[dic
         rms_v = _MAD_TO_SIGMA * float(mad_v)
         peak_v = float(max_v)
         dr = abs(peak_v) / rms_v if rms_v > 0 else None
-        det_label, det_pass = _classify_detection(dr)
         entry = dict(lab)
         entry["rms_jy"] = round(rms_v, 9)
         entry["peak_jy"] = round(peak_v, 9)
         entry["dynamic_range"] = round(dr, 1) if dr is not None else None
-        entry["detection"] = det_label
-        entry["detection_pass"] = det_pass
+        entry["detection"] = _classify_detection(dr)
         planes.append(entry)
     return planes
 
@@ -287,13 +304,7 @@ def run(
     # ------------------------------------------------------------------
     # Build response
     # ------------------------------------------------------------------
-    det_label, det_pass = _classify_detection(dynamic_range)
-    if dynamic_range is not None and not det_pass:
-        warnings.append(
-            f"peak-to-noise {round(dynamic_range, 1)} <= {_P2N_FAIL:g}: marginal "
-            "detection, FAIL. The peak is consistent with a residual/sidelobe "
-            "spike, not a source — do not report this as a detection."
-        )
+    det_label = _classify_detection(dynamic_range)
 
     data: dict = {
         "image_path": fmt_field(str(Path(image_path).expanduser().resolve())),
@@ -304,8 +315,11 @@ def run(
             flag="COMPLETE" if dynamic_range is not None else "UNAVAILABLE",
         ),
         "detection": fmt_field(det_label),
-        "detection_pass": fmt_field(
-            det_pass, flag="COMPLETE" if dynamic_range is not None else "UNAVAILABLE"
+        "detection_low_reference": fmt_field(
+            _P2N_FAIL, note="peak-to-noise at or below this value is labelled 'marginal'"
+        ),
+        "detection_high_reference": fmt_field(
+            _P2N_MARGINAL, note="peak-to-noise at or above this value is labelled 'detection'"
         ),
     }
 

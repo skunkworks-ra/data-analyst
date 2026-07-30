@@ -7,8 +7,8 @@ Calls casatasks.flagdata(mode='summary') to get the complete flag state
 of the MS broken down by field, scan, SpW, and antenna.
 
 This is a READ-ONLY audit tool. Use it:
-  - BEFORE ms_apply_flags: to capture the baseline flag state
-  - AFTER  ms_apply_flags: to verify how much was flagged
+  - BEFORE ms_modify's ms_apply_preflag: to capture the baseline flag state
+  - AFTER  ms_modify's ms_apply_preflag: to verify how much was flagged
 
 The output is the canonical "flag report" that should be included in
 any data reduction log.

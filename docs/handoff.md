@@ -25,5 +25,9 @@ a session reaching for them mid-run should be looked at.
    flag versions in `<ms>.flagversions`.
 3. Before touching the MS: check for a stale `table.lock` (`pgrep` for owning
    process; if none, remove the lock).
-4. Keep MS-opening tool calls sequential — see the concurrency limit in
-   skill `wildcat/00-core.md`.
+4. Concurrent tool calls against the *same* MS are now serialised in code by
+   the per-path lock in `src/ms_inspect/util/dispatch.py`, shared across all
+   three servers, so this is no longer something the session has to manage by
+   hand. Tools against *different* MSes still run concurrently. Note the lock
+   is per-process: two separate server processes on one MS can still collide,
+   which is what the stale-`table.lock` check in step 3 is for.

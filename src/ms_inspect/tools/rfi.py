@@ -8,7 +8,7 @@ Identifies contiguous bad-channel ranges and annotates them with known
 RFI frequency catalogue entries (GPS, GSM, Iridium, etc.).
 
 This is a READ-ONLY diagnostic tool. It does not modify the MS.
-Use ms_apply_flags to act on its output.
+Use ms_modify's ms_apply_rflag / ms_postcal_flag to act on its output.
 
 CASA access:
 - tb.getcolslice("FLAG", ...) — chunked parallel read (same strategy as flags.py)

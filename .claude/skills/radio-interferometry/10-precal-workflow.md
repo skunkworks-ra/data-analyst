@@ -16,6 +16,7 @@ pass of RFI removed, ready for the full calibration solve.
 ## Sequence overview
 
 ```
+ms_sdm_summary(sdm_path)                 → what IS this dataset, before spending time importing it
 ms_import_asdm(execute=False, ...)       → generate import_asdm.py
   → run import_asdm.py as background job; wait for completion however long it takes
 ms_verify_import(ms_path, flag_file)     → confirm MS valid + .flagonline.txt present
@@ -51,7 +52,26 @@ ms_flag_summary(calibrators.ms)          → before/after flag delta
 
 ---
 
-## Step 0 — ASDM ingestion
+## Step 0 — Dataset triage (raw ASDM, before conversion)
+
+Run `ms_sdm_summary(sdm_path)` on any new raw dataset before running
+`ms_import_asdm`. It parses the ASDM XML tables directly, no casatools, no
+binary data touched, so it is nearly free compared to a multi-GB conversion.
+
+| Output | What it tells you | Why it matters before importing |
+|--------|-------------------|----------------------------------|
+| `telescope`, `array_config`, `band` | What instrument and configuration this is | Confirms you are about to run the right skill/thresholds |
+| `spectral_windows`, `spectral_mode_inferred` | Continuum vs spectral line per SPW, HI-21cm coverage | Line data needs `with_pointing_correction` and channel-averaging decisions continuum data does not |
+| `correlation_products` | Full vs half polarization | Determines whether polarization calibration is even possible later |
+| `fields`, `scan_intent_counts` | Sources present and scan balance across intents | Catches a missing bandpass or phase calibrator before the import, not after |
+| `target_max_elevation_deg` | Max elevation the target reaches | Flags a target that never clears a usable elevation, before committing disk and time to the conversion |
+
+If anything here looks wrong for the intended science (missing calibrator
+intent, unexpected band, target elevation too low), stop and resolve it before
+calling `ms_import_asdm` — this is the cheapest point in the whole pipeline to
+catch it.
+
+## Step 1 — ASDM ingestion
 
 Run `ms_import_asdm` before anything else if starting from raw ASDM data.
 
@@ -77,7 +97,7 @@ Pass `online_flag_file` from the `ms_import_asdm` response directly to
 
 ---
 
-## Step 1 — Online flag assessment
+## Step 2 — Online flag assessment
 
 Run `ms_online_flag_stats` on the `.flagonline.txt` file before applying flags.
 
@@ -91,7 +111,7 @@ Online flags are applied as-is — do not edit them. They are deterministic hard
 
 ---
 
-## Step 2 — Pre-calibration flagging and calibrator split
+## Step 3 — Pre-calibration flagging and calibrator split
 
 `ms_apply_preflag` applies five flagging steps in a single pass and splits
 calibrators to `calibrators.ms`.
@@ -113,7 +133,7 @@ from `refant` candidates and noting it in the summary.
 
 ---
 
-## Step 3 — Prior calibration tables
+## Step 4 — Prior calibration tables
 
 `ms_generate_priorcals` generates four deterministic tables. After running,
 verify with `ms_verify_priorcals`:
@@ -130,7 +150,7 @@ the telescope correction database. Do not proceed — escalate.
 
 ---
 
-## Step 4 — Flux density model (setjy)
+## Step 5 — Flux density model (setjy)
 
 `ms_setjy` sets Stokes I flux models for all flux standard calibrators found.
 
@@ -154,7 +174,7 @@ scale. Set it consistently from the start. See skill 09 Step 1 and skill 07 Step
 
 ---
 
-## Step 5 — Reference antenna selection
+## Step 6 — Reference antenna selection
 
 **Score the refant on every calibrator it must serve, not just the bandpass
 calibrator.** `ms_refant`'s flag heuristic is computed only over the `field` you
@@ -177,8 +197,22 @@ A `flag_score` near 0 means the antenna is fully flagged on that field — never
 pick it, however high it ranks on another. Prefer the highest-ranked antenna with
 a healthy `flag_score` in every list over the top pick of any single list.
 
+**Check per-SpW health on `worst_spw_excess`, never on `worst_spw_flag_frac`
+alone.** The aggregate `flag_score` averages over all SpWs, so an antenna dead in
+one SpW of sixteen and clean elsewhere still ranks near the top. Because the
+refant is referenced per SpW, that one bad SpW either fails to solve or silently
+re-references, and you see it much later as an inter-SpW phase discontinuity in a
+decorrelated image. But the raw worst fraction is not the test: shadowing in a
+compact configuration (VLA C or D) flags an antenna uniformly across every SpW,
+and it hits the central antennas that score best on geometry. Reading the raw
+worst would disqualify the best D-config candidates. Compare
+`worst_spw_excess` = worst − median instead.
+
 | Condition | Action |
 |-----------|--------|
+| `worst_spw_excess` > ~0.3 | Disqualify — one SpW is an outlier, unsafe as a per-SpW reference. Check `worst_spw_id` against `ms_rfi_channel_stats` to see whether it is a dead front-end or band-edge RFI |
+| `worst_spw_flag_frac` high but `worst_spw_excess` near 0 | Uniform flagging, expected for shadowed central antennas in C/D config and at low elevation. Not a per-SpW problem; `flag_score` already accounts for the lost data |
+| `per_spw_breakdown` False, or `worst_spw_excess` null with a warning | Per-SpW health unknown, not confirmed good. Say so in the summary rather than treating it as clean |
 | Candidate `flag_score` near 0 on *any* calibrator field | Disqualify — dead on that field; drop to the next antenna healthy on all fields |
 | Top-ranked antenna flagged > 30% (from `ms_flag_summary`) | Use rank-2 antenna |
 | Top-ranked antenna has `flag_score` ≫ `geo_score` (periphery of array) | Note this — peripheral refants can cause phase-wrapping on long baselines at high freq |
@@ -195,7 +229,7 @@ short baselines independent of the reference antenna.
 
 ---
 
-## Step 6 — Initial bandpass
+## Step 7 — Initial bandpass
 
 `ms_initial_bandpass` runs three CASA tasks in sequence (gaincal → bandpass → applycal)
 and populates the CORRECTED column.
@@ -258,7 +292,7 @@ If either caltable is missing, do not proceed to rflag. Diagnose:
 
 ---
 
-## Step 7 — Residual amplitude inspection
+## Step 8 — Residual amplitude inspection
 
 Before applying rflag, call `ms_residual_stats(field_id=<bp_field_id>)` to
 inspect the CORRECTED − MODEL amplitude distribution.
@@ -275,7 +309,7 @@ narrowband RFI (GPS, GSM). Cross-check with `ms_rfi_channel_stats` annotations.
 
 ---
 
-## Step 8 — Initial RFI flagging on residuals
+## Step 9 — Initial RFI flagging on residuals
 
 **`ms_apply_initial_rflag` requires a `field` argument — there is no all-field
 default, by design.** Residual rflag is only meaningful on a field whose

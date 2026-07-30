@@ -279,6 +279,13 @@ ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B)
 
 Both polarizations on a given antenna should show the same amplitude shape within ~10%.
 
+**Drilling into an outlier:** `ms_calsol_stats` caps `outliers.low_snr` and
+`outliers.amp_outliers` to the worst rows. When one of those lists names an
+antenna (here or at any other calsol_stats check in this sequence) and you
+need the full per-(antenna, SpW, field) picture, read the sidecar directly
+with `ms_calsol_stats_detail(npz_path=..., kind='low_snr'|'amp_outliers'|'antenna',
+antenna=..., spw=..., field=...)` rather than re-solving or re-running the plot.
+
 **Before using `bandpass.B` in Step 4, flag its solutions** with `ms_flag_caltable`
 (tfcrop, sigma=5.0) — see "Caltable solution flagging" above.
 
@@ -690,7 +697,7 @@ If the phase calibrator shows anomalous time structure: consider flagging the
 affected scans and re-running Steps 4–6 before re-applying.
 
 **Residual rflag on the other calibrators belongs here.** This is the "later"
-pass deferred in 10-precal-workflow.md Step 8: now that applycal has populated a
+pass deferred in 10-precal-workflow.md Step 9: now that applycal has populated a
 valid CORRECTED column for *all* calibrators (not just the bandpass cal), a
 residual rflag pass on them is finally meaningful. Call `ms_apply_initial_rflag`
 with `field` set to the calibrators whose CORRECTED is now valid — never an

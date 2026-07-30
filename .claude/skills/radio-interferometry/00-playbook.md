@@ -7,7 +7,7 @@ Find your current state in the left column. Run the right-column tool
 
 | Current state | Next action |
 |---------------|-------------|
-| Starting from ASDM | `ms_import_asdm(..., execute=False)` → run script → `ms_verify_import` |
+| Starting from raw ASDM | `ms_sdm_summary(sdm_path)` first (free triage) → `ms_import_asdm(..., execute=False)` → run script → `ms_verify_import` |
 | MS imported, no intents | `ms_set_intents(ms_path)` → proceed |
 | MS imported, intents present | Run `/inspect` or read `01-workflow.md` |
 | Phase 1 + 2 inspection done, go decision | Run `/precal` or read `10-precal-workflow.md` |
@@ -18,6 +18,13 @@ Find your current state in the left column. Run the right-column tool
 | Final applycal done, RFI on target/phase cal | Read `13-postcal-rfi-flagging.md` — SpW severity triage + post-cal flagging |
 
 ## Unknown state? Use ms_workflow_status(ms_path, workdir) — it returns a next_recommended_step label.
+
+## Reduction ledger
+After each validated step above (script generated, run, and its verify tool
+passed), call `ms_reduction_log(action='append', workdir=..., tool=..., params=...,
+outputs=..., rationale=..., skill_rule=...)`. Only shuttle calls that worked —
+skip failed attempts and dead ends. Use `action='render'` for the replay
+script, `action='list'` for a quick step summary.
 
 ## Load skill files on demand
 - 01-workflow.md / 01b-workflow-phase2.md — orientation + instrument sanity

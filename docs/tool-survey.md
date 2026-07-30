@@ -174,7 +174,18 @@ Cheap, high leverage, ~30 lines of skill edits total.
    yet `docs/handoff.md:29` cites `wildcat/00-core.md` as authoritative for the
    CASA concurrency limit. Note that concurrency limit is now enforced in code
    by the shared dispatch lock, so the guidance is partly obsolete either way.
-   Merge or delete.
+
+   **Decided 2026-07-30: delete.** The `handoff.md` citation was rewritten to
+   point at the dispatch lock in `util/dispatch.py`, leaving zero inbound
+   references to the tree from anywhere in the repo. It is unreachable from
+   `SKILL.md`, so it is never loaded, and it is a second voice on subjects the
+   numbered tree already covers (`wildcat/02-phase2.md` on PA conventions,
+   `wildcat/00-core.md` on concurrency) which becomes actively wrong the moment
+   someone wires it back up. It is committed (`06d6ae8`), so `git revert` or a
+   path checkout restores it if the compact-variant idea is revived; in that
+   case it needs to be reachable and maintained, not parked.
+
+   Executed: `git rm -r .claude/skills/radio-interferometry/wildcat/` (11 files).
 
 ---
 
