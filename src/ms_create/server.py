@@ -9,15 +9,13 @@ All tools carry readOnlyHint: False — they create new files on disk.
 
 from __future__ import annotations
 
-import json
 import os
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ms_create import __version__, import_asdm, reduction_log, sdm_summary
-from ms_inspect.exceptions import RadioMSError
-from ms_inspect.util.formatting import compact_fields
+from ms_inspect.util.dispatch import run_tool
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -35,28 +33,12 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _run_tool(tool_fn, *args, **kwargs) -> str:
-    try:
-        result = tool_fn(*args, **kwargs)
-        return json.dumps(compact_fields(result), separators=(",", ":"))
-    except RadioMSError as exc:
-        return json.dumps(
-            {
-                "status": "error",
-                "error_type": exc.error_type,
-                "message": str(exc),
-            },
-            separators=(",", ":"),
-        )
-    except Exception as exc:
-        return json.dumps(
-            {
-                "status": "error",
-                "error_type": "UNEXPECTED_ERROR",
-                "message": str(exc),
-            },
-            separators=(",", ":"),
-        )
+# Shared with ms_inspect and ms_modify — see ms_inspect/util/dispatch.py.
+# NOTE: this replaces a local wrapper that also caught bare Exception and
+# returned an UNEXPECTED_ERROR envelope. The shared helper re-raises anything
+# that is not a RadioMSError, matching the other two servers and the contract
+# in DESIGN.md §7.2; FastMCP surfaces it as a tool error.
+_run_tool = run_tool
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +125,7 @@ async def ms_sdm_summary(params: SDMSummaryInput) -> str:
         spectral_mode_inferred, fields, scan_intent_counts, and
         target_max_elevation_deg.
     """
-    return _run_tool(sdm_summary.run, params.sdm_path)
+    return await _run_tool(sdm_summary.run, params.sdm_path)
 
 
 @mcp.tool(
@@ -175,7 +157,7 @@ async def ms_reduction_log(params: ReductionLogInput) -> str:
         JSON envelope: append → n_records; render → recipe + replay_script;
         list → step/tool/rationale summary.
     """
-    return _run_tool(
+    return await _run_tool(
         reduction_log.run,
         params.action,
         params.workdir,
@@ -185,6 +167,7 @@ async def ms_reduction_log(params: ReductionLogInput) -> str:
         params.rationale,
         params.skill_rule,
         params.status,
+        _lock_path=params.workdir,
     )
 
 
@@ -219,7 +202,7 @@ async def ms_import_asdm(params: ImportASDMInput) -> str:
     Returns:
         JSON with script_path, ms_path, online_flag_file, and fixed parameters used.
     """
-    return _run_tool(
+    return await _run_tool(
         import_asdm.run,
         params.asdm_path,
         params.workdir,

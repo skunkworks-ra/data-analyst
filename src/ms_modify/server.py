@@ -9,14 +9,12 @@ All tools carry readOnlyHint: False — they modify the MS.
 
 from __future__ import annotations
 
-import json
 import os
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from ms_inspect.exceptions import RadioMSError
-from ms_inspect.util.formatting import compact_fields
+from ms_inspect.util.dispatch import run_tool
 from ms_modify import (
     __version__,
     applycal,
@@ -196,17 +194,10 @@ class ApplyRflagInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _run_tool(tool_fn, *args, **kwargs) -> str:
-    """
-    Execute a tool function and return JSON-encoded result.
-    Catches RadioMSError and returns a well-formed error envelope.
-    Unexpected exceptions are re-raised (let FastMCP handle them).
-    """
-    try:
-        result = tool_fn(*args, **kwargs)
-        return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
-    except RadioMSError as e:
-        return json.dumps(e.to_dict(), separators=(",", ":"))
+# Shared with ms_inspect and ms_create — see ms_inspect/util/dispatch.py.
+# Write tools are long-running and mutate the MS, so both properties matter
+# here: execution off the event loop, and per-path serialization.
+_run_tool = run_tool
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +245,7 @@ async def ms_set_intents(params: SetIntentsInput) -> str:
         JSON envelope with field_intent_map, n_unique_states,
         state_rows_written, main_rows_updated, dry_run flag.
     """
-    return _run_tool(
+    return await _run_tool(
         intents.set_intents,
         params.ms_path,
         dry_run=params.dry_run,
@@ -307,7 +298,7 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
         JSON with init_gain_table, bp_table, corrected_written, ref_ant,
         bp_field, applycal_field, applymode, solint_phase, solint_bp, fillgaps.
     """
-    return _run_tool(
+    return await _run_tool(
         initial_bandpass.run,
         params.ms_path,
         params.bp_field,
@@ -364,7 +355,7 @@ async def ms_apply_rflag(params: ApplyRflagInput) -> str:
         JSON with script_path, datacolumn, scale parameters, and (if execute=True)
         flags_applied flag.
     """
-    return _run_tool(
+    return await _run_tool(
         rflag.run,
         params.ms_path,
         params.workdir,
@@ -768,7 +759,7 @@ async def ms_apply_preflag(params: ApplyPreflagInput) -> str:
     Returns:
         JSON with cmds_path, script_path, n_flag_commands, and (if execute=True) cal_ms.
     """
-    return _run_tool(
+    return await _run_tool(
         preflag.run,
         params.ms_path,
         params.workdir,
@@ -815,7 +806,7 @@ async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> str:
     Returns:
         JSON with script_path, and (if execute=True) priorcals list and skipped list.
     """
-    return _run_tool(
+    return await _run_tool(
         priorcals.run,
         params.ms_path,
         params.workdir,
@@ -860,7 +851,7 @@ async def ms_setjy(params: SetjyInput) -> str:
     Returns:
         JSON with flux_fields, skipped_fields, excluded_fields, warnings, script_path.
     """
-    return _run_tool(
+    return await _run_tool(
         setjy.run,
         params.ms_path,
         params.workdir,
@@ -923,7 +914,7 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
         polindex_c0 (pol fraction at reffreq), polangle_c0_rad (pol angle in
         radians at reffreq), and — when execute=True — the probed flux_jy/spix.
     """
-    return _run_tool(
+    return await _run_tool(
         setjy_polcal.run,
         params.ms_path,
         params.field,
@@ -976,7 +967,7 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
     Returns:
         JSON with script_path, thresholds, and (if execute=True) flags_applied.
     """
-    return _run_tool(
+    return await _run_tool(
         initial_rflag.run,
         params.ms_path,
         params.workdir,
@@ -1029,7 +1020,7 @@ async def ms_postcal_flag(params: PostcalFlagInput) -> str:
     Returns:
         JSON with script_path, selections, and (if execute=True) flags_applied.
     """
-    return _run_tool(
+    return await _run_tool(
         postcal_flag.run,
         params.ms_path,
         params.workdir,
@@ -1086,7 +1077,7 @@ async def ms_flag_caltable(params: FlagCaltableInput) -> str:
         JSON with script_path, viscal_type, resolved mode, and (if execute=True)
         flagged_frac_before/after/delta.
     """
-    return _run_tool(
+    return await _run_tool(
         flag_caltable.run,
         params.caltable_path,
         params.workdir,
@@ -1343,7 +1334,7 @@ async def ms_gaincal(params: GaincalInput) -> str:
     Returns:
         JSON with script_path, caltable, gaintype, calmode, solint, refant.
     """
-    return _run_tool(
+    return await _run_tool(
         gaincal.run,
         params.ms_path,
         params.field,
@@ -1409,7 +1400,7 @@ async def ms_polcal(params: PolcalInput) -> str:
     Returns:
         JSON with script_path, caltable, poltype, field, solint, combine, refant.
     """
-    return _run_tool(
+    return await _run_tool(
         polcal.run,
         params.ms_path,
         params.field,
@@ -1468,7 +1459,7 @@ async def ms_bandpass(params: BandpassInput) -> str:
     Returns:
         JSON with script_path, caltable, solint, combine, refant, fillgaps.
     """
-    return _run_tool(
+    return await _run_tool(
         bandpass.run,
         params.ms_path,
         params.field,
@@ -1526,7 +1517,7 @@ async def ms_fluxscale(params: FluxscaleInput) -> str:
     Returns:
         JSON with script_path, fluxtable, derived_flux_jy per field per SPW.
     """
-    return _run_tool(
+    return await _run_tool(
         fluxscale.run,
         params.ms_path,
         params.caltable,
@@ -1584,7 +1575,7 @@ async def ms_applycal(params: ApplycalInput) -> str:
     Returns:
         JSON with script_path, corrected_written, field, n_tables, applymode.
     """
-    return _run_tool(
+    return await _run_tool(
         applycal.run,
         params.ms_path,
         params.field,
@@ -1805,7 +1796,7 @@ async def ms_tclean(params: TcleanInput) -> str:
     Returns:
         JSON with script_path, imagename, and completed flag.
     """
-    return _run_tool(
+    return await _run_tool(
         tclean.run,
         params.ms_path,
         params.imagename,
