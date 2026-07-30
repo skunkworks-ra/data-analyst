@@ -20,37 +20,65 @@ quantity that depends on it is also at least `SUSPECT`.
 
 ## Band identification reference
 
-### VLA / EVLA / JVLA
+> **Band edges are NOT listed here.** They live in the telescope profiles at
+> `src/ms_inspect/data/telescopes/<telescope>.yaml` (`bands`: `code`, `min_ghz`,
+> `max_ghz`, `label`), which carry their provenance in comments. `ms_inspect`
+> already resolves the band for you and returns it in the `band` field. If you
+> need the edges themselves — to check SPW coverage, or to reason about a
+> frequency near a receiver boundary — **Read the YAML for that telescope**. Do
+> not reproduce edges from memory: the uGMRT ladder in particular has been
+> renumbered, and stale copies of it are wrong.
 
-| Band | Frequency | Primary science use |
-|------|-----------|---------------------|
-| P | 230–470 MHz | Large-scale structure, SNRs, pulsars |
-| L | 1–2 GHz | HI 21 cm, OH masers, continuum |
-| S | 2–4 GHz | Continuum, masers |
-| C | 4–8 GHz | Continuum, ammonia, methanol |
-| X | 8–12 GHz | Continuum, SiO masers |
-| Ku | 12–18 GHz | Continuum |
-| K | 18–26.5 GHz | H₂O masers, ammonia |
-| Ka | 26.5–40 GHz | Continuum |
-| Q | 40–50 GHz | Continuum, high-z lines |
+Bands below are keyed by the `code` in the profile. The science-use column is
+editorial context only — it has no effect on any calculation.
+
+### VLA / JVLA
+
+| Band | Primary science use |
+|------|---------------------|
+| P | Large-scale structure, SNRs, pulsars |
+| L | HI 21 cm, OH masers, continuum |
+| S | Continuum, masers |
+| C | Continuum, ammonia, methanol |
+| X | Continuum, SiO masers |
+| Ku | Continuum |
+| K | H₂O masers, ammonia |
+| Ka | Continuum |
+| Q | Continuum, high-z lines |
+
+The profile also carries a low-frequency `4` band. VLA bands are intervals with
+real gaps between receivers — a frequency in a gap resolves to no band, which is
+correct, not a failure.
 
 ### MeerKAT
 
-| Band | Frequency | Primary science use |
-|------|-----------|---------------------|
-| UHF | 544–1088 MHz | HI at moderate z, pulsars |
-| L | 856–1712 MHz | HI 21 cm (z=0), continuum |
-| S | 1.75–3.5 GHz | Continuum, masers |
+| Band | Primary science use |
+|------|---------------------|
+| UHF | HI at moderate z, pulsars |
+| L | HI 21 cm (z=0), continuum |
+| S | Continuum, masers |
+
+UHF and L genuinely overlap (real receiver overlap) — a frequency in the overlap
+resolves to both.
 
 ### uGMRT
 
-| Band | Frequency | Primary science use |
-|------|-----------|---------------------|
-| Band 1 | 120–250 MHz | Diffuse emission, pulsars |
-| Band 2 | 250–500 MHz | Large-scale structure |
-| Band 3 | 550–750 MHz | HI at z~0.4, continuum |
-| Band 4 | 700–950 MHz | Continuum, OH |
-| Band 5 | 1050–1450 MHz | HI, continuum |
+Four wideband receivers since the 2019 upgrade, numbered **2–5**. There is no
+commissioned Band 1, and the numbering does not start at the lowest-frequency
+receiver you might expect — check the profile before labelling a band.
+
+| Band | Primary science use |
+|------|---------------------|
+| 2 | Diffuse emission, pulsars |
+| 3 | Large-scale structure |
+| 4 | HI at z~0.4, continuum, OH |
+| 5 | HI, continuum |
+
+### ALMA
+
+Bands 1–10; see `alma.yaml`. Bands 2 and 3 overlap, so a frequency in the
+overlap resolves to both — the authoritative band for real data is parsed from
+`ALMA_RB_NN` in `SPECTRAL_WINDOW.NAME`, with the frequency table as fallback.
 
 ---
 

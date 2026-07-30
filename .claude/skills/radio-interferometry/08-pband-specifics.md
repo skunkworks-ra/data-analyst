@@ -1,8 +1,10 @@
-# 08 — P-band Specifics (200–500 MHz, VLA)
+# 08 — P-band Specifics (VLA)
 
 ## Scope
 
-This document applies to VLA P-band observations (EVLA low-band, 200–500 MHz).
+This document applies to VLA/JVLA P-band observations (low-band). For the band
+edges, see the `P` entry in `src/ms_inspect/data/telescopes/vla.yaml` — do not
+quote them from memory.
 All content is specific to this band and supplements general calibration guidance
 in 07-calibration-execution.md.
 

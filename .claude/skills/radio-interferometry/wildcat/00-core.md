@@ -9,37 +9,34 @@ not thread-safe for concurrent opens of the same MS within one process. When
 bypassing the MCP tools (direct casatools/casatasks via Bash), keep operations
 on a given MS strictly sequential.
 
-## VLA / EVLA band table
+## Band → flux standard
 
-| Band | Frequency | Flux standard |
-|------|-----------|--------------|
-| P | 230–470 MHz | Scaife-Heald 2012 |
-| L | 1–2 GHz | Perley-Butler 2017 |
-| S | 2–4 GHz | Perley-Butler 2017 |
-| C | 4–8 GHz | Perley-Butler 2017 |
-| X | 8–12 GHz | Perley-Butler 2017 |
-| Ku | 12–18 GHz | Perley-Butler 2017 |
-| K | 18–26.5 GHz | Perley-Butler 2017 |
-| Ka | 26.5–40 GHz | Perley-Butler 2017 |
-| Q | 40–50 GHz | Perley-Butler 2017 |
+> **Band edges are NOT listed here.** They live in the telescope profiles at
+> `src/ms_inspect/data/telescopes/<telescope>.yaml` (`bands`). `ms_inspect`
+> resolves the band and returns it in the `band` field; Read the YAML if you need
+> the edges themselves. Do not reproduce edges from memory.
 
-## MeerKAT band table
+Keyed by the `code` in the profile.
 
-| Band | Frequency | Flux standard |
-|------|-----------|--------------|
-| UHF | 544–1088 MHz | Reynolds 1994 (PKS1934-638) |
-| L | 856–1712 MHz | Reynolds 1994 (PKS1934-638) |
-| S | 1.75–3.5 GHz | Reynolds 1994 or Stevens 2004 (PKS0408-65) |
+### VLA / JVLA
 
-## uGMRT band table
+| Band | Flux standard |
+|------|--------------|
+| P | Scaife-Heald 2012 |
+| L, S, C, X, Ku, K, Ka, Q | Perley-Butler 2017 |
 
-| Band | Frequency |
-|------|-----------|
-| Band 1 | 120–250 MHz |
-| Band 2 | 250–500 MHz |
-| Band 3 | 550–750 MHz |
-| Band 4 | 700–950 MHz |
-| Band 5 | 1050–1450 MHz |
+### MeerKAT
+
+| Band | Flux standard |
+|------|--------------|
+| UHF | Reynolds 1994 (PKS1934-638) |
+| L | Reynolds 1994 (PKS1934-638) |
+| S | Reynolds 1994 or Stevens 2004 (PKS0408-65) |
+
+### uGMRT
+
+Four wideband receivers since the 2019 upgrade, numbered **2–5**. There is no
+commissioned Band 1 — check the profile before labelling a band.
 
 ## Scan intent vocabulary
 
