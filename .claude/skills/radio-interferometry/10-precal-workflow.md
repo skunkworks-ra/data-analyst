@@ -16,6 +16,7 @@ pass of RFI removed, ready for the full calibration solve.
 ## Sequence overview
 
 ```
+ms_sdm_summary(sdm_path)                 → what this dataset IS, before importing it
 ms_import_asdm(execute=False, ...)       → generate import_asdm.py
   → run import_asdm.py as background job; wait for completion however long it takes
 ms_verify_import(ms_path, flag_file)     → confirm MS valid + .flagonline.txt present
@@ -51,9 +52,30 @@ ms_flag_summary(calibrators.ms)          → before/after flag delta
 
 ---
 
-## Step 0 — ASDM ingestion
+## Step 0 — ASDM triage and ingestion
 
-Run `ms_import_asdm` before anything else if starting from raw ASDM data.
+### 0a — Read the ASDM before converting it
+
+Run `ms_sdm_summary(sdm_path)` first when starting from raw ASDM data. It reads
+the ASDM XML directly — no casatools, no conversion — and tells you what the
+dataset is before you spend the import on it: telescope and array configuration,
+band, per-SPW continuum-vs-line classification, HI-21cm coverage, correlation
+products (whether cross-hands are present at all, which decides whether polcal
+is even on the table), sources with their intents, scan balance between
+calibrators and target, and maximum target elevation.
+
+Use it to answer, before importing:
+- Is this the dataset you think it is (right target, right band, right config)?
+- Are the cross-hand products there? Without RL/LR there is no polarisation path.
+- Is there a flux/bandpass calibrator in the scan list at all?
+- Does the target ever rise high enough to be worth calibrating?
+
+A wrong answer here costs one command; the same wrong answer after import costs
+the import plus everything built on it.
+
+### 0b — Convert
+
+Run `ms_import_asdm` next if starting from raw ASDM data.
 
 **Always generate the script first (`execute=False`).** The script is short —
 review it to confirm the output paths are correct before running.

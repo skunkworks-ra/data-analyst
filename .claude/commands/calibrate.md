@@ -3,8 +3,8 @@ description: Full calibration solve for a pre-cal-complete CASA MS (initial phas
 allowed-tools: ms_workflow_status, ms_field_list, ms_spectral_window_list,
                ms_correlator_config, ms_antenna_list, ms_verify_priorcals,
                ms_refant, ms_gaincal, ms_bandpass, ms_fluxscale, ms_applycal,
-               ms_calsol_stats, ms_calsol_plot, ms_flag_summary,
-               ms_gaincal_snr_predict, Bash, Read, Write
+               ms_calsol_stats, ms_calsol_stats_detail, ms_calsol_plot, ms_flag_summary,
+               ms_gaincal_snr_predict, ms_reduction_log, Bash, Read, Write
 ---
 
 Run the full calibration solve sequence on this MS: $ARGUMENTS

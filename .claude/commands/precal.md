@@ -2,11 +2,12 @@
 description: Pre-calibration workflow for a CASA Measurement Set (online flags → preflag → priorcals → setjy → refant → initial bandpass → residual rflag). Follows skill 10-precal-workflow.md.
 allowed-tools: ms_observation_info, ms_field_list, ms_scan_list, ms_scan_intent_summary,
                ms_spectral_window_list, ms_correlator_config, ms_antenna_list,
-               ms_verify_import, ms_set_intents, ms_online_flag_stats,
+               ms_sdm_summary, ms_verify_import, ms_set_intents, ms_online_flag_stats,
                ms_apply_preflag, ms_flag_summary, ms_generate_priorcals,
                ms_verify_priorcals, ms_setjy, ms_refant, ms_initial_bandpass,
                ms_verify_caltables, ms_residual_stats, ms_apply_initial_rflag,
-               ms_rfi_channel_stats, ms_workflow_status, Bash, Read, Write
+               ms_rfi_channel_stats, ms_workflow_status, ms_reduction_log,
+               Bash, Read, Write
 ---
 
 Run the pre-calibration workflow on this MS: $ARGUMENTS
