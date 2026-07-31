@@ -31,18 +31,54 @@ per-server tool inventory). Read it before making any non-trivial change.
 
 Every tool in `src/ms_inspect/tools/` must obey three rules:
 
-1. **One question, one answer.** A tool returns numbers and completeness flags.
-   It never interprets, never suggests a next step, never chains to another tool.
-2. **Numbers, not narratives.** All returned text is structured data or a
-   provenance annotation. Prose interpretation belongs in `skill/SKILL.md`.
+1. **One question, one answer.** A tool returns measurements and completeness
+   flags. It never suggests a next step and never chains to another tool.
+2. **No gates.** Tools may return derived values, rankings, and descriptive
+   labels, with their inputs included. Tools may **not** return gates, meaning
+   any field whose semantic is "you may or may not proceed". Gating requires
+   knowing the science goal and the risk tolerance, and only the skill has
+   those.
 3. **Explicit uncertainty.** Every field that could not be retrieved carries a
    `CompletionFlag` (`COMPLETE`, `INFERRED`, `PARTIAL`, `SUSPECT`, `UNAVAILABLE`).
    Silence is never used to indicate failure.
 
-Violating the contract — adding interpretation, collapsing flags, adding
-tool-chaining logic — will break the Skill's reasoning model and produce silent
-scientific errors. If you are unsure whether something belongs in a tool or in
-the Skill, it belongs in the Skill.
+### What rule 2 permits and forbids
+
+| Permitted | Forbidden |
+|-----------|-----------|
+| A derived scalar (`dynamic_range`, `severity`, `pa_spread_deg`) | A boolean verdict (`detection_pass`, `xf_feasible`, `meets_threshold`) |
+| A descriptive label with its constants surfaced (`detection` / `marginal` / `undetected`) | A `blocker` or `verdict` field naming what stops you |
+| A ranking with the ranked quantity attached (`ms_refant`, `leakage_cal_candidates`) | Selecting one entry from a ranking and substituting it for the user's choice |
+| A suggested parameter value, labelled as such (`recommended_minblperant`, `suggested.*`) | Withholding a value because a threshold was not met |
+
+**Inputs travel with outputs.** A derived value must ship the quantities and
+constants it was computed from, so the skill can recompute it under a different
+tolerance. A ratio whose numerator and denominator are absent is a verdict
+wearing a number's clothes.
+
+### Why gates specifically
+
+A gate that fails *loudly* costs a CASA error and a retry. A gate that fails
+*silently* costs science that was never attempted, with nothing in the output
+recording what was forgone — and the threshold behind it was one constant chosen
+for a typical case. The motivating case is in `docs/session_context.md:65`:
+D-terms on J1454 at 24 degrees of parallactic coverage, "marginal, solved per
+user direction". The right answer there was "proceed, and limit
+fractional-polarization claims to the few percent level". No boolean can express
+that.
+
+This also states a preference for **posterior verification over prior
+gating**: measure the result and report it, rather than refusing to compute.
+
+**One named exception:** `ms_workflow_status.next_recommended_step`. It gates on
+filesystem state, not on a scientific claim, and it fails visibly — an
+unreadable probe returns `probe_failed_*` and `UNAVAILABLE` rather than
+inferring. Do not add a second exception without the same two properties.
+
+Violating the contract — adding a gate, collapsing flags, adding tool-chaining
+logic — will break the Skill's reasoning model and produce silent scientific
+errors. If you are unsure whether something belongs in a tool or in the Skill,
+it belongs in the Skill.
 
 ---
 

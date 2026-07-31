@@ -15,15 +15,48 @@ Layers 3–5 (Data Quality, Calibration Readiness, Imaging Preparation) are out 
 > **An MCP tool answers exactly one question with numbers.**  
 > **The Skill answers: given these numbers, what do they mean, and what do I look at next?**
 
-No tool interprets. No tool suggests. No tool chains to another.  
+No tool gates. No tool suggests a next step. No tool chains to another.  
 Interpretation, diagnostic reasoning, and workflow sequencing live exclusively in the Skill document.
+
+**The gate rule.** Tools may return derived values, rankings, and descriptive
+labels, with their inputs included. Tools may **not** return gates, meaning any
+field whose semantic is "you may or may not proceed". Gating requires knowing
+the science goal and the risk tolerance, and only the skill has those.
+
+| Permitted | Forbidden |
+|-----------|-----------|
+| Derived scalars: `dynamic_range`, `severity`, `pa_spread_deg` | Boolean verdicts: `detection_pass`, `xf_feasible`, `meets_threshold` |
+| Descriptive labels with their constants surfaced | `blocker` / `verdict` fields naming what stops you |
+| Rankings with the ranked quantity attached | Substituting the tool's pick for the user's choice |
+| Suggested parameter values, labelled as such | Withholding a value because a threshold was not met |
+
+Inputs travel with outputs: a derived value ships the quantities and constants
+it was computed from, so the skill can recompute it under a different tolerance.
+
+The argument is about failure modes, not about output types. A gate that fails
+loudly costs a CASA error and a retry. A gate that fails silently costs science
+never attempted, with nothing in the output recording what was forgone, and the
+threshold behind it was one constant chosen for a typical case. See
+`docs/session_context.md:65` — D-terms at 24° of parallactic coverage, "marginal,
+solved per user direction". That is why the design prefers **posterior
+verification** (measure the result, report it) over **prior gating** (refuse to
+compute).
+
+The single named exception is `ms_workflow_status.next_recommended_step`: it
+gates on filesystem state rather than a scientific claim, and it fails visibly,
+returning `probe_failed_*` with an `UNAVAILABLE` field instead of inferring past
+an unknown. A second exception needs both of those properties.
 
 This mirrors the professional practice: CASA tools return measurements. The interferometrist's brain — encoded in the Skill — does the science.
 
 ### 1.2 Zen Principles Applied
 
 - **One tool, one question.** If a tool is tempted to answer two questions, it should be two tools.
-- **Numbers, not narratives.** Tools return structured data. The LLM narrates.
+- **Measurements, not gates.** Tools return structured data, including derived
+  values and labels, with the inputs behind them. The LLM decides whether to
+  proceed. (This supersedes an earlier "numbers, not narratives" rule, which
+  constrained output *type* and so nominally banned a derived quantity like a
+  ratio of two measurements. Type was never the risk; gating is. See §1.1.)
 - **Explicit uncertainty.** Every field that could not be retrieved carries a completeness flag. Silence is never used to indicate failure.
 - **Provenance always.** Every returned value states which CASA call produced it, so results are independently verifiable.
 - **Graceful degradation over hard failure.** A tool with partial data returns what it has plus a clear account of what is missing and why.
