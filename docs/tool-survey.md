@@ -211,3 +211,94 @@ Not covered here and still open from the earlier review: the multi-MS
 `ms_tclean` change that unblocks two-EB imaging, the PA `validation_status:
 PENDING` contradiction, and whether long CASA solves should run in the server
 process at all.
+
+---
+
+# Corrections (2026-07-31)
+
+Written against `fbd2988`. Re-verified against `d8733f0` (telescope-profile).
+Every S1 to S6 claim above still holds: each cited line number was re-checked and
+lands where the survey says. The corrections below are to this document's
+**recommendations**, not its findings.
+
+## C1. S2's proposed contract wording was wrong
+
+S2 proposed:
+
+> A tool may return a **derived scalar or ranking** computed from its own
+> measurements by a documented, deterministic rule, provided the inputs to that
+> rule are also returned. A tool may never return prose telling the reader what
+> to conclude or what to run next.
+
+That constrains output **type**, which is not where the risk is, and it
+explicitly recommends keeping `detection_pass` — a boolean gate. Superseded by
+Preshanth's formulation:
+
+> Tools may return derived values, rankings, and descriptive labels, with their
+> inputs included. Tools may not return gates, meaning any field whose semantic
+> is "you may or may not proceed." Gating requires knowing the science goal and
+> the risk tolerance, and only the skill has those.
+
+The distinction: a derived ratio is a measurement of a relationship. A boolean
+feasibility flag is a decision wearing a number's clothes. So `severity`,
+`recommended_minblperant` and `suggested.*` are fine as S2 said, but for the
+opposite reason it gave, and `detection_pass` must go, which S2 said to keep.
+
+The argument for the gate rule, which S2 lacked: a gate whose failure is loud
+costs a CASA error. A gate whose failure is silent costs science never attempted,
+with nothing in the output recording what was forgone, and the threshold behind
+it was one constant chosen for a typical case. The motivating case is in
+`docs/session_context.md:65` — D-terms on J1454 at 24 degrees of parallactic
+coverage, "marginal, solved per user direction". The right answer there was
+"proceed, and limit fractional-polarization claims to the few percent level",
+which no boolean can express.
+
+## C2. `recommended_df_poltype` is not a gate and stays
+
+S2's table lists it beside `verdict` and `blocker` as part of the go/no-go. It is
+not: it names which solve applies, not whether you may proceed. Preshanth's
+decision is to keep it.
+
+But the implementation does couple it to a threshold. `pol_cal_feasibility.py`
+computes `df_qu_unknown = (not df_known_pol) and meets_threshold` and returns
+`None` below the threshold — i.e. "no strategy available". That is wrong on the
+science: parallactic coverage determines how well constrained a `Df+QU` solve is,
+not which poltype applies. Below the threshold the honest answer is still
+`Df+QU`, with the coverage reported separately. Derive it from source knowledge
+only, and ship the basis alongside so it is checkable.
+
+## C3. S5.3 on `wildcat/` — recommendation reversed
+
+S5.3 says "Merge or delete". Deleting it was tried and should not be repeated
+without Srikrishna Sekhar's agreement. Verified consequences:
+
+- Two modify/delete conflicts against `telescope-profile`.
+- Six failures in `tests/unit/test_skill_telescope_refs.py`, which hardcodes
+  three `wildcat/` paths (`grep -c wildcat` → 3).
+- `8163b2a` explicitly fixes the gridder bug in "the `wildcat/` copy", so he was
+  treating the tree as live at the same time it was being removed as dead.
+
+The finding stands: 11 files, unreachable from `SKILL.md`. The disposition is a
+conversation between the two authors, not a cleanup task.
+
+## C4. Scope note on what this document is good for
+
+The S1 to S6 findings are reliable because they are all of the form "this field
+exists at this line" — checkable in seconds against the repo. Two later pieces of
+work built on this survey failed, and both failed outside that form:
+
+- An assertion about how an **external API** behaves. `refant` was given a
+  per-SpW breakdown reading `flagdata(mode='list')` output as
+  `result[f"spw{id}"]`. The official docstring's own example is
+  `s['report0']['name']`, so the lookup returned `{}` for every SpW, the
+  surrounding `try/except` never fired, and the feature silently returned
+  nothing while its unit tests passed, because they fed the helper hand-built
+  inputs in the shape the code wrongly assumed.
+- An assertion about a **scientific relationship**. A verification tool compared
+  CORRECTED against MODEL as a flux-scale check. The gains were solved on that
+  calibrator against that model, so amplitude gains absorb any model scale error
+  and the ratio is ~1 by construction. It is specifically the one thing that
+  comparison cannot detect.
+
+Neither is visible by reading this repository. Claims of that kind must be
+executed against the installed library, or measured, before they ship.
