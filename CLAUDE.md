@@ -483,15 +483,19 @@ or create visibility data.
 
 ## Slash commands
 
-Project-scoped commands live in `.claude/commands/` and are checked into the repo.
-Available in Claude Code as `/project:<name>`:
+Commands live in `.claude/commands/` and are checked into the repo. Working in a
+clone they are invoked as `/<name>`; installed from the marketplace they are
+namespaced by the plugin, `/radio-analyst:<name>`. There is no `/project:`
+prefix in either context.
 
 | Command | What it does |
 |---------|-------------|
-| `/project:inspect <ms_path>` | Full Phase 1 + Phase 2 analysis + go/no-go report |
-| `/project:phase1 <ms_path>` | Phase 1 orientation only (6 tools) |
-| `/project:phase2 <ms_path>` | Phase 2 instrument sanity only (6 tools) |
-| `/project:simulate <description>` | Simulate an MS from a natural-language description |
+| `/inspect <ms_path>` | Full Phase 1 + Phase 2 analysis + go/no-go report |
+| `/precal <ms_path>` | Pre-calibration workflow (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
+| `/calibrate <ms_path>` | Full calibration solve (initial phase → delay → bandpass → gain → fluxscale → applycal) |
+| `/polcal <ms_path>` | Polarisation calibration (Kcross → D-terms → Xf → applycal with parang) |
+| `/image <ms_path>` | First-pass continuum/cube imaging with derived tclean parameters |
+| `/simulate <description>` | Simulate an MS from a natural-language description |
 
 ## What is out of scope for this file
 

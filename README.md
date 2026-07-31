@@ -156,14 +156,17 @@ automatically when the plugin is installed.
 
 ## Slash commands
 
+Working in a clone these are invoked as `/<name>`; installed from the
+marketplace they are namespaced by the plugin, `/radio-analyst:<name>`.
+
 | Command | What it does |
 |---------|-------------|
-| `/project:inspect <ms_path>` | Full Phase 1 + Phase 2 analysis with go/no-go report |
-| `/project:precal <ms_path>` | Pre-calibration workflow (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
-| `/project:calibrate <ms_path>` | Full calibration solve (initial phase → delay → bandpass → gain → fluxscale → applycal) |
-| `/project:polcal <ms_path>` | Polarisation calibration (Kcross → D-terms → Xf → applycal with parang) |
-| `/project:image <ms_path>` | First-pass continuum/cube imaging with derived tclean parameters |
-| `/project:simulate <description>` | Generate a synthetic MS from a conversational description |
+| `/inspect <ms_path>` | Full Phase 1 + Phase 2 analysis with go/no-go report |
+| `/precal <ms_path>` | Pre-calibration workflow (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
+| `/calibrate <ms_path>` | Full calibration solve (initial phase → delay → bandpass → gain → fluxscale → applycal) |
+| `/polcal <ms_path>` | Polarisation calibration (Kcross → D-terms → Xf → applycal with parang) |
+| `/image <ms_path>` | First-pass continuum/cube imaging with derived tclean parameters |
+| `/simulate <description>` | Generate a synthetic MS from a conversational description |
 
 ---
 

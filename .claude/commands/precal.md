@@ -11,7 +11,8 @@ allowed-tools: ms_observation_info, ms_field_list, ms_scan_list, ms_scan_intent_
 
 Run the pre-calibration workflow on this MS: $ARGUMENTS
 
-Read `.claude/skills/radio-interferometry/10-precal-workflow.md` before starting.
+Load the `radio-interferometry` skill, then read its `10-precal-workflow.md`
+supporting file (a sibling of that skill's `SKILL.md`) before starting.
 Execute the stages below in order; STOP and report if any stage fails its
 decision gate.
 
@@ -59,4 +60,4 @@ decision gate.
 
 **Output:** a structured report of each stage's outcome, flagged warnings,
 and the forward hand-off values (`refant`, `priorcals`, `bp_field`, `workdir`)
-ready for `/project:calibrate`.
+ready for `/calibrate`.
