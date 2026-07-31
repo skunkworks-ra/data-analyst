@@ -918,7 +918,7 @@ On tool error:
 **Phase 1 (Layers 1 & 2): 13 tools** — the two tables above.
 
 > **Note on scope.** This design document was originally written for Phase 1
-> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **33 tools**
+> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **34 tools**
 > as later calibration/imaging phases were implemented, and the read-only
 > contract now spans the whole reduction. The remaining `ms_inspect` tools are
 > catalogued below; `ms_modify` (§8b) and `ms_create` (§8c) are full MCP servers
@@ -960,6 +960,7 @@ On tool error:
 | `ms_rfi_channel_stats` | Per-channel flag fractions; persistent RFI bands |
 | `ms_spw_amp_severity` | Robust per-channel amplitude stats aggregated per SpW; RFI severity + estimated discardable fraction (reservoir-sampled) |
 | `ms_pol_cal_conditions` | Measured pol-cal conditions: PA spread, scan counts, catalogue pol properties, ranked leakage candidates, recommended_df_poltype + its basis, reference thresholds as labelled constants. No verdict |
+| `ms_polcal_recovery` | Posterior verification after applycal(parang=True): recovered Stokes I / frac_pol / EVPA vs MODEL and vs catalogue, residual Stokes V, D-term amplitudes. Residuals with inputs; no verdict |
 | `ms_residual_stats` | CORRECTED − MODEL amplitude distribution per SpW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | Per-field parallel-hand amplitude + phase RMS of a data column, vector-averaged over the channel range (post-applycal sanity) |
 | `ms_phase_cal_lookup` | Cross-match a sky position against the NRAO VLA phase-calibrator catalog; nearest source, flux, UV limits, per-config quality codes |
@@ -976,7 +977,7 @@ On tool error:
 |------|----------------|
 | `ms_workflow_status` | State probe over MS + workdir: which pipeline stages are complete + `next_recommended_step` |
 
-**Total `ms_inspect`: 33 tools.**
+**Total `ms_inspect`: 34 tools.**
 
 ---
 

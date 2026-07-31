@@ -94,11 +94,41 @@ on, and unresolved. Choose deliberately and record why.
 ### Step D — verify afterwards rather than gating beforehand
 
 Prefer a posterior check to prior permission. After `applycal` with `parang=True`,
-compare the recovered values against the catalogue on the pol calibrator: Stokes I
-against its catalogue flux density, fractional polarization and EVPA against
-`frac_pol_pct` and `pol_angle_deg`, and the D-term amplitudes against the expected
-few percent. A failure there is loud, specific about what broke, and continuous.
-That is the check worth trusting.
+run `ms_polcal_recovery(ms_path, field_name=<pol cal>, dterm_caltable=<Df table>)`.
+It measures whether the known answer came back. This is the check worth trusting,
+because its failure is loud, specific about which quantity broke, and continuous.
+
+It returns two independent references per SpW, and they fail differently:
+
+- **`stokes_i_ratio_measured_over_model`** should sit near 1. This is the
+  flux-scale trap detector: if `setjy` left MODEL pinned at the default 1 Jy,
+  every solve still "succeeds" and only this ratio shows it. Check it **first**,
+  and check it even when the polarisation numbers look perfect, because
+  fractional polarization divides the flux error out. A `frac_pol` of exactly the
+  catalogue value on an I that is wrong by a factor of two is a real failure mode.
+- **`evpa_difference_deg_vs_model`** is the internal consistency of the solve.
+  Near zero means Xf did what it was told.
+- **`evpa_difference_deg_vs_catalogue`** is the independent check. It catches
+  MODEL itself being set wrong, which MODEL-relative agreement cannot see. If the
+  two disagree, suspect `ms_setjy_polcal` inputs before suspecting the solve.
+- **`residual_frac_v`** is the direct observable for uncorrected leakage. Pol
+  calibrators have no intrinsic circular polarization, so whatever V you measure
+  is instrumental.
+- **`dterms.median_abs_d`** against `dterm_typical_max_frac` (0.05) and
+  `dterm_suspect_frac` (0.20). A few percent is normal and rises at band edges.
+  Above roughly 20 percent the solve absorbed something that is not leakage,
+  commonly a wrong model or an unflagged bad antenna; check `dterms.per_antenna`
+  for a single outlier before rejecting the whole solution.
+
+**Judge the EVPA residual against the science, not a threshold.** A few degrees is
+fatal for a rotation-measure programme and irrelevant for fractional-polarization
+morphology. State the number you got and what it permits, as in "EVPA recovered to
+3 degrees, RM work supportable; fractional pol limited to the few percent level by
+a 4 percent residual leakage floor."
+
+Also check `correlation_basis` matches expectation. A Q and U swap rotates every
+EVPA by exactly 45 degrees, so an EVPA residual suspiciously near 45 degrees is
+more likely a basis problem than a calibration failure.
 
 
 ---

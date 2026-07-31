@@ -11,7 +11,7 @@ This repository ships **three Model Context Protocol (MCP) servers** for an
 AI-assisted radio interferometric reduction pipeline targeting VLA/JVLA/EVLA,
 MeerKAT, and uGMRT:
 
-- **ms-inspect** — read-only inspection and diagnostics (33 tools, port 8000)
+- **ms-inspect** — read-only inspection and diagnostics (34 tools, port 8000)
 - **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
 - **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
 
@@ -159,6 +159,7 @@ ms-inspect/
 │       │   ├── spw_amp_severity.py ← ms_spw_amp_severity
 │       │   ├── workflow_status.py ← ms_workflow_status
 │       │   ├── pol_cal_conditions.py ← ms_pol_cal_conditions
+│       │   ├── polcal_recovery.py  ← ms_polcal_recovery
 │       │   └── image_stats.py     ← ms_image_stats
 │       └── util/
 │           ├── casa_context.py    ← context managers: open_msmd, open_table, open_ms, open_image
@@ -287,7 +288,7 @@ Environment variable reference:
 | `ms_verify_priorcals` | `tools/priorcals_check.py` | Check prior caltables (gc, opac, rq, ap) exist and are non-empty |
 | `ms_verify_caltables` | `tools/caltables.py` | Check init_gain.g + BP0.b from initial bandpass exist and have rows |
 
-### Instrument and RFI inspection (7 tools)
+### Instrument and RFI inspection (8 tools)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
@@ -296,6 +297,7 @@ Environment variable reference:
 | `ms_rfi_channel_stats` | `tools/rfi.py` | Per-channel flag fractions; identifies persistent RFI bands |
 | `ms_spw_amp_severity` | `tools/spw_amp_severity.py` | Robust per-channel amplitude stats (median/MAD/min/max) of any data column, aggregated per SpW. Severity = band_floor vs a clean-SpW anchor (RFI-dominated drop signal) + estimated_discardable_frac (localized-RFI magnitude). Memory-bounded reservoir sampling. Per-SpW aggregates are never capped; the `per_chan` drill-down is bounded to `max_chan_records` (default 256, worst by peak_to_floor), and when any SpW is capped the full uncapped arrays go to a `.spw_amp_severity_detail.json` sidecar with `PARTIAL` on the affected SpW |
 | `ms_pol_cal_conditions` | `tools/pol_cal_conditions.py` | Measured pol-cal conditions: PA spread, scan counts, catalogue pol properties at the observing band, `effective_role_at_band`, `recommended_df_poltype` with its `recommended_df_poltype_basis`, and every other field as a `leakage_cal_candidates` ranking. Reference thresholds ship as labelled constants. **No verdict, and it does not substitute a calibrator** — skill 09 decides |
+| `ms_polcal_recovery` | `tools/polcal_recovery.py` | **Posterior** verification after applycal(parang=True): recovered Stokes I / frac_pol / EVPA against **both** the MODEL setjy applied *and* the independent catalogue, plus residual Stokes V and per-antenna D-term amplitudes. `stokes_i_ratio_measured_over_model` is the flux-scale trap detector — frac_pol divides the flux error out, so check I even when the pol numbers look right. Residuals ship with both inputs; reference constants are labelled. No verdict |
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | `tools/corrected_stats.py` | Per-field parallel-hand amplitude (median/robust-std/p95) + phase RMS of a data column, **vector-averaged over the channel range** (so faint sources are not noise-biased). Post-applycal calibration sanity check. |
 

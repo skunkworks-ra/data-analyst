@@ -39,6 +39,7 @@ from ms_inspect.tools import (
     observation,
     online_flags,
     pol_cal_conditions,
+    polcal_recovery,
     priorcals_check,
     refant,
     residual_stats,
@@ -118,6 +119,38 @@ class ShadowingInput(BaseModel):
 class PolCalConditionsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to Measurement Set", min_length=1)
+
+
+class PolCalRecoveryInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set", min_length=1)
+    field_name: str = Field(
+        ...,
+        description="Polarisation calibrator field name to verify recovery on.",
+        min_length=1,
+    )
+    dterm_caltable: str | None = Field(
+        default=None,
+        description=(
+            "Optional D/Df/Dflls caltable. When given, returns median |D| per "
+            "antenna and per SpW so leakage amplitude can be compared against the "
+            "expected few percent."
+        ),
+    )
+    spw_ids: list[int] | None = Field(
+        default=None,
+        description="SpWs to measure. None means every SpW present for the field.",
+    )
+    chan_start: int | None = Field(
+        default=None,
+        description="Channel range start for the vector average (Python slice semantics).",
+        ge=0,
+    )
+    chan_end: int | None = Field(
+        default=None,
+        description="Channel range end, exclusive. None means open-ended.",
+        ge=1,
+    )
 
 
 class RefAntInput(BaseModel):
@@ -1236,6 +1269,70 @@ async def ms_pol_cal_conditions(params: PolCalConditionsInput) -> str:
     return await _run_tool(
         pol_cal_conditions.run,
         params.ms_path,
+    )
+
+
+@mcp.tool(
+    name="ms_polcal_recovery",
+    description=(
+        "Posterior verification of a polarisation calibration. Run AFTER applycal "
+        "with parang=True. Measures recovered Stokes I, fractional polarisation and "
+        "EVPA against BOTH the MODEL_DATA that setjy applied and the independent "
+        "catalogue, plus residual Stokes V and D-term amplitudes. Returns residuals "
+        "with their inputs and reference constants; no verdict."
+    ),
+    annotations={
+        "title": "Polarisation Calibration Recovery",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_polcal_recovery(params: PolCalRecoveryInput) -> str:
+    """
+    Measure how well a polarisation calibration recovered known values.
+
+    This is the check the contract prefers over a prior feasibility gate: rather
+    than asking beforehand whether polarisation calibration is permitted, it asks
+    afterwards whether the known answer came back. Its failure is loud, specific
+    about which quantity broke, and continuous.
+
+    Two references are returned deliberately. MODEL_DATA is what was actually
+    APPLIED, so the Stokes I ratio catches the flux-scale trap where setjy left
+    MODEL pinned at 1 Jy and every solve still "succeeded". The bundled catalogue
+    is INDEPENDENT, so it catches MODEL itself being wrong, which MODEL-relative
+    agreement cannot.
+
+    Absolute Stokes I matters on its own: fractional polarisation divides the flux
+    error out, so frac_pol can look perfect on an I that is wrong by a factor of two.
+
+    Requires CORRECTED_DATA, and MODEL_DATA for the applied-reference comparison
+    (usescratch=True on setjy / setjy_polcal).
+
+    Args:
+        params.ms_path:        Path to the Measurement Set.
+        params.field_name:     Pol calibrator field to verify.
+        params.dterm_caltable: Optional D/Df/Dflls caltable for leakage amplitudes.
+        params.spw_ids:        SpWs to measure; None means all present for the field.
+        params.chan_start:     Channel range start for the vector average.
+        params.chan_end:       Channel range end, exclusive.
+
+    Returns:
+        JSON with per_spw entries carrying measured_stokes_jy, measured_frac_pol,
+        measured_evpa_deg, the model and catalogue references, and the residuals
+        stokes_i_ratio_measured_over_model, frac_pol_difference_vs_model /
+        _vs_catalogue, evpa_difference_deg_vs_model / _vs_catalogue, and
+        residual_frac_v; plus dterms and the dterm reference constants.
+    """
+    return await _run_tool(
+        polcal_recovery.run,
+        params.ms_path,
+        params.field_name,
+        params.dterm_caltable,
+        params.spw_ids,
+        params.chan_start,
+        params.chan_end,
     )
 
 

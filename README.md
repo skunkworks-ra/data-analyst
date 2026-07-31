@@ -14,7 +14,7 @@ as CASA Measurement Sets.
 
 Three MCP servers expose the full tool suite:
 
-- **ms-inspect** — read-only inspection and diagnostics (33 tools, port 8000)
+- **ms-inspect** — read-only inspection and diagnostics (34 tools, port 8000)
 - **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
 - **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
 
@@ -148,7 +148,7 @@ The full per-tool inventory with descriptions lives in
 [`DESIGN.md`](DESIGN.md) (§8 ms-inspect, §8b ms-modify, §8c ms-create). A
 summary by category:
 
-### ms-inspect — read-only inspection (33 tools)
+### ms-inspect — read-only inspection (34 tools)
 
 - **Layer 1 — Orientation** (6): observation info, field list, scan list, scan
   intent summary, spectral window list, correlator config.
@@ -159,9 +159,10 @@ summary by category:
   single/library caltable plots, gaincal SNR prediction, caltable structural checks.
 - **Pre-calibration inspection** (5): import/model/priorcal verification, online
   flag stats, flag summary.
-- **Instrument & RFI inspection** (7): reference-antenna ranking, per-channel RFI
-  stats, SpW amplitude severity, pol-cal feasibility, residual/corrected-data
-  stats, phase-calibrator catalogue lookup.
+- **Instrument & RFI inspection** (8): reference-antenna ranking, per-channel RFI
+  stats, SpW amplitude severity, pol-cal conditions, posterior polcal recovery
+  verification, residual and corrected-data stats, phase-calibrator catalogue
+  lookup.
 - **Imaging inspection** (1): robust image RMS / peak / dynamic-range / beam.
 - **Pipeline / workflow** (1): workflow state probe.
 
