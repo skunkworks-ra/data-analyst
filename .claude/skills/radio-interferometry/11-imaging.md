@@ -295,9 +295,25 @@ If `rms_jy` is > 3× the radiometer estimate, run `ms_residual_stats` on the
 CORRECTED column before re-imaging — the problem is likely in the calibration,
 not the imaging parameters.
 
-A `detection_pass`=false verdict (peak-to-noise < 10; fail ≤ 5) means no reliable
-source — cross-check Step 0.5. If that gate failed, it's calibration decorrelation,
-not imaging.
+### Reading `detection`
+
+`ms_image_stats` returns a **descriptive** `detection` label over
+`dynamic_range` (peak-to-noise), plus `detection_thresholds` carrying the two
+constants behind it. It does not decide whether you may proceed — you do. Treat
+it as a continuum, and say which level you are at when you report a flux:
+
+| `detection` | `dynamic_range` | What it means, and what you may claim |
+|---|---|---|
+| `undetected` | ≤ 5 | The peak is consistent with a residual or sidelobe spike. Do not report a flux. Cross-check Step 0.5: at this level the usual cause is calibration decorrelation, not imaging parameters. |
+| `marginal` | > 5, < 10 | A source is probably there. A flux may be quoted with the peak-to-noise stated alongside it; do not quote a spectral index, a polarization fraction, or any second-order quantity. |
+| `detection` | ≥ 10 | Report the flux normally. Note that 10 is a floor for *existence*, not for precision — calibrator and self-cal work wants > 100. |
+| `unknown` | not computable | `rms_jy` was zero or negative. Something is wrong with the image, not with the source; check the warnings. |
+
+The boundaries are single constants chosen for a typical case. If the science
+goal justifies it, recompute the level yourself from `dynamic_range` and
+`detection_thresholds` — for a stacking experiment or a known-position
+measurement, a peak-to-noise of 4 at the expected position can be a real
+measurement, and the label alone would have thrown it away.
 
 ---
 
