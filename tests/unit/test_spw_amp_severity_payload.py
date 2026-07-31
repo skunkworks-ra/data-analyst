@@ -133,9 +133,7 @@ class TestMalformedInputRaises:
 
     def test_missing_per_spw(self, tmp_path):
         with pytest.raises(KeyError, match="per_spw"):
-            _bound_per_chan_payload(
-                {"datacolumn": "DATA"}, 100, str(tmp_path / "o.json"), []
-            )
+            _bound_per_chan_payload({"datacolumn": "DATA"}, 100, str(tmp_path / "o.json"), [])
 
     def test_entry_without_per_chan(self, tmp_path):
         data = _data(2, 10)
