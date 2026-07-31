@@ -38,7 +38,7 @@ from ms_inspect.tools import (
     image_stats,
     observation,
     online_flags,
-    pol_cal_feasibility,
+    pol_cal_conditions,
     priorcals_check,
     refant,
     residual_stats,
@@ -115,18 +115,9 @@ class ShadowingInput(BaseModel):
     )
 
 
-class PolCalFeasibilityInput(BaseModel):
+class PolCalConditionsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to Measurement Set", min_length=1)
-    pa_spread_threshold_deg: float = Field(
-        default=60.0,
-        description=(
-            "Minimum parallactic angle spread (degrees) required for a reliable "
-            "Df+QU (unknown-pol) leakage solution (default 30°; NRAO suggests 60°). Irrelevant to Xf and known-pol Df."
-        ),
-        ge=0.0,
-        le=180.0,
-    )
 
 
 class RefAntInput(BaseModel):
@@ -820,7 +811,7 @@ async def ms_elevation_vs_time(params: ElevationInput) -> str:
     name="ms_parallactic_angle_vs_time",
     description=(
         "Per-field parallactic angle range in sky-frame and feed-frame. "
-        "Feeds ms_pol_cal_feasibility. VALIDATION PENDING for feed-frame values."
+        "Feeds ms_pol_cal_conditions. VALIDATION PENDING for feed-frame values."
     ),
     annotations={
         "title": "Parallactic Angle vs Time",
@@ -1177,50 +1168,50 @@ async def ms_flag_summary(params: FlagSummaryInput) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Polarisation calibration feasibility
+# Polarisation calibration conditions
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool(
-    name="ms_pol_cal_feasibility",
+    name="ms_pol_cal_conditions",
     description=(
-        "Polarization-calibration go/no-go gate. Verdict: FULL, LEAKAGE_ONLY, "
-        "DEGRADED, or NOT_FEASIBLE based on pol-cal presence and PA-spread threshold."
+        "Polarisation-calibration conditions: which pol calibrators were observed, "
+        "their catalogued properties at the observed band, and the parallactic-angle "
+        "spread of every field, ranked. Measures only — no go/no-go verdict."
     ),
     annotations={
-        "title": "Polarisation Calibration Feasibility",
+        "title": "Polarisation Calibration Conditions",
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": False,
     },
 )
-async def ms_pol_cal_feasibility(params: PolCalFeasibilityInput) -> str:
+async def ms_pol_cal_conditions(params: PolCalConditionsInput) -> str:
     """
-    Assess whether full VLA polarisation calibration is feasible for this dataset.
+    Measure the polarisation-calibration conditions of this dataset.
 
     Cross-matches observed fields against the bundled VLA pol calibrator catalogue
-    (3C286, 3C138, 3C48, 3C147, 3C84, and Category B secondaries), then computes
-    the parallactic angle spread of the leakage calibrator across its observed scans.
+    (3C286, 3C138, 3C48, 3C147, 3C84, and Category B secondaries), interpolates
+    their polarisation properties to the observed frequency, and computes the
+    parallactic-angle spread of every field across its observed scans.
 
-    Verdict values:
-      FULL         — pol angle cal + leakage cal with sufficient PA spread (≥ threshold)
-      LEAKAGE_ONLY — no angle cal, but leakage cal present with sufficient spread
-      DEGRADED     — angle cal available but flagged as variable or in active flare
-      NOT_FEASIBLE — no pol cals found, or PA spread below threshold
+    Whether polarisation calibration should proceed, and with which leakage
+    calibrator, is the skill's decision: see 09-polcal-execution.md for the
+    consequence at each level of PA coverage.
 
     Args:
-        params.ms_path:                Path to the Measurement Set.
-        params.pa_spread_threshold_deg: PA spread threshold for the Df+QU path (default 30°).
+        params.ms_path: Path to the Measurement Set.
 
     Returns:
-        JSON with band_centre_ghz, pol_angle_calibrator (source, frac_pol, PA, stable_pa),
-        leakage_calibrator (pa_spread, n_scans, meets_threshold), verdict, and blocker.
+        JSON with band_centre_ghz, pol_angle_calibrator (source, frac_pol, PA,
+        stable_pa), leakage_calibrator (effective_role_at_band, pa_spread_deg,
+        n_calibrator_scans), leakage_cal_candidates ranked by PA spread,
+        recommended_df_poltype with its basis, and the PA reference levels.
     """
     return await _run_tool(
-        pol_cal_feasibility.run,
+        pol_cal_conditions.run,
         params.ms_path,
-        params.pa_spread_threshold_deg,
     )
 
 

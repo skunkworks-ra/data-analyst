@@ -285,40 +285,72 @@ class TestAntennaFlagFractionReal:
 
 
 @_SKIP
-class TestPolCalFeasibilityReal:
-    """Integration tests for ms_pol_cal_feasibility against a real MS."""
+class TestPolCalConditionsReal:
+    """Integration tests for ms_pol_cal_conditions against a real MS."""
 
     def test_returns_ok(self):
-        from ms_inspect.tools import pol_cal_feasibility
+        from ms_inspect.tools import pol_cal_conditions
 
-        result = pol_cal_feasibility.run(_TEST_MS)
+        result = pol_cal_conditions.run(_TEST_MS)
         assert result["status"] == "ok"
 
-    def test_verdict_is_valid(self):
-        from ms_inspect.tools import pol_cal_feasibility
+    def test_no_gate_fields(self):
+        """The gate fields are gone and must not come back."""
+        from ms_inspect.tools import pol_cal_conditions
 
-        result = pol_cal_feasibility.run(_TEST_MS)
-        verdict = result["data"]["verdict"]
-        assert verdict in {"FULL", "LEAKAGE_ONLY", "DEGRADED", "NOT_FEASIBLE"}
+        data = pol_cal_conditions.run(_TEST_MS)["data"]
+        for gate in ("verdict", "blocker", "xf_feasible", "df_feasible"):
+            assert gate not in data
+        for gate in ("meets_threshold", "single_scan_sufficient"):
+            assert gate not in data["leakage_calibrator"]
+        assert "leakage_cal_alternatives" not in data["leakage_calibrator"]
 
     def test_band_centre_present(self):
-        from ms_inspect.tools import pol_cal_feasibility
+        from ms_inspect.tools import pol_cal_conditions
 
-        result = pol_cal_feasibility.run(_TEST_MS)
+        result = pol_cal_conditions.run(_TEST_MS)
         band = result["data"]["band_centre_ghz"]
         assert band["value"] is not None
         assert band["value"] > 0.0
 
-    def test_pa_spread_threshold_respected(self):
-        """Relaxed threshold should not make NOT_FEASIBLE worse than strict threshold."""
-        from ms_inspect.tools import pol_cal_feasibility
+    def test_every_field_is_a_candidate_ranked_by_pa_spread(self):
+        """Enumeration is unconditional: one row per field, ranked, nothing selected."""
+        from ms_inspect.tools import fields, pol_cal_conditions
 
-        strict = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=90.0)
-        relaxed = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=10.0)
+        data = pol_cal_conditions.run(_TEST_MS)["data"]
+        candidates = data["leakage_cal_candidates"]
+        n_fields = len(fields.run(_TEST_MS)["data"]["fields"])
+        assert len(candidates) == n_fields
+        assert {c["field_id"] for c in candidates} == set(range(n_fields))
 
-        _order = {"FULL": 0, "DEGRADED": 1, "LEAKAGE_ONLY": 2, "NOT_FEASIBLE": 3}
-        # A relaxed threshold should never produce a worse verdict than a strict one
-        assert _order[relaxed["data"]["verdict"]] <= _order[strict["data"]["verdict"]]
+        spreads = [c["pa_spread_deg"] for c in candidates if c["pa_spread_deg"] is not None]
+        assert spreads == sorted(spreads, reverse=True)
+        # Fields with no computable spread sort last.
+        first_none = next(
+            (i for i, c in enumerate(candidates) if c["pa_spread_deg"] is None), len(candidates)
+        )
+        assert all(c["pa_spread_deg"] is None for c in candidates[first_none:])
+
+    def test_identified_leakage_cal_matches_its_candidate_row(self):
+        """The reported leakage cal is one of the ranked rows, not a separate computation."""
+        from ms_inspect.tools import pol_cal_conditions
+
+        data = pol_cal_conditions.run(_TEST_MS)["data"]
+        leak = data["leakage_calibrator"]
+        rows = [c for c in data["leakage_cal_candidates"] if c["is_identified_leakage_cal"]]
+        assert len(rows) == (1 if leak["available"] else 0)
+        if rows:
+            assert rows[0]["field_id"] == leak["field_id"]
+            assert rows[0]["pa_spread_deg"] == leak["pa_spread_deg"]["value"]
+            assert rows[0]["n_scans"] == leak["n_calibrator_scans"]
+
+    def test_df_poltype_basis_is_present_whenever_a_poltype_is(self):
+        from ms_inspect.tools import pol_cal_conditions
+
+        data = pol_cal_conditions.run(_TEST_MS)["data"]
+        assert data["recommended_df_poltype"] in {"Df", "Df+QU", None}
+        assert isinstance(data["recommended_df_poltype_basis"], str)
+        assert data["recommended_df_poltype_basis"]
 
 
 @_SKIP

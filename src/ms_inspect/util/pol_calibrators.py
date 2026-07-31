@@ -10,7 +10,7 @@ Source: NRAO VLA Observing Guide Tables 8.2.1–8.2.7 and evlapolcal/index.html
 Determinism guarantee: static data, no live web fetch, no CASA dependency.
 
 Used by:
-- tools/pol_cal_feasibility.py — feasibility assessment
+- tools/pol_cal_conditions.py — polarisation-calibration conditions
 """
 
 from __future__ import annotations
