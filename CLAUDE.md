@@ -49,12 +49,23 @@ the Skill, it belongs in the Skill.
 ## Repository layout
 
 ```
-ms-inspect/
+radio-analyst/
 ├── CLAUDE.md                      ← this file
 ├── DESIGN.md                      ← architecture, failure modes, conventions
+├── README.md
 ├── pixi.toml                      ← environment (conda-forge + casatools via PyPI)
 ├── pyproject.toml                 ← build metadata and tooling config
-├── README.md
+├── .mcp.json                      ← MCP server definitions (all three servers)
+├── .claude-plugin/
+│   ├── plugin.json                ← plugin manifest
+│   └── marketplace.json           ← marketplace catalogue entry
+├── .claude/
+│   ├── skills/
+│   │   ├── radio-interferometry/  ← 18 files: SKILL.md + 00..13 knowledge files
+│   │   │                             (plus wildcat/, unreachable from SKILL.md)
+│   │   └── ms-simulator/          ← SKILL.md + 01..05 knowledge files
+│   └── commands/                  ← inspect, precal, calibrate, polcal, image, simulate
+├── docs/                          ← session context, tool survey, fix plan, handoff
 ├── bin/
 │   ├── serve.sh                   ← MCP plugin entry point (ms-inspect)
 │   ├── serve-modify.sh            ← MCP plugin entry point (ms-modify)
@@ -62,23 +73,27 @@ ms-inspect/
 ├── src/
 │   ├── ms_create/
 │   │   ├── __init__.py            ← version string
-│   │   ├── server.py              ← FastMCP entry point (ingestion utilities, port 8002)
+│   │   ├── server.py              ← FastMCP entry point (ingestion, port 8002)
 │   │   ├── exceptions.py          ← ASDMNotFoundError, ImportFailedError
-│   │   ├── sdm_summary.py         ← ms_sdm_summary tool (pre-conversion ASDM inspection)
-│   │   └── import_asdm.py         ← ms_import_asdm tool
+│   │   ├── sdm_summary.py         ← ms_sdm_summary (pre-conversion ASDM inspection)
+│   │   ├── import_asdm.py         ← ms_import_asdm
+│   │   └── reduction_log.py       ← ms_reduction_log
 │   ├── ms_modify/
 │   │   ├── __init__.py            ← version string
-│   │   ├── server.py              ← FastMCP entry point (write utilities, port 8001)
+│   │   ├── server.py              ← FastMCP entry point (write, port 8001)
 │   │   ├── exceptions.py          ← ms_modify error types
-│   │   ├── intents.py             ← set_intents utility function
+│   │   ├── intents.py             ← ms_set_intents
 │   │   ├── preflag.py             ← ms_apply_preflag
 │   │   ├── priorcals.py           ← ms_generate_priorcals
 │   │   ├── setjy.py               ← ms_setjy
 │   │   ├── setjy_polcal.py        ← ms_setjy_polcal
 │   │   ├── initial_bandpass.py    ← ms_initial_bandpass
 │   │   ├── initial_rflag.py       ← ms_apply_initial_rflag
+│   │   ├── postcal_flag.py        ← ms_postcal_flag
+│   │   ├── flag_caltable.py       ← ms_flag_caltable
 │   │   ├── rflag.py               ← ms_apply_rflag
 │   │   ├── gaincal.py             ← ms_gaincal
+│   │   ├── polcal.py              ← ms_polcal
 │   │   ├── bandpass.py            ← ms_bandpass
 │   │   ├── fluxscale.py           ← ms_fluxscale
 │   │   ├── applycal.py            ← ms_applycal
@@ -97,39 +112,45 @@ ms-inspect/
 │       │   ├── antennas.py        ← ms_antenna_list, ms_baseline_lengths
 │       │   ├── geometry.py        ← ms_elevation_vs_time, ms_parallactic_angle_vs_time
 │       │   ├── shadowing.py       ← ms_shadowing_report
-│       │   ├── flags.py           ← ms_antenna_flag_fraction
+│       │   ├── flags.py           ← ms_flag_preflight, ms_antenna_flag_fraction
 │       │   ├── flag_summary.py    ← ms_flag_summary
 │       │   ├── online_flags.py    ← ms_online_flag_stats
 │       │   ├── verify_import.py   ← ms_verify_import
 │       │   ├── verify_model.py    ← ms_verify_model
+│       │   ├── workflow_status.py ← ms_workflow_status
 │       │   ├── priorcals_check.py ← ms_verify_priorcals
 │       │   ├── caltables.py       ← ms_verify_caltables
 │       │   ├── calsol_stats.py    ← ms_calsol_stats
+│       │   ├── calsol_stats_detail.py ← ms_calsol_stats_detail
 │       │   ├── calsol_plot.py     ← ms_calsol_plot
+│       │   ├── calsol_plot_library.py ← ms_plot_caltable_library
+│       │   ├── gaincal_snr_predict.py ← ms_gaincal_snr_predict
 │       │   ├── refant.py          ← ms_refant
 │       │   ├── residual_stats.py  ← ms_residual_stats
+│       │   ├── corrected_stats.py ← ms_corrected_stats
 │       │   ├── rfi.py             ← ms_rfi_channel_stats
+│       │   ├── spw_amp_severity.py ← ms_spw_amp_severity
 │       │   ├── pol_cal_feasibility.py ← ms_pol_cal_feasibility
 │       │   └── image_stats.py     ← ms_image_stats
 │       └── util/
 │           ├── casa_context.py    ← context managers: open_msmd, open_table, open_ms, open_image
-│           ├── calibrators.py     ← bundled calibrator catalogue + resolved-source logic
+│           ├── dispatch.py        ← shared tool dispatch used by all three servers
+│           ├── formatting.py      ← response envelope, CompletionFlag, offload_detail
 │           ├── conversions.py     ← MJD→UTC, Hz→GHz, ECEF→geodetic, corr codes, etc.
-│           └── formatting.py      ← response envelope, CompletionFlag, round_dict
-├── tests/
-│   ├── unit/                      ← no CASA required, runs everywhere
-│   │   ├── test_conversions.py
-│   │   ├── test_calibrators.py
-│   │   ├── test_formatting.py
-│   │   ├── test_set_intents.py
-│   │   ├── test_import_asdm.py
-│   │   └── test_verify_import.py
-│   └── integration/               ← requires casatools; auto-uses 3C391 tarball if present
-│       ├── conftest.py            ← 3C391 tarball extraction fixture
-│       ├── test_tools.py
-│       └── test_set_intents.py
-└── skill/
-    └── SKILL.md                   ← interferometrist reasoning document (separate)
+│           ├── telescope.py       ← TelescopeProfile: per-telescope constants
+│           ├── calibrators.py     ← bundled flux/BP calibrator catalogue
+│           ├── vla_calibrators.py ← VLA calibrator cone search
+│           ├── pol_calibrators.py ← polarisation calibrator catalogue
+│           ├── polcal_setjy_fit.py ← polarised model fitting for ms_setjy_polcal
+│           ├── phase_cal_catalog.py ← ms_phase_cal_lookup (reads PhaseCalList.txt)
+│           ├── PhaseCalList.txt   ← NRAO VLA phase-calibrator catalogue (data file)
+│           └── spw_coverage.py    ← SpW frequency-coverage helpers
+└── tests/
+    ├── unit/                      ← no CASA required, runs everywhere (39 modules)
+    └── integration/               ← requires casatools; auto-uses 3C391 tarball if present
+        ├── conftest.py            ← 3C391 tarball extraction fixture
+        ├── test_tools.py
+        └── test_set_intents.py
 ```
 
 ---
@@ -182,6 +203,7 @@ Environment variable reference:
 | `RADIO_MCP_WORKERS` | `4` | Parallel worker count for FLAG column reads (cap 8) |
 | `RADIO_MCP_TEST_MS` | — | Path to pre-extracted MS for integration tests |
 | `RADIO_MCP_TEST_MS_TGZ` | — | Path to `.ms.tgz` tarball; auto-extracted by conftest.py |
+| `RADIO_MCP_TEST_CALTABLE` | — | Path to a G or B caltable; the caltable integration tests in `tests/integration/test_tools.py` skip without it |
 
 ---
 
@@ -198,7 +220,7 @@ Environment variable reference:
 | `ms_spectral_window_list` | `tools/spectral.py` | `msmd.chanfreqs()`, `msmd.chanwidths()`, `tb → POLARIZATION` |
 | `ms_correlator_config` | `tools/spectral.py` | `tb → POLARIZATION`, `msmd.exposuretime()` |
 
-### Layer 2 — Instrument Sanity (6 tools)
+### Layer 2 — Instrument Sanity (7 tools)
 
 | Tool | Module | Primary CASA call |
 |------|--------|-------------------|
@@ -206,7 +228,7 @@ Environment variable reference:
 | `ms_baseline_lengths` | `tools/antennas.py` | computed from ECEF positions |
 | `ms_elevation_vs_time` | `tools/geometry.py` | astropy AltAz (not CASA measures) |
 | `ms_parallactic_angle_vs_time` | `tools/geometry.py` | astropy LST + atan2 |
-| `ms_shadowing_report` | `tools/shadowing.py` | `msmd.shadowedAntennas()` |
+| `ms_shadowing_report` | `tools/shadowing.py` | `casatasks.flagdata(mode='shadow', action='calculate')` |
 | `ms_flag_preflight` | `tools/flags.py` | Fast probe: row count, FLAG shape, data volume, runtime estimate, recommended workers |
 | `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` adaptive parallel reads; accepts `n_workers` override |
 

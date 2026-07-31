@@ -537,7 +537,8 @@ Plus a summary block:
 - Derived: angular resolution (arcsec) = `λ / B_max` at centre frequency of each SpW  
   `λ / B_min` = maximum recoverable angular scale (largest angular scale, LAS)
 
-**Note:** This tool computes from antenna positions, not from the UVW column. The UVW column reflects the actual projected baselines during observation — that is a Layer 3 tool (`ms_uv_coverage_stats`). Position-based baseline lengths give the physical maximum; UVW-based gives the actual UV sampling. Both are needed. This tool is Layer 2 (instrument sanity); the UV coverage tool is Layer 3.
+**Note:** This tool computes from antenna positions, not from the UVW column. The UVW column reflects the actual projected baselines during observation — that would be a Layer 3 tool (`ms_uv_coverage_stats`, **not implemented** — no
+such tool is registered on any of the three servers). Position-based baseline lengths give the physical maximum; UVW-based gives the actual UV sampling. Both are needed. This tool is Layer 2 (instrument sanity); the UV coverage tool is Layer 3.
 
 **Returns:**
 ```json
@@ -670,30 +671,34 @@ This offset is **mount-type and telescope dependent.** The correction table is:
 **Question answered:** Were any antennas shadowed by others during the observation, and how much data is affected?
 
 **CASA calls:**
-- `msmd.shadowedAntennas(tolerance=0.0)` → antenna IDs shadowed per scan, if available
-- Fallback if `shadowedAntennas` not available: geometric computation from antenna positions and dish diameters vs elevation/azimuth — note this as `INFERRED`
+- `casatasks.flagdata(vis=..., mode='shadow', tolerance=..., action='calculate', savepars=False, flagbackup=False)` → per-antenna counts of what *would* be flagged. `action='calculate'` makes this read-only; nothing is written to the MS.
 - FLAG_CMD subtable: check for pre-existing shadow flags applied online
+
+If `casatasks` cannot be imported, or the `flagdata` call raises, `method` is
+flagged `INFERRED` and only the FLAG_CMD entries are reported. There is no
+geometric fallback.
 
 **Returns:**
 ```json
 {
   "shadowing_detected": true,
-  "shadowed_events": [
-    {
-      "antenna_id": 12,
-      "antenna_name": "ea13",
-      "shadowing_antenna_id": 7,
-      "shadowing_antenna_name": "ea08",
-      "start_utc": "2017-03-15 10:23:01 UTC",
-      "end_utc":   "2017-03-15 10:41:00 UTC",
-      "duration_s": 1080,
-      "field_name": "3C286"
-    }
+  "shadow_flag_fraction": { "value": 0.0123, "flag": "COMPLETE" },
+  "n_shadow_flagged": 45312,
+  "n_total_rows": 3684000,
+  "tolerance_m": 0.0,
+  "method": { "value": "flagdata(mode='shadow')", "flag": "COMPLETE" },
+  "shadowed_antennas": [
+    { "antenna_name": "ea13", "shadow_flag_fraction": 0.0785, "n_flagged": 12044, "n_total": 153500 }
   ],
-  "total_shadowed_seconds": 1080,
-  "method": { "value": "msmd.shadowedAntennas", "flag": "COMPLETE" }
+  "flag_cmd_shadow_entries": [
+    { "row": 3, "reason": "SHADOW", "command": "mode='shadow'", "time": "2017-03-15 10:23:01 UTC" }
+  ],
+  "n_flag_cmd_shadow_entries": 1
 }
 ```
+
+Not integration-tested against a real MS: the field names above are read from
+`tools/shadowing.py`, the values are illustrative.
 
 ---
 
@@ -826,7 +831,7 @@ On tool error:
 | `ms_spectral_window_list` | msmd.chanfreqs, msmd.chanwidths; tb → POLARIZATION, DATA_DESCRIPTION | Band name, channel width, correlation products |
 | `ms_correlator_config` | msmd.timesforscans (dump time); tb → POLARIZATION | Dump time, polarization basis, full-Stokes flag |
 
-### Layer 2 — Instrument Sanity (6 tools)
+### Layer 2 — Instrument Sanity (7 tools)
 
 | Tool | Primary CASA API | Key derived quantities |
 |------|-----------------|----------------------|
@@ -834,7 +839,7 @@ On tool error:
 | `ms_baseline_lengths` | Computed from antenna positions | λ/B_max resolution, LAS per SpW |
 | `ms_elevation_vs_time` | astropy (field coords + array geodetic pos + scan times) | Low-elevation warnings per scan |
 | `ms_parallactic_angle_vs_time` | astropy | PA range per field, D-term solvability note |
-| `ms_shadowing_report` | msmd.shadowedAntennas (fallback: geometric) | Shadowed antenna IDs, duration |
+| `ms_shadowing_report` | casatasks.flagdata(mode='shadow', action='calculate') — read-only | Shadow flag fraction overall and per antenna |
 | `ms_antenna_flag_fraction` | tb → FLAG column (chunked) | Per-antenna flag fraction, online flag commands |
 
 **Phase 1 (Layers 1 & 2): 13 tools** — the tables above plus `ms_flag_preflight`.

@@ -108,12 +108,24 @@ Action:
 - For very large MSs (> 200 GB), consider running on the HPC node where
   the data lives using HTTP transport: `RADIO_MCP_TRANSPORT=http`.
 
-### `ms_shadowing_report` — `msmd.shadowedAntennas()` unavailable
-Symptom: `method.flag == "INFERRED"`, warning about unavailable method
-Cause: CASA version < 6.4 or a casatools build that omitted this method.
-Action: Only FLAG_CMD shadow entries are reported. Check manually by
-running `flagcmd(vis=..., action='list', flagbackup=False)` in CASA and
-filtering for 'shadow' reason codes.
+### `ms_shadowing_report` — shadow calculation unavailable
+The tool measures shadowing with
+`casatasks.flagdata(vis=..., mode='shadow', action='calculate')`, which is
+read-only: `action='calculate'` reports what would be flagged without touching
+the MS. It also reads FLAG_CMD for pre-existing online shadow flags.
+
+Symptom: `method.flag == "INFERRED"`, with `method.value` either
+`"casatasks unavailable"` or `"flagdata(mode='shadow') failed"`.
+Cause: `casatasks` is not importable in the server environment, or the
+`flagdata` call itself raised (the exception text is in `warnings`).
+Action: only FLAG_CMD shadow entries are reported, so absence of events is not
+confirmation of no shadowing. Check manually by running
+`flagcmd(vis=..., action='list', flagbackup=False)` in CASA and filtering for
+'shadow' reason codes.
+
+When `method.flag == "COMPLETE"` the measurement came from `flagdata` and
+should be trusted as a measurement. Note that this tool has no integration
+coverage against a real MS.
 
 ---
 
