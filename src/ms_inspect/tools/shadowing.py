@@ -7,9 +7,22 @@ Detects antenna shadowing events — one antenna physically blocking another
 at low elevations. Shadowed data is corrupted and must be flagged.
 
 Primary method: casatasks.flagdata(mode='shadow', action='calculate')
-  Returns per-antenna shadow flag fractions without modifying the MS.
+  Read-only: action='calculate' computes without applying.
 
 Also checks FLAG_CMD subtable for pre-existing online shadow flags.
+
+KNOWN LIMITATION, verified 2026-07-31 against casatasks 6.7.5.18 and a real
+VLA MS (3C391, D-config): that call returns an **empty dict**. It applies
+nothing, and it also reports nothing, because with action='calculate' flagdata
+emits a report only when the run includes a summary agent. So on this CASA
+version the tool measures no shadowing at all and returns UNAVAILABLE for
+`shadowing_detected` and `shadow_flag_fraction`. It previously returned
+`False` / `0.0` flagged COMPLETE, which was a tool that measured nothing
+reporting no shadowing.
+
+Only the FLAG_CMD path is functional today. Making the measurement work —
+probably mode='list' with a shadow command plus a named summary — has not been
+attempted or tested.
 """
 
 from __future__ import annotations
@@ -19,6 +32,64 @@ from ms_inspect.util.conversions import mjd_seconds_to_utc
 from ms_inspect.util.formatting import field, response_envelope
 
 TOOL_NAME = "ms_shadowing_report"
+
+
+def _parse_shadow_report(result: object) -> tuple[int | None, int | None, str | None]:
+    """
+    Extract (n_total, n_flagged) from a flagdata(mode='shadow') return value.
+
+    Returns (None, None, reason) when the return carries no report, so the
+    caller can flag UNAVAILABLE instead of publishing a confident zero.
+
+    Verified against casatasks 6.7.5.18 and a real VLA MS: with
+    `action='calculate'` and no summary agent in the run,
+    `flagdata(mode='shadow', ...)` returns an **empty dict**. The previous code
+    read `result.get("total", {})`, took the dict branch, and produced
+    n_total = 0, n_flagged = 0, reported as COMPLETE with no warning — a tool
+    that measured nothing claiming no shadowing. `action='calculate'` emits a
+    report only when the run includes a summary agent, which `mode='shadow'`
+    alone does not.
+
+    Whether `mode='list'` with a shadow command plus a named summary recovers
+    the counts is NOT established; nothing here has tested it.
+    """
+    if not isinstance(result, dict) or not result:
+        return (
+            None,
+            None,
+            (
+                "flagdata(mode='shadow', action='calculate') returned no report "
+                f"({result!r}). Shadow fractions are NOT measured — this is not a "
+                "finding of zero shadowing. With action='calculate' flagdata emits "
+                "a report only when the run includes a summary agent."
+            ),
+        )
+
+    top = result.get("total")
+    if isinstance(top, dict):
+        if "total" not in top or "flagged" not in top:
+            return (
+                None,
+                None,
+                (
+                    "flagdata(mode='shadow') returned a 'total' record without "
+                    f"'total'/'flagged' keys (got {sorted(top)}). Shadow fractions "
+                    "are NOT measured."
+                ),
+            )
+        return int(top["total"]), int(top["flagged"]), None
+
+    if top is not None and "flagged" in result:
+        return int(top), int(result["flagged"]), None
+
+    return (
+        None,
+        None,
+        (
+            f"flagdata(mode='shadow') return has no usable 'total' (keys: "
+            f"{sorted(result)}). Shadow fractions are NOT measured."
+        ),
+    )
 
 
 def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
@@ -37,8 +108,10 @@ def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
     casa_calls: list[str] = []
     warnings: list[str] = []
 
-    n_shadow_flagged = 0
-    n_total = 0
+    # None, not 0 — "not measured" and "measured as zero" are different answers
+    # and must not share a representation. See _parse_shadow_report.
+    n_shadow_flagged: int | None = None
+    n_total: int | None = None
     shadowed_antennas: list[dict] = []
     method_flag = "COMPLETE"
     method_value = "flagdata(mode='shadow')"
@@ -66,16 +139,13 @@ def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
                 savepars=False,
                 flagbackup=False,
             )
-            # flagdata returns {'total': {'total': N, 'flagged': M}, 'antenna': {...}}
-            top = shadow_result.get("total", {})
-            if isinstance(top, dict):
-                n_total = int(top.get("total", 0))
-                n_shadow_flagged = int(top.get("flagged", 0))
-            else:
-                n_total = int(top or 0)
-                n_shadow_flagged = int(shadow_result.get("flagged", 0))
+            n_total, n_shadow_flagged, parse_note = _parse_shadow_report(shadow_result)
+            if parse_note is not None:
+                warnings.append(parse_note)
+                method_flag = "UNAVAILABLE"
+                method_value = "flagdata(mode='shadow') returned no report"
 
-            for ant_name, ant_data in shadow_result.get("antenna", {}).items():
+            for ant_name, ant_data in (shadow_result or {}).get("antenna", {}).items():
                 if not isinstance(ant_data, dict):
                     continue
                 n_ant_flagged = int(ant_data.get("flagged", 0))
@@ -133,12 +203,47 @@ def run(ms_path: str, tolerance_m: float = 0.0) -> dict:
     # ------------------------------------------------------------------
     # Summarise
     # ------------------------------------------------------------------
-    shadow_fraction = n_shadow_flagged / max(n_total, 1) if n_total > 0 else 0.0
-    shadowing_detected = n_shadow_flagged > 0 or len(flag_cmd_shadows) > 0
+    measured = n_total is not None and n_shadow_flagged is not None
+
+    if measured and n_total > 0:
+        fraction_field = field(round(n_shadow_flagged / n_total, 4))
+    elif measured:
+        # Genuinely zero rows in the selection: a real answer, but not a
+        # fraction. Distinguished from "not measured" below.
+        fraction_field = field(
+            None, "UNAVAILABLE", note="flagdata reported 0 total rows; no fraction to compute"
+        )
+    else:
+        fraction_field = field(
+            None,
+            "UNAVAILABLE",
+            note=(
+                "shadow calculation produced no report; see warnings. Absence "
+                "of a measurement is not a measurement of absence."
+            ),
+        )
+
+    # Never a bare False when nothing was measured. FLAG_CMD alone can still
+    # establish that shadowing was flagged online, but it cannot establish the
+    # negative.
+    if flag_cmd_shadows:
+        detected_field = field(
+            True,
+            "COMPLETE" if measured else "PARTIAL",
+            note=None if measured else "from FLAG_CMD entries only; shadow calculation unavailable",
+        )
+    elif measured:
+        detected_field = field(n_shadow_flagged > 0)
+    else:
+        detected_field = field(
+            None,
+            "UNAVAILABLE",
+            note="shadow calculation unavailable and no FLAG_CMD shadow entries",
+        )
 
     data = {
-        "shadowing_detected": shadowing_detected,
-        "shadow_flag_fraction": field(round(shadow_fraction, 4)),
+        "shadowing_detected": detected_field,
+        "shadow_flag_fraction": fraction_field,
         "n_shadow_flagged": n_shadow_flagged,
         "n_total_rows": n_total,
         "tolerance_m": tolerance_m,

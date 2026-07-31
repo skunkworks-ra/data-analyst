@@ -711,27 +711,28 @@ If `casatasks` cannot be imported, or the `flagdata` call raises, `method` is
 flagged `INFERRED` and only the FLAG_CMD entries are reported. There is no
 geometric fallback.
 
-**Returns:**
-```json
-{
-  "shadowing_detected": true,
-  "shadow_flag_fraction": { "value": 0.0123, "flag": "COMPLETE" },
-  "n_shadow_flagged": 45312,
-  "n_total_rows": 3684000,
-  "tolerance_m": 0.0,
-  "method": { "value": "flagdata(mode='shadow')", "flag": "COMPLETE" },
-  "shadowed_antennas": [
-    { "antenna_name": "ea13", "shadow_flag_fraction": 0.0785, "n_flagged": 12044, "n_total": 153500 }
-  ],
-  "flag_cmd_shadow_entries": [
-    { "row": 3, "reason": "SHADOW", "command": "mode='shadow'", "time": "2017-03-15 10:23:01 UTC" }
-  ],
-  "n_flag_cmd_shadow_entries": 1
-}
-```
+**Known limitation.** `[RUN]` 2026-07-31, casatasks 6.7.5.18, 3C391 D-config:
+that `flagdata` call returns an **empty dict**. `action='calculate'` emits a
+report only when the run includes a summary agent, which `mode='shadow'` alone
+does not. The shadow measurement therefore does not currently work, `method` is
+flagged `UNAVAILABLE`, and `shadowing_detected` / `shadow_flag_fraction` are
+`null`. Only the FLAG_CMD path is functional. Fixing the measurement (likely
+`mode='list'` with a shadow command plus a named summary) has not been
+attempted.
 
-Not integration-tested against a real MS: the field names above are read from
-`tools/shadowing.py`, the values are illustrative.
+**Returned fields** (names read from `tools/shadowing.py`; no example values —
+the only run on record produced no measurement):
+
+| Field | Type | Notes |
+|---|---|---|
+| `shadowing_detected` | field(bool \| null) | `null` + `UNAVAILABLE` when unmeasured. `true` from FLAG_CMD alone is flagged `PARTIAL` |
+| `shadow_flag_fraction` | field(float \| null) | `n_shadow_flagged / n_total_rows` |
+| `n_shadow_flagged`, `n_total_rows` | int \| null | `null`, never `0`, when unmeasured |
+| `tolerance_m` | float | as passed in |
+| `method` | field(str) | which path produced the numbers, and its flag |
+| `shadowed_antennas` | list | `antenna_name`, `shadow_flag_fraction`, `n_flagged`, `n_total` |
+| `flag_cmd_shadow_entries` | list | `row`, `reason`, `command`, `time` |
+| `n_flag_cmd_shadow_entries` | int | |
 
 ---
 

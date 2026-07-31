@@ -114,18 +114,31 @@ The tool measures shadowing with
 read-only: `action='calculate'` reports what would be flagged without touching
 the MS. It also reads FLAG_CMD for pre-existing online shadow flags.
 
-Symptom: `method.flag == "INFERRED"`, with `method.value` either
-`"casatasks unavailable"` or `"flagdata(mode='shadow') failed"`.
-Cause: `casatasks` is not importable in the server environment, or the
-`flagdata` call itself raised (the exception text is in `warnings`).
-Action: only FLAG_CMD shadow entries are reported, so absence of events is not
-confirmation of no shadowing. Check manually by running
-`flagcmd(vis=..., action='list', flagbackup=False)` in CASA and filtering for
-'shadow' reason codes.
+**Expect this tool to return `UNAVAILABLE` on current CASA.** Verified
+2026-07-31 against casatasks 6.7.5.18 on a real VLA MS: the `flagdata` call
+returns an empty dict. `action='calculate'` applies nothing, and it also
+reports nothing unless the run includes a summary agent, which `mode='shadow'`
+alone does not. So the shadow *measurement* does not work at present. Only the
+FLAG_CMD path does.
 
-When `method.flag == "COMPLETE"` the measurement came from `flagdata` and
-should be trusted as a measurement. Note that this tool has no integration
-coverage against a real MS.
+| `method.flag` | Meaning |
+|---|---|
+| `UNAVAILABLE` | The call returned no report. `shadowing_detected` and `shadow_flag_fraction` are `None`. This is the normal outcome today. |
+| `INFERRED` | `casatasks` not importable, or the call raised — exception text in `warnings`. |
+| `COMPLETE` | A real report was parsed. Do not expect this on 6.7.5.18. |
+
+Action in every non-`COMPLETE` case: treat shadowing as **unmeasured**, not as
+absent. `shadowing_detected: null` means nobody looked. If the array is in a
+compact configuration and the observation runs to low elevation, assume
+shadowing is possible and check manually:
+`flagcmd(vis=..., action='list', flagbackup=False)` in CASA, filtering for
+'shadow' reason codes, or `flagdata(..., mode='shadow', action='apply')` in
+your own session if you are willing to write flags.
+
+Note the previous behaviour, in case you see it in an old log: the tool used to
+return `shadowing_detected: false` with flag `COMPLETE` in exactly this
+situation. Any archived report claiming no shadowing on that basis measured
+nothing.
 
 ---
 

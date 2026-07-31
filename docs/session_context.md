@@ -116,11 +116,16 @@ Docs: `11-imaging.md` now always sizes images out to the **first PB sidelobe** (
 - **`gridder='widefield'` not exposed** (only standard/wproject/awp2) — used wproject.
 - **`ms_shadowing_report` non-functional** in this CASA version (msmd.shadowedAntennas missing,
   geometric fallback unimplemented) — blind to shadowing at compact config / low el.
-  **STALE as of 2026-07-31.** The tool does not call `msmd.shadowedAntennas()`.
-  It calls `casatasks.flagdata(mode='shadow', action='calculate')`, which is
-  read-only. Whether it produced a correct result in that session was not
-  re-checked, and the tool still has no integration coverage; the API claim
-  above is simply wrong.
+  **Re-checked 2026-07-31. The conclusion above is CORRECT; only its stated
+  cause is wrong.** The tool never called `msmd.shadowedAntennas()` — it calls
+  `casatasks.flagdata(mode='shadow', action='calculate')`. But that call
+  returns an empty dict on casatasks 6.7.5.18 (run against 3C391 D-config),
+  because `action='calculate'` emits a report only when the run includes a
+  summary agent. So the tool is indeed non-functional for shadow detection, and
+  was silently returning `shadowing_detected: false` / `shadow_flag_fraction:
+  0.0` flagged `COMPLETE`. It now returns `UNAVAILABLE`. The FLAG_CMD path
+  works. `msmd.shadowedAntennas` is also genuinely absent in this version, so
+  that half of the original note was right too.
 
 ## 7. Converged design decisions for the TWO-EB combination (next big task)
 
