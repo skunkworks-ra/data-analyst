@@ -7,9 +7,11 @@ allowed-tools: ms_workflow_status, ms_field_list, ms_spectral_window_list,
 
 Run first-pass imaging on this calibrated MS: $ARGUMENTS
 
-Read `.claude/skills/radio-interferometry/11-imaging.md` before starting.
+Load the `radio-interferometry` skill, then read its `11-imaging.md` supporting
+file before starting (it sits beside that skill's SKILL.md; do not look for it
+under the current working directory).
 Prerequisite: CORRECTED_DATA populated on the target field(s) — run
-`/project:calibrate` (and `/project:polcal` for IQUV) first if not.
+`/radio-analyst:calibrate` (and `/radio-analyst:polcal` for IQUV) first if not.
 
 **Workflow:**
 

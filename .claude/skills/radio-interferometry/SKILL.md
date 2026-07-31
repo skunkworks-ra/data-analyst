@@ -34,24 +34,29 @@ knowledge files to decide what the numbers mean and what to do next.
 
 ## Start here
 
-@.claude/skills/radio-interferometry/00-playbook.md
-@.claude/skills/radio-interferometry/01-workflow.md
-@.claude/skills/radio-interferometry/01b-workflow-phase2.md
+@00-playbook.md
+@01-workflow.md
+@01b-workflow-phase2.md
 
 ## Read the following files on demand (do NOT load up front)
 
-Read each file with the Read tool only when you reach that stage:
+Read each file with the Read tool only when you reach that stage. The filenames
+below are **siblings of this SKILL.md, in the same directory** — resolve them
+against this file's own location, not against the current working directory.
+That holds whether this skill is running from a clone of the repository or from
+an installed plugin.
 
-- `.claude/skills/radio-interferometry/02-orientation.md`
-- `.claude/skills/radio-interferometry/03-instrument-sanity.md`
-- `.claude/skills/radio-interferometry/04-diagnostic-reasoning.md`
-- `.claude/skills/radio-interferometry/05-calibrator-science.md`
-- `.claude/skills/radio-interferometry/06-failure-modes.md`
-- `.claude/skills/radio-interferometry/07-calibration-execution.md`
-- `.claude/skills/radio-interferometry/07b-gaincal-recovery.md` (only when a 07 Step 4b check fails)
-- `.claude/skills/radio-interferometry/08-pband-specifics.md`
-- `.claude/skills/radio-interferometry/09-polcal-execution.md`
-- `.claude/skills/radio-interferometry/10-precal-workflow.md`
-- `.claude/skills/radio-interferometry/11-imaging.md`
-- `.claude/skills/radio-interferometry/12-selfcal.md`
-- `.claude/skills/radio-interferometry/13-postcal-rfi-flagging.md`
+- `02-orientation.md`
+- `03-instrument-sanity.md`
+- `04-diagnostic-reasoning.md`
+- `05-calibrator-science.md`
+- `06-failure-modes.md`
+- `07-calibration-execution.md`
+- `07b-gaincal-recovery.md` (only when a 07 Step 4b check fails)
+- `08-pband-specifics.md`
+- `09-polcal-execution.md`
+- `09b-polcal-reference.md` (pol calibrator reference data, loaded from 09)
+- `10-precal-workflow.md`
+- `11-imaging.md`
+- `12-selfcal.md`
+- `13-postcal-rfi-flagging.md`

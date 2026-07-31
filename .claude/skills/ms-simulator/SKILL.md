@@ -43,14 +43,14 @@ Every simulation follows these stages in order:
 
 ## Supporting knowledge files
 
-@.claude/skills/ms-simulator/01-conversation-protocol.md
-@.claude/skills/ms-simulator/02-antenna-configs.md
-@.claude/skills/ms-simulator/03-spectral-source.md
-@.claude/skills/ms-simulator/04-corruption-noise.md
-@.claude/skills/ms-simulator/05-execution.md
+@01-conversation-protocol.md
+@02-antenna-configs.md
+@03-spectral-source.md
+@04-corruption-noise.md
+@05-execution.md
 
 ## Integration with ms-inspect
 
 After simulation, you may validate the output MS using the `ms_inspect` tools
 (Phase 1 orientation). This confirms the MS is readable and structurally sound.
-Use `/project:inspect <output.ms>` or call the tools directly.
+Use `/radio-analyst:inspect <output.ms>` or call the tools directly.

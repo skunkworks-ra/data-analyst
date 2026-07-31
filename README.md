@@ -4,6 +4,14 @@ MCP servers, skills, and slash commands for AI-assisted radio interferometric
 data reduction. Targets VLA/JVLA/EVLA, MeerKAT, and uGMRT observations stored
 as CASA Measurement Sets.
 
+**Install in Claude Code** (details in [Installation](#installation)):
+
+```
+/plugin marketplace add skunkworks-ra/radio-analyst
+/plugin install radio-analyst@radio-analyst
+/reload-plugins
+```
+
 Three MCP servers expose the full tool suite:
 
 - **ms-inspect** — read-only inspection and diagnostics (33 tools, port 8000)
@@ -19,26 +27,54 @@ Built on [casatools](https://casa.nrao.edu/) and the
 
 ### Claude Code plugin (recommended)
 
-Installs both MCP servers, skills, and slash commands in two commands:
+This repository is its own plugin marketplace. Adding it registers the catalog;
+installing pulls the plugin. Run these inside a Claude Code session:
+
+```
+/plugin marketplace add skunkworks-ra/radio-analyst
+/plugin install radio-analyst@radio-analyst
+/reload-plugins
+```
+
+Or from a shell, without an interactive step:
 
 ```bash
-# Register the marketplace (once per machine)
-claude plugin marketplace add https://github.com/skunkworks-ra/radio-analyst
-
-# Install the plugin
+claude plugin marketplace add skunkworks-ra/radio-analyst
 claude plugin install radio-analyst@radio-analyst
 ```
 
-After install, the `ms-inspect` and `ms-modify` MCP servers are registered
-globally, and the `/inspect` and `/simulate` commands are available in all
-projects. CASA tools are installed automatically on first use (~500 MB,
-Linux x86_64 and macOS arm64 only).
+That installs all three MCP servers (`ms-inspect`, `ms-modify`, `ms-create`),
+both skills, and six commands. Plugin commands are **namespaced by the plugin
+name**, so they are invoked as:
 
-To remove:
+```
+/radio-analyst:inspect      Phase 1 + Phase 2 analysis of an MS
+/radio-analyst:precal       Pre-calibration workflow
+/radio-analyst:calibrate    Full calibration solve
+/radio-analyst:polcal       Polarisation calibration
+/radio-analyst:image        First-pass continuum or cube imaging
+/radio-analyst:simulate     Simulate an MS from a description
+```
 
-```bash
+`claude plugin install` defaults to user scope. Pass `--scope project` to share
+it with everyone on a repository, or `--scope local` for yourself in one
+repository only.
+
+**Prerequisites.** [pixi](https://prefix.dev) must be on your `PATH`; the
+servers use it to resolve their environment. CASA tools install on first server
+start (~500 MB, one time). Supported platforms are Linux x86_64 and macOS arm64
+only, because `casatools` ships no wheels for anything else. There are no
+Windows wheels at all.
+
+To update, remove, or inspect what got installed:
+
+```
+/plugin marketplace update radio-analyst
+/plugin                              # Installed tab: enable, disable, uninstall
 claude plugin uninstall radio-analyst@radio-analyst
 ```
+
+Note that removing the marketplace uninstalls anything installed from it.
 
 ### Local development
 
@@ -158,12 +194,12 @@ automatically when the plugin is installed.
 
 | Command | What it does |
 |---------|-------------|
-| `/project:inspect <ms_path>` | Full Phase 1 + Phase 2 analysis with go/no-go report |
-| `/project:precal <ms_path>` | Pre-calibration workflow (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
-| `/project:calibrate <ms_path>` | Full calibration solve (initial phase → delay → bandpass → gain → fluxscale → applycal) |
-| `/project:polcal <ms_path>` | Polarisation calibration (Kcross → D-terms → Xf → applycal with parang) |
-| `/project:image <ms_path>` | First-pass continuum/cube imaging with derived tclean parameters |
-| `/project:simulate <description>` | Generate a synthetic MS from a conversational description |
+| `/radio-analyst:inspect <ms_path>` | Full Phase 1 + Phase 2 analysis with go/no-go report |
+| `/radio-analyst:precal <ms_path>` | Pre-calibration workflow (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
+| `/radio-analyst:calibrate <ms_path>` | Full calibration solve (initial phase → delay → bandpass → gain → fluxscale → applycal) |
+| `/radio-analyst:polcal <ms_path>` | Polarisation calibration (Kcross → D-terms → Xf → applycal with parang) |
+| `/radio-analyst:image <ms_path>` | First-pass continuum/cube imaging with derived tclean parameters |
+| `/radio-analyst:simulate <description>` | Generate a synthetic MS from a conversational description |
 
 ---
 

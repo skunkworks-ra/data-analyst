@@ -9,8 +9,9 @@ allowed-tools: ms_workflow_status, ms_field_list, ms_spectral_window_list,
 
 Run the full calibration solve sequence on this MS: $ARGUMENTS
 
-Read `.claude/skills/radio-interferometry/07-calibration-execution.md` before
-starting. Execute the stages below in order; STOP and report if any
+Load the `radio-interferometry` skill, then read its
+`07-calibration-execution.md` supporting file before starting (it sits beside
+that skill's SKILL.md; do not look for it under the current working directory). Execute the stages below in order; STOP and report if any
 ms_calsol_stats outlier gate fails.
 
 **Workflow:**
@@ -63,4 +64,4 @@ ms_calsol_stats outlier gate fails.
 
 **Output:** summary of each solve (caltable, stats summary, outliers),
 confirmation that CORRECTED_DATA is populated on the target fields, and
-the forward hand-off for `/project:image`.
+the forward hand-off for `/radio-analyst:image`.

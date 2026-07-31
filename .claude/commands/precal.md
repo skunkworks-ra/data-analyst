@@ -11,7 +11,9 @@ allowed-tools: ms_observation_info, ms_field_list, ms_scan_list, ms_scan_intent_
 
 Run the pre-calibration workflow on this MS: $ARGUMENTS
 
-Read `.claude/skills/radio-interferometry/10-precal-workflow.md` before starting.
+Load the `radio-interferometry` skill, then read its `10-precal-workflow.md`
+supporting file before starting (it sits beside that skill's SKILL.md; do not
+look for it under the current working directory).
 Execute the stages below in order; STOP and report if any stage fails its
 decision gate.
 
@@ -48,15 +50,15 @@ decision gate.
     Then `ms_verify_caltables` — both tables exist with rows?
 
 11. `ms_residual_stats(calibrators.ms, bp_field_id)` — inspect tail ratio.
-    Apply §Step 7 decision table.
+    Apply §Step 8 decision table.
 
 12. `ms_apply_initial_rflag(calibrators.ms, workdir, execute=False)` → run.
 
 13. `ms_flag_summary(calibrators.ms)` — post-rflag. Compare to step 6 delta.
-    Apply §Step 8 decision table.
+    Apply §Step 9 decision table.
 
 14. Final decision gate (§Decision gate): go/no-go for full calibration solve.
 
 **Output:** a structured report of each stage's outcome, flagged warnings,
 and the forward hand-off values (`refant`, `priorcals`, `bp_field`, `workdir`)
-ready for `/project:calibrate`.
+ready for `/radio-analyst:calibrate`.

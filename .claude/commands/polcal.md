@@ -8,9 +8,10 @@ allowed-tools: ms_workflow_status, ms_pol_cal_feasibility, ms_field_list,
 
 Run polarization calibration on this MS: $ARGUMENTS
 
-Read `.claude/skills/radio-interferometry/09-polcal-execution.md` before
-starting. Prerequisite: delay.K, bandpass.B, and gain.G (or gain.fluxscaled)
-must already exist — run `/project:calibrate` first if not.
+Load the `radio-interferometry` skill, then read its
+`09-polcal-execution.md` supporting file before starting (it sits beside that
+skill's SKILL.md; do not look for it under the current working directory). Prerequisite: delay.K, bandpass.B, and gain.G (or gain.fluxscaled)
+must already exist — run `/radio-analyst:calibrate` first if not.
 
 **Workflow:**
 
@@ -46,5 +47,5 @@ must already exist — run `/project:calibrate` first if not.
 
 **Output:** summary of each polcal step, D-term amplitude distribution,
 confirmation that CORRECTED_DATA contains polarization solutions for the
-target fields, and the forward hand-off for `/project:image` with
+target fields, and the forward hand-off for `/radio-analyst:image` with
 stokes='IQUV'.

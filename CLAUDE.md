@@ -180,7 +180,7 @@ ms-inspect/
 │       └── test_set_intents.py
 ├── docs/                          ← surveys, session context, handoffs (not contract)
 └── .claude/
-    ├── commands/                  ← /project:* slash commands
+    ├── commands/                  ← /radio-analyst:* slash commands
     └── skills/
         ├── radio-interferometry/  ← interferometrist reasoning document (SKILL.md + 00-13)
         └── ms-simulator/          ← MS simulation skill (SKILL.md + 01-05)
@@ -538,15 +538,18 @@ or create visibility data.
 
 ## Slash commands
 
-Project-scoped commands live in `.claude/commands/` and are checked into the repo.
-Available in Claude Code as `/project:<name>`:
+Commands live in `.claude/commands/` and are checked into the repo. Installed as
+a plugin they are namespaced `/radio-analyst:<name>`; working inside this repo
+they resolve as plain `/<name>`.
 
 | Command | What it does |
 |---------|-------------|
-| `/project:inspect <ms_path>` | Full Phase 1 + Phase 2 analysis + go/no-go report |
-| `/project:phase1 <ms_path>` | Phase 1 orientation only (6 tools) |
-| `/project:phase2 <ms_path>` | Phase 2 instrument sanity only (6 tools) |
-| `/project:simulate <description>` | Simulate an MS from a natural-language description |
+| `/radio-analyst:inspect <ms_path>` | Full Phase 1 + Phase 2 analysis + go/no-go report |
+| `/radio-analyst:precal <ms_path>` | Pre-calibration workflow (skill 10) |
+| `/radio-analyst:calibrate <ms_path>` | Full calibration solve (skill 07) |
+| `/radio-analyst:polcal <ms_path>` | Polarisation calibration (skill 09) |
+| `/radio-analyst:image <ms_path>` | First-pass continuum or cube imaging (skill 11) |
+| `/radio-analyst:simulate <description>` | Simulate an MS from a natural-language description |
 
 ## What is out of scope for this file
 
