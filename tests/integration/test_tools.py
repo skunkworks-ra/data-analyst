@@ -773,3 +773,109 @@ class TestCalsolPlotReal:
         npz = np.load(result["data"]["npz_path"]["value"], allow_pickle=True)
         assert "ant_names" in npz
         assert "flagged_frac" in npz
+
+
+@_SKIP
+class TestShadowingReal:
+    """Integration tests for ms_shadowing_report against a real MS."""
+
+    def test_returns_ok(self):
+        from ms_inspect.tools import shadowing
+
+        assert shadowing.run(_TEST_MS)["status"] == "ok"
+
+    def test_detection_is_never_a_bare_false_without_a_measurement(self):
+        """A missing flagdata report must read UNAVAILABLE, not 'no shadowing'.
+
+        The failure this guards against is silent: flagdata returning no report
+        used to produce shadowing_detected=False with a COMPLETE flag, which is
+        an assertion the tool had not earned.
+        """
+        from ms_inspect.tools import shadowing
+
+        data = shadowing.run(_TEST_MS)["data"]
+        det = data["shadowing_detected"]
+        if det["value"] is None:
+            assert det["flag"] == "UNAVAILABLE"
+            assert det.get("note")
+        else:
+            assert det["flag"] in {"COMPLETE", "PARTIAL"}
+            # A negative may only be claimed from an actual measurement.
+            if det["value"] is False:
+                assert det["flag"] == "COMPLETE"
+                assert data["n_total_rows"] > 0
+
+    def test_fraction_agrees_with_the_counts_it_was_derived_from(self):
+        from ms_inspect.tools import shadowing
+
+        data = shadowing.run(_TEST_MS)["data"]
+        frac = data["shadow_flag_fraction"]
+        if frac["value"] is not None:
+            assert 0.0 <= frac["value"] <= 1.0
+            n_flagged, n_total = data["n_shadow_flagged"], data["n_total_rows"]
+            assert n_total > 0
+            assert frac["value"] == pytest.approx(n_flagged / n_total, abs=1e-6)
+
+
+@_SKIP
+class TestSpwAmpSeverityReal:
+    """Integration tests for ms_spw_amp_severity against a real MS."""
+
+    def test_returns_ok_with_per_spw_aggregates(self):
+        from ms_inspect.tools import spw_amp_severity
+
+        result = spw_amp_severity.run(_TEST_MS, datacolumn="DATA", max_per_chan_records=0)
+        assert result["status"] == "ok"
+        per_spw = result["data"]["per_spw"]
+        assert per_spw
+        for entry in per_spw:
+            assert entry["n_channels"] > 0
+            assert len(entry["per_chan"]) == entry["n_channels"]
+            assert entry["band_floor"]["value"] > 0.0
+
+    def test_severity_ships_the_inputs_it_was_computed_from(self):
+        """A derived scalar must travel with its numerator and denominator."""
+        from ms_inspect.tools import spw_amp_severity
+
+        data = spw_amp_severity.run(_TEST_MS, datacolumn="DATA", max_per_chan_records=0)["data"]
+        for entry in data["per_spw"]:
+            floor = entry["band_floor"]["value"]
+            sigma_robust = entry["band_robust_sigma"]["value"]
+            assert floor is not None and sigma_robust is not None
+            # elevation_threshold = band_floor + sigma * robust_sigma, recomputable
+            assert entry["elevation_threshold"] == pytest.approx(
+                floor + data["sigma"] * sigma_robust, rel=1e-3
+            )
+            assert 0.0 <= entry["estimated_discardable_frac"]["value"] <= 1.0
+            assert entry["severity"] is not None
+            assert data["clean_floor_anchor"] is not None
+
+    def test_payload_bound_drops_per_chan_and_writes_the_sidecar(self, tmp_path):
+        """Truncation is all-or-nothing, and the dropped detail lands on disk."""
+        import json
+
+        from ms_inspect.tools import spw_amp_severity
+
+        full = spw_amp_severity.run(_TEST_MS, datacolumn="DATA", max_per_chan_records=0)["data"]
+        n_records = sum(len(e["per_chan"]) for e in full["per_spw"])
+        assert n_records > 1  # otherwise the bound below cannot trigger
+
+        sidecar = tmp_path / "per_chan.json"
+        warnings: list[str] = []
+        bounded = spw_amp_severity._bound_per_chan_payload(
+            spw_amp_severity.run(_TEST_MS, datacolumn="DATA", max_per_chan_records=0)["data"],
+            max_per_chan_records=1,
+            sidecar_path=str(sidecar),
+            warnings=warnings,
+        )
+        assert bounded["per_chan_truncated"]["value"] is True
+        assert bounded["n_per_chan_records_dropped"] == n_records
+        assert all("per_chan" not in e for e in bounded["per_spw"])
+        assert sum(e["n_per_chan_omitted"] for e in bounded["per_spw"]) == n_records
+        # Per-SpW aggregates survive truncation untouched.
+        for before, after in zip(full["per_spw"], bounded["per_spw"], strict=True):
+            assert after["band_floor"] == before["band_floor"]
+            assert after["severity"] == before["severity"]
+
+        recovered = json.loads(sidecar.read_text())
+        assert sum(len(e["per_chan"]) for e in recovered["per_spw"]) == n_records

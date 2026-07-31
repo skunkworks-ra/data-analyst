@@ -97,6 +97,22 @@ Action: correct all of them to the real call. In `06-failure-modes.md`, the
 **Do not claim the tool is verified working.** It has no integration coverage.
 The claim being fixed is only about *which API it calls*.
 
+**RUN 2026-07-31 — it is not working, and now says so.** `[RUN]` casatasks
+6.7.5.18 against `3c391_ctm_mosaic_10s_spw0.ms`:
+`flagdata(mode='shadow', action='calculate')` returns `{}`. No report, no
+counts. Before the fix in `53fcbea` that surfaced as
+`shadow_flag_fraction = 0.0` / `shadowing_detected = False`, COMPLETE — a
+fabricated clean bill of health. It now returns `UNAVAILABLE` on every field
+with the reason in `warnings`, which is correct but means the tool cannot
+currently measure shadowing at all on this path.
+
+The fix is knowable from Excluded item B: `action='calculate'` emits a report
+only when the run includes a summary agent, so the call has to become
+`mode='list'` with a shadow agent plus a summary agent, handling both return
+arities. **Not done here** — it is a new measurement path, not a documentation
+correction, and it needs its own before/after against a dataset that actually
+has shadowed baselines (3C391 at 4.6 GHz, D config, may have none).
+
 ### 3. Narrow two bare excepts in `workflow_status.py`
 
 `[READ]` `src/ms_inspect/tools/workflow_status.py:35-36` and `:61-62` are
