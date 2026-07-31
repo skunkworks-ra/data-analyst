@@ -48,7 +48,7 @@ field carries a decision that depends on the science goal.
   beside the number that produced it and the reference it was compared to**,
   so a value near a boundary is visible as such.
 - **Reference values** — a threshold returned as a labelled constant with its
-  provenance, e.g. `pa_spread_reference_deg: 45` sourced to the NRAO pol guide.
+  provenance, e.g. `pa_spread_reference_deg: 60` sourced to the NRAO pol guide.
   Returning a threshold is fine. Returning the result of *applying* it is not.
 
 **Forbidden:**
@@ -959,7 +959,7 @@ On tool error:
 | `ms_refant` | Ranked reference-antenna list by geometry + flag-fraction heuristics |
 | `ms_rfi_channel_stats` | Per-channel flag fractions; persistent RFI bands |
 | `ms_spw_amp_severity` | Robust per-channel amplitude stats aggregated per SpW; RFI severity + estimated discardable fraction (reservoir-sampled) |
-| `ms_pol_cal_feasibility` | Parallactic-angle spread + D-term feasibility gate |
+| `ms_pol_cal_conditions` | Measured pol-cal conditions: PA spread, scan counts, catalogue pol properties, ranked leakage candidates, reference thresholds as labelled constants. No verdict |
 | `ms_residual_stats` | CORRECTED − MODEL amplitude distribution per SpW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | Per-field parallel-hand amplitude + phase RMS of a data column, vector-averaged over the channel range (post-applycal sanity) |
 | `ms_phase_cal_lookup` | Cross-match a sky position against the NRAO VLA phase-calibrator catalog; nearest source, flux, UV limits, per-config quality codes |

@@ -285,40 +285,70 @@ class TestAntennaFlagFractionReal:
 
 
 @_SKIP
-class TestPolCalFeasibilityReal:
-    """Integration tests for ms_pol_cal_feasibility against a real MS."""
+class TestPolCalConditionsReal:
+    """Integration tests for ms_pol_cal_conditions against a real MS."""
 
     def test_returns_ok(self):
-        from ms_inspect.tools import pol_cal_feasibility
+        from ms_inspect.tools import pol_cal_conditions
 
-        result = pol_cal_feasibility.run(_TEST_MS)
+        result = pol_cal_conditions.run(_TEST_MS)
         assert result["status"] == "ok"
 
-    def test_verdict_is_valid(self):
-        from ms_inspect.tools import pol_cal_feasibility
+    def test_returns_no_gate_fields(self):
+        """The contract (DESIGN.md 1.1.1) forbids gates. Assert their ABSENCE.
 
-        result = pol_cal_feasibility.run(_TEST_MS)
-        verdict = result["data"]["verdict"]
-        assert verdict in {"FULL", "LEAKAGE_ONLY", "DEGRADED", "NOT_FEASIBLE"}
+        This is the regression guard for the thing the rename was about: it is
+        cheap to reintroduce a boolean here, and a silent one costs science that
+        is never attempted.
+        """
+        from ms_inspect.tools import pol_cal_conditions
+
+        data = pol_cal_conditions.run(_TEST_MS)["data"]
+        for gate in ("verdict", "blocker", "xf_feasible", "df_feasible"):
+            assert gate not in data, f"gate field {gate!r} is back in the response"
+        leakage = data["leakage_calibrator"]
+        for gate in ("meets_threshold", "single_scan_sufficient"):
+            assert gate not in leakage, f"gate field {gate!r} is back in leakage_calibrator"
+
+    def test_reference_values_returned_as_constants(self):
+        """Thresholds ship as labelled constants with provenance, not applied."""
+        from ms_inspect.tools import pol_cal_conditions
+
+        data = pol_cal_conditions.run(_TEST_MS)["data"]
+        assert data["pa_spread_reference_deg"] > 0
+        assert data["pa_spread_practical_floor_deg"] > 0
+        assert data["pa_spread_practical_floor_deg"] < data["pa_spread_reference_deg"]
+        assert isinstance(data["pa_spread_reference_source"], str)
+        assert data["pa_spread_reference_source"]
+
+    def test_leakage_candidates_ranked_with_inputs(self):
+        """A ranking must ship the per-item inputs that produced the order."""
+        from ms_inspect.tools import pol_cal_conditions
+
+        candidates = pol_cal_conditions.run(_TEST_MS)["data"]["leakage_calibrator"][
+            "leakage_cal_candidates"
+        ]
+        spreads = [c["pa_spread_deg"] for c in candidates]
+        assert spreads == sorted(spreads, reverse=True), "candidates not ranked by PA spread"
+        for c in candidates:
+            assert {"field_id", "name", "pa_spread_deg", "n_scans"} <= set(c)
 
     def test_band_centre_present(self):
-        from ms_inspect.tools import pol_cal_feasibility
+        from ms_inspect.tools import pol_cal_conditions
 
-        result = pol_cal_feasibility.run(_TEST_MS)
+        result = pol_cal_conditions.run(_TEST_MS)
         band = result["data"]["band_centre_ghz"]
         assert band["value"] is not None
         assert band["value"] > 0.0
 
-    def test_pa_spread_threshold_respected(self):
-        """Relaxed threshold should not make NOT_FEASIBLE worse than strict threshold."""
-        from ms_inspect.tools import pol_cal_feasibility
+    def test_takes_no_threshold_argument(self):
+        """There is deliberately no tunable threshold: it invites a decision back in."""
+        import inspect
 
-        strict = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=90.0)
-        relaxed = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=10.0)
+        from ms_inspect.tools import pol_cal_conditions
 
-        _order = {"FULL": 0, "DEGRADED": 1, "LEAKAGE_ONLY": 2, "NOT_FEASIBLE": 3}
-        # A relaxed threshold should never produce a worse verdict than a strict one
-        assert _order[relaxed["data"]["verdict"]] <= _order[strict["data"]["verdict"]]
+        params = inspect.signature(pol_cal_conditions.run).parameters
+        assert list(params) == ["ms_path"]
 
 
 @_SKIP

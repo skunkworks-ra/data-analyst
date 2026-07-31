@@ -1,6 +1,6 @@
 ---
 description: Polarization calibration sequence on a calibrated MS (Kcross → D-terms → Xf → applycal-with-parang). Follows skill 09-polcal-execution.md.
-allowed-tools: ms_workflow_status, ms_pol_cal_feasibility, ms_field_list,
+allowed-tools: ms_workflow_status, ms_pol_cal_conditions, ms_field_list,
                ms_parallactic_angle_vs_time, ms_setjy_polcal, ms_gaincal,
                ms_polcal, ms_applycal, ms_calsol_stats, ms_calsol_plot,
                Bash, Read, Write
@@ -17,12 +17,17 @@ must already exist — run `/radio-analyst:calibrate` first if not.
 
 1. `ms_workflow_status(ms_path, workdir)` — confirm calibration is complete.
 
-2. `ms_pol_cal_feasibility(ms_path)` — go/no-go gate.
-   Apply 09-polcal-execution.md §Feasibility gate table:
-   - FULL         → Steps 3–6 (full polcal)
-   - LEAKAGE_ONLY → Steps 4–5 only (D-terms, no Xf)
-   - DEGRADED     → Steps 3–6 with annotation
-   - NOT_FEASIBLE → STOP and report blocker.
+2. `ms_pol_cal_conditions(ms_path)` — measured conditions, no verdict.
+   Work through 09-polcal-execution.md §Conditions Steps A to C and decide:
+   - Category A angle standard present → do Xf (Step 6), regardless of PA spread.
+   - No angle standard → skip Steps 3 and 6; D-terms only, and state in the
+     report that absolute EVPA is uncalibrated.
+   - Df path comes from `effective_role_at_band`, not from PA spread.
+   - For the `Df+QU` path only, compare `pa_spread_deg` against the returned
+     `pa_spread_reference_deg` and `pa_spread_practical_floor_deg`, and carry the
+     consequence into the report rather than stopping on a threshold.
+   - Choose the leakage field yourself from `leakage_cal_candidates` if the
+     primary is unsuitable; the tool does not substitute one.
 
 3. `ms_setjy_polcal(ms_path, field=angle_cal, reffreq_ghz=<band centre>,
    workdir, execute=False)` → run. Populates MODEL for the angle cal.

@@ -1,10 +1,26 @@
 """
-tools/pol_cal_feasibility.py — ms_pol_cal_feasibility
+tools/pol_cal_conditions.py — ms_pol_cal_conditions
 
 Layer 2, Tool 7 (Phase 1 extension).
 
-Answers a single question: Is full VLA polarisation calibration feasible
-for this dataset?
+Answers a single question: what are the measured polarisation-calibration
+conditions for this dataset?
+
+It reports conditions. It does NOT decide whether to proceed. Whether 24 degrees
+of parallactic coverage is enough depends on the science goal and the risk
+tolerance for this observation, which only the Skill knows. See DESIGN.md 1.1.1
+and skill 09-polcal-execution.md.
+
+This tool previously returned `verdict`, `blocker`, `xf_feasible`, `df_feasible`,
+`meets_threshold`, and `single_scan_sufficient`, and it silently reassigned the
+leakage calibrator to a different field when a threshold test failed. Those are
+gone. The reason is recorded because it is easy to reintroduce: a NOT_FEASIBLE on
+D-terms, believed, means the polarization is never imaged, and nothing in the
+output records what was forgone. The threshold behind it was one constant chosen
+for a typical case. The continuous measurement supports a better answer than the
+boolean did: "24 degrees against a 45 degree reference, proceed but limit
+fractional-polarization claims to the few percent level" cannot be expressed as
+GO or NO-GO.
 
 Algorithm:
 1. Opens FIELD subtable → field names.
@@ -13,7 +29,8 @@ Algorithm:
 4. For each matching pol cal field: computes sky-frame PA at scan midpoints
    using astropy (same formula as geometry.py) and returns Δ(max−min).
 5. Interpolates pol properties at observed frequency from 2019 epoch table.
-6. Emits structured verdict.
+6. Returns the measurements, the catalogue facts, the reference thresholds as
+   labelled constants, and every candidate leakage field ranked by PA spread.
 
 PA convention note:
   Δ(PA) is identical in sky-frame and feed-frame because the offset between
@@ -34,14 +51,25 @@ from ms_inspect.util.pol_calibrators import (
     pol_properties_at_freq,
 )
 
-TOOL_NAME = "ms_pol_cal_feasibility"
+TOOL_NAME = "ms_pol_cal_conditions"
 
-# Default PA spread threshold for the Df+QU (unknown-pol) leakage path only.
-# NRAO recommends ≥60°, but that is conservative: a Df+QU solve can succeed with
-# as little as ~30° of parallactic coverage on a bright source. 30° is the
-# practical floor; below it the D-term/QU separation becomes degenerate.
-# (Irrelevant to Xf and to known-pol / zero-pol Df, which need no PA coverage.)
-DEFAULT_PA_SPREAD_THRESHOLD_DEG = 30.0
+# Reference value, not a test. Returned as a labelled constant with provenance so
+# the Skill can compare the measured PA spread against it and decide.
+#
+# Relevant ONLY to the Df+QU (unknown-pol) leakage path, where D-term and source
+# Q,U must be separated from each other and parallactic rotation is what breaks
+# the degeneracy. Irrelevant to Xf, and to known-pol or zero-pol Df, which need
+# no PA coverage at all.
+#
+# NRAO recommends >=60 degrees. That is conservative: a Df+QU solve can work with
+# as little as ~30 degrees on a bright source, below which the separation becomes
+# degenerate. Both numbers are returned; neither is applied here.
+PA_SPREAD_REFERENCE_DEG = 60.0
+PA_SPREAD_PRACTICAL_FLOOR_DEG = 30.0
+PA_SPREAD_REFERENCE_SOURCE = (
+    "NRAO VLA polarimetry guide (>=60 deg recommended); ~30 deg practical "
+    "degeneracy floor for Df+QU on a bright source"
+)
 
 # Pol epoch used for property lookup
 POL_DATA_EPOCH = "2019"
@@ -212,78 +240,29 @@ def _effective_role_at_band(
 
 
 # ---------------------------------------------------------------------------
-# Verdict logic
-# ---------------------------------------------------------------------------
-
-
-def _compute_verdict(
-    has_angle_cal: bool,
-    angle_cal_degraded: bool,
-    xf_feasible: bool,
-    df_feasible: bool,
-) -> tuple[str, str | None]:
-    """
-    Return (verdict_str, blocker_str | None).
-
-    Feasibility model (NRAO VLA polarisation guide):
-      - Xf (absolute angle) needs only a Category A pol standard with a known
-        EVPA model. It is ALWAYS feasible when such a standard is present —
-        parallactic-angle coverage is irrelevant to Xf.
-      - Df (leakage) is feasible via any of: a zero-pol primary leakage cal
-        (single scan), a known-pol source incl. the angle cal itself (≥2 scans),
-        or an unknown-pol source with sufficient PA coverage (Df+QU). PA coverage gates
-        ONLY the unknown-pol (Df+QU) path.
-
-    Verdicts:
-      FULL         — angle cal present → Xf always feasible, and Df feasible
-                     (the angle cal's known model makes it a valid Df source)
-      DEGRADED     — angle cal present but flagged variable / in flare
-      LEAKAGE_ONLY — no angle cal (no Xf), but a Df-capable leakage cal exists
-      NOT_FEASIBLE — neither Xf nor Df feasible
-    """
-    if has_angle_cal and angle_cal_degraded:
-        return "DEGRADED", (
-            "Angle calibrator flagged as variable or in active flare — "
-            "verify current monitoring data before proceeding. Xf and Df remain "
-            "feasible but annotate outputs with the variability warning."
-        )
-
-    if has_angle_cal:
-        # Xf always feasible on the primary standard; Df feasible on it via its
-        # known model even without separate PA coverage.
-        return "FULL", None
-
-    if df_feasible:
-        return "LEAKAGE_ONLY", (
-            "No pol angle calibrator observed — absolute angle (Xf) calibration "
-            "not possible. Leakage (D-term) calibration may proceed."
-        )
-
-    return "NOT_FEASIBLE", (
-        "No usable polarisation calibrator: no Category A angle standard for Xf, "
-        "and no Df-capable leakage source (need a zero-pol primary leakage cal, a "
-        "known-pol source, or an unknown-pol source with ≥30° parallactic coverage)."
-    )
-
-
-# ---------------------------------------------------------------------------
 # Main tool entry point
 # ---------------------------------------------------------------------------
 
 
-def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHOLD_DEG) -> dict:
+def run(ms_path: str) -> dict:
     """
-    Assess VLA polarisation calibration feasibility for this dataset.
+    Measure the polarisation-calibration conditions for this dataset.
+
+    Reports conditions; does not decide whether to proceed. There is deliberately
+    no threshold argument: the reference values are returned as labelled
+    constants for the Skill to compare against, and a tunable threshold argument
+    invites the caller to push a decision back into this tool.
 
     Inputs:
-        ms_path:                  Path to the Measurement Set.
-        pa_spread_threshold_deg:  Minimum PA spread (deg) needed for D-term
-                                  calibration (default 30°; NRAO suggests 60°).
+        ms_path: Path to the Measurement Set.
 
     Returns:
         Standard response envelope with data fields:
-          band_centre_ghz, pol_angle_calibrator, leakage_calibrator,
-          verdict, blocker, pol_cal_data_epoch, pol_cal_data_source.
+          band_centre_ghz, pol_angle_calibrator, leakage_calibrator (including
+          pa_spread_deg, n_calibrator_scans, effective_role_at_band, and
+          leakage_cal_candidates ranked by PA spread), pa_spread_reference_deg,
+          pa_spread_practical_floor_deg, pa_spread_reference_source,
+          pol_cal_data_epoch, pol_cal_data_source.
     """
     p = validate_ms_path(ms_path)
     ms_str = str(p)
@@ -381,7 +360,6 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
     angle_frac_field = field(None, flag="UNAVAILABLE")
     angle_pa_field = field(None, flag="UNAVAILABLE")
     angle_stable_pa = False
-    angle_degraded = False
     variability_warn: str | None = None
 
     if angle_cal_entry is not None and not math.isnan(band_ghz):
@@ -410,7 +388,6 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
 
         angle_stable_pa = angle_cal_entry.stable_pa
         if angle_cal_entry.variability_note:
-            angle_degraded = True
             variability_warn = angle_cal_entry.variability_note
             warnings.append(
                 f"Pol angle calibrator {angle_cal_entry.b1950_name}: "
@@ -420,7 +397,6 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
     # --- PA spread for leakage calibrator ---
     pa_spread_val: float | None = None
     n_cal_scans: int = 0
-    meets_threshold: bool = False
 
     leakage_source_name = leakage_cal_name or angle_cal_name  # fallback
     leakage_source_entry = leakage_cal_entry or angle_cal_entry
@@ -449,16 +425,12 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             except Exception as e:
                 warnings.append(f"PA spread computation failed: {e}")
 
-        if leakage_role_at_band == "leakage_zero_pol":
-            # Low polarization (<1%) at this band — one scan is enough for Df.
-            meets_threshold = n_cal_scans >= 1
-        else:
-            # Polarized or unknown at this band — needs PA coverage for Df+QU.
-            meets_threshold = pa_spread_val is not None and pa_spread_val >= pa_spread_threshold_deg
-
-    # --- Fallback: if primary leakage cal fails PA threshold, search other fields ---
-    leakage_cal_alternatives: list[dict] = []
-    if leakage_cal_field_id is not None and not meets_threshold:
+    # --- Every other field as a candidate leakage calibrator, ranked ---
+    # Enumerated unconditionally. Previously this ran only when the primary
+    # calibrator failed a threshold test, which meant the Skill could not see the
+    # alternatives in the ordinary case and could not second-guess the primary.
+    leakage_cal_candidates: list[dict] = []
+    if leakage_cal_field_id is not None:
         angle_cal_field_id = next(
             (fid for fid, fn in zip(field_ids, field_names, strict=False) if fn == angle_cal_name),
             None,
@@ -481,70 +453,30 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
                 if len(t_mids_c) < 2:
                     continue
                 spread_c = _pa_spread_deg(ra_c, dec_c, t_mids_c, lat, lon, height)
-                leakage_cal_alternatives.append(
+                leakage_cal_candidates.append(
                     {
                         "field_id": fid,
                         "name": fname,
                         "pa_spread_deg": round(spread_c, 2),
                         "n_scans": len(t_mids_c),
-                        "meets_threshold": spread_c >= pa_spread_threshold_deg,
                     }
                 )
             except Exception as e:
                 warnings.append(f"PA spread computation failed for candidate field '{fname}': {e}")
 
-        leakage_cal_alternatives.sort(key=lambda x: x["pa_spread_deg"], reverse=True)
-
-        if leakage_cal_alternatives and leakage_cal_alternatives[0]["meets_threshold"]:
-            best = leakage_cal_alternatives[0]
-            primary_spread_str = f"{pa_spread_val:.1f}°" if pa_spread_val is not None else "unknown"
-            warnings.append(
-                f"Primary leakage calibrator '{leakage_cal_name}' has insufficient PA spread "
-                f"({primary_spread_str} < {pa_spread_threshold_deg}°). "
-                f"Falling back to '{best['name']}' "
-                f"(PA spread {best['pa_spread_deg']}°, {best['n_scans']} scans)."
-            )
-            leakage_cal_field_id = best["field_id"]
-            leakage_cal_name = best["name"]
-            leakage_cal_entry = None
-            leakage_source_name = best["name"]
-            leakage_source_entry = None
-            pa_spread_val = best["pa_spread_deg"]
-            n_cal_scans = best["n_scans"]
-            meets_threshold = True
+        # Ranked by PA spread, descending. A ranking with its per-item inputs is
+        # permitted; acting on it is not. The identified leakage calibrator is
+        # NOT reassigned here even when a candidate has more coverage, because
+        # choosing a different calibrator is a calibration-strategy decision that
+        # depends on the source's brightness, its polarization, and the science
+        # goal. The Skill picks from this list. Previously this block silently
+        # swapped the calibrator and recorded it only in `warnings`.
+        leakage_cal_candidates.sort(key=lambda x: x["pa_spread_deg"], reverse=True)
 
     # --- Effective role of the leakage source at the observing band ---
-    # Recompute after the fallback may have reassigned the leakage source.
     leakage_role_at_band = _effective_role_at_band(leakage_source_entry, band_ghz)
-    has_low_pol_source = leakage_role_at_band == "leakage_zero_pol"
 
-    # --- Feasibility booleans ---
     has_angle_cal = angle_cal_entry is not None
-
-    # Xf needs only a known-EVPA Category A standard; PA coverage is irrelevant.
-    xf_feasible = has_angle_cal
-
-    # Df strategies (NRAO pol guide):
-    #   'Df'    — known-pol source: a zero-pol (<1%) leakage cal (single scan),
-    #             or the angle cal via its known model (≥2 scans).
-    #   'Df+QU' — unknown-pol source with ≥ threshold PA coverage.
-    df_known_pol = has_angle_cal or has_low_pol_source
-    df_qu_unknown = (not df_known_pol) and meets_threshold
-    df_feasible = df_known_pol or df_qu_unknown
-    if df_known_pol:
-        recommended_df_poltype = "Df"
-    elif df_qu_unknown:
-        recommended_df_poltype = "Df+QU"
-    else:
-        recommended_df_poltype = None
-
-    # --- Verdict ---
-    verdict, blocker = _compute_verdict(
-        has_angle_cal=has_angle_cal,
-        angle_cal_degraded=angle_degraded,
-        xf_feasible=xf_feasible,
-        df_feasible=df_feasible,
-    )
 
     # --- Build output ---
     if pa_spread_val is not None:
@@ -573,26 +505,25 @@ def run(ms_path: str, pa_spread_threshold_deg: float = DEFAULT_PA_SPREAD_THRESHO
             "source": leakage_source_name,
             "category": leakage_source_entry.category if leakage_source_entry else None,
             "effective_role_at_band": leakage_role_at_band,
-            "single_scan_sufficient": leakage_role_at_band == "leakage_zero_pol",
+            "frac_pol_low_reference_pct": LOW_POL_FRAC_PCT,
             "pa_spread_deg": pa_spread_field,
             "pa_spread_note": (
                 "Delta computed via astropy sky-frame PA; "
                 "CASA feed-frame differs by -90° for ALT-AZ mounts "
                 "but delta is identical in both conventions. "
-                "PA spread is irrelevant for a zero-pol (<1%) leakage cal at this "
-                "band (effective_role_at_band='leakage_zero_pol'); it gates only the "
-                "Df+QU path for polarized/unknown sources."
+                "PA spread constrains only the Df+QU path, where D-term and source "
+                "Q,U must be separated from each other. It is irrelevant to Xf and "
+                "to a known-pol or zero-pol Df."
             ),
             "n_calibrator_scans": n_cal_scans,
-            "meets_threshold": meets_threshold,
-            "threshold_deg": pa_spread_threshold_deg,
-            "leakage_cal_alternatives": leakage_cal_alternatives,
+            "leakage_cal_candidates": leakage_cal_candidates,
         },
-        "xf_feasible": xf_feasible,
-        "df_feasible": df_feasible,
-        "recommended_df_poltype": recommended_df_poltype,
-        "verdict": verdict,
-        "blocker": blocker,
+        # Reference values, returned as labelled constants with provenance. This
+        # tool does not apply them: compare pa_spread_deg against these in the
+        # Skill, where the science goal and risk tolerance are known.
+        "pa_spread_reference_deg": PA_SPREAD_REFERENCE_DEG,
+        "pa_spread_practical_floor_deg": PA_SPREAD_PRACTICAL_FLOOR_DEG,
+        "pa_spread_reference_source": PA_SPREAD_REFERENCE_SOURCE,
         "pol_cal_data_epoch": POL_DATA_EPOCH,
         "pol_cal_data_source": POL_DATA_SOURCE,
     }
