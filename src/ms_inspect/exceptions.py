@@ -55,8 +55,10 @@ class InsufficientMetadataError(RadioMSError):
 
     Raised when:
     - TELESCOPE_NAME is missing, empty, or "UNKNOWN"
-    - Antenna table is incomplete or contains only numeric names
-      (common in UVFITS-converted data)
+    - Antenna table is incomplete, or contains only numeric names *and*
+      the associated ECEF positions are unusable (near-origin or
+      degenerate).  Numeric names alone are tolerated when positions
+      are physically plausible.
 
     The message always includes a specific repair path.
     """
