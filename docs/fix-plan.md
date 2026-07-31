@@ -393,6 +393,33 @@ The docs are genuinely self-contradictory — the `name` parameter is described 
 "to be used as a key in the returned Python dictionary" while the example shows
 `report0` — so the correct form cannot be settled without a run against a real MS.
 
+**SETTLED 2026-07-31.** `[RUN]` casatasks 6.7.5.18 against
+`3c391_ctm_mosaic_10s_spw0.ms`. The return shape is **arity-dependent**, which
+is why both statements in the docs are true:
+
+```
+flagdata(mode='list', inpfile=["mode='summary' name='S0' spw='0'"])
+  -> flat summary dict; keys: antenna, array, correlation, field, flagged,
+     name, observation, scan, spw, total, type;  result['name'] == 'S0'
+
+flagdata(mode='list', inpfile=["mode='summary' name='S0' field='0'",
+                               "mode='summary' name='S1' field='1'"])
+  -> keys: ['report0', 'report1'];  result['report0']['name'] == 'S0'
+```
+
+So with one summary there is no `reportN` wrapper at all, and with two or more
+there is. `result[f"spw{id}"]` is wrong in both cases. Any implementation must
+handle both arities — or always emit at least two summaries — and must assert
+the keys it expects rather than `.get(key, {})`.
+
+`[RUN]` Also confirmed in the same session, for `_flag_score`, which is live
+code today: `flagdata(mode='summary')` returns `result['antenna'][name] ==
+{'flagged': float, 'total': float}`, with every antenna in the ANTENNA subtable
+present (26/26). That assumption is no longer unverified.
+
+The rest of item B still stands: worst-minus-median is the right statistic, and
+none of it ships without being exercised on a real MS.
+
 The underlying concern is real and Preshanth's refinement of it is right: an
 antenna dead in one SpW of sixteen still ranks near the top of the aggregate flag
 score, and because the refant is referenced per SpW that shows up much later as
