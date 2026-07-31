@@ -47,8 +47,12 @@ predates the flare by more than six months the degradation is likely negligible.
 
 ### Step B — which Df path do the conditions support?
 
-Choose from `leakage_calibrator.effective_role_at_band`, which is the role of the
-source **at the observed frequency**, not its static catalogue role. 3C147 and
+`recommended_df_poltype` gives the path, and `recommended_df_poltype_basis` gives
+the reason, so you can check it. It follows from what is **known** about the
+source, never from PA coverage: coverage decides how well a `Df+QU` solve is
+constrained (Step C), not which poltype applies. Cross-check it against
+`leakage_calibrator.effective_role_at_band`, which is the role of the source **at
+the observed frequency**, not its static catalogue role. 3C147 and
 3C84 are zero-pol leakage calibrators only where their fractional polarization is
 below `frac_pol_low_reference_pct`; above roughly 10 GHz they become polarized and
 move into the angle-cal regime.
@@ -244,9 +248,8 @@ D-terms quantify leakage between the two polarisation feeds per antenna per freq
 ### Df vs Df+QU — decision table
 
 Pick the strategy by what is **known** about the source, not by PA coverage. PA
-coverage is required **only** for the unknown-pol (`Df+QU`) path. Derive the path
-yourself from `effective_role_at_band` per Step B above; the tool no longer
-recommends one.
+coverage is required **only** for the unknown-pol (`Df+QU`) path. Read
+`recommended_df_poltype` and verify it against `recommended_df_poltype_basis`.
 
 | Situation | Use | PA coverage |
 |---|---|---|

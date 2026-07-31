@@ -959,7 +959,7 @@ On tool error:
 | `ms_refant` | Ranked reference-antenna list by geometry + flag-fraction heuristics |
 | `ms_rfi_channel_stats` | Per-channel flag fractions; persistent RFI bands |
 | `ms_spw_amp_severity` | Robust per-channel amplitude stats aggregated per SpW; RFI severity + estimated discardable fraction (reservoir-sampled) |
-| `ms_pol_cal_conditions` | Measured pol-cal conditions: PA spread, scan counts, catalogue pol properties, ranked leakage candidates, reference thresholds as labelled constants. No verdict |
+| `ms_pol_cal_conditions` | Measured pol-cal conditions: PA spread, scan counts, catalogue pol properties, ranked leakage candidates, recommended_df_poltype + its basis, reference thresholds as labelled constants. No verdict |
 | `ms_residual_stats` | CORRECTED − MODEL amplitude distribution per SpW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | Per-field parallel-hand amplitude + phase RMS of a data column, vector-averaged over the channel range (post-applycal sanity) |
 | `ms_phase_cal_lookup` | Cross-match a sky position against the NRAO VLA phase-calibrator catalog; nearest source, flux, UV limits, per-config quality codes |

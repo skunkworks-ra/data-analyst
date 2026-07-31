@@ -260,7 +260,8 @@ def run(ms_path: str) -> dict:
         Standard response envelope with data fields:
           band_centre_ghz, pol_angle_calibrator, leakage_calibrator (including
           pa_spread_deg, n_calibrator_scans, effective_role_at_band, and
-          leakage_cal_candidates ranked by PA spread), pa_spread_reference_deg,
+          leakage_cal_candidates ranked by PA spread), recommended_df_poltype
+          with recommended_df_poltype_basis, pa_spread_reference_deg,
           pa_spread_practical_floor_deg, pa_spread_reference_source,
           pol_cal_data_epoch, pol_cal_data_source.
     """
@@ -478,6 +479,42 @@ def run(ms_path: str) -> dict:
 
     has_angle_cal = angle_cal_entry is not None
 
+    # --- Which Df poltype the source knowledge implies -------------------------
+    # A derived label, permitted under DESIGN.md 1.1.1 because it ships the inputs
+    # that produced it (see recommended_df_poltype_basis) and is falsifiable from
+    # the output alone.
+    #
+    # Deliberately NOT coupled to the PA spread. The earlier version computed
+    # `(not df_known_pol) and meets_threshold`, which made the poltype depend on a
+    # threshold test and was the part that behaved like a gate: below the
+    # threshold it returned None, i.e. "no strategy available", when the honest
+    # answer is "Df+QU, and here is how well constrained it will be".
+    #
+    # Coverage determines the QUALITY of a Df+QU solve, not WHICH poltype applies.
+    # The poltype follows from what is known about the source, which is what
+    # 09-polcal-execution.md Step B says. Judge the quality in Step C from
+    # pa_spread_deg against the returned reference constants.
+    has_low_pol_source = leakage_role_at_band == "leakage_zero_pol"
+    df_known_pol = has_angle_cal or has_low_pol_source
+    if leakage_cal_field_id is None and not has_angle_cal:
+        # No leakage source and no angle cal to fall back on: nothing to solve.
+        recommended_df_poltype: str | None = None
+        df_basis = "no leakage calibrator and no angle calibrator identified"
+    elif df_known_pol:
+        recommended_df_poltype = "Df"
+        df_basis = (
+            "angle calibrator present (known model)"
+            if has_angle_cal
+            else f"leakage source is zero-pol at this band (< {LOW_POL_FRAC_PCT}% frac pol)"
+        )
+    else:
+        recommended_df_poltype = "Df+QU"
+        df_basis = (
+            "leakage source polarization is unknown or non-negligible at this band, "
+            "so Q,U must be solved alongside the D-terms; PA coverage constrains how "
+            "well, see pa_spread_deg against pa_spread_reference_deg"
+        )
+
     # --- Build output ---
     if pa_spread_val is not None:
         pa_spread_field = field(round(pa_spread_val, 2), flag="COMPLETE")
@@ -518,6 +555,11 @@ def run(ms_path: str) -> dict:
             "n_calibrator_scans": n_cal_scans,
             "leakage_cal_candidates": leakage_cal_candidates,
         },
+        # Which Df poltype the source knowledge implies, with the inputs that
+        # produced it. Follows from what is KNOWN about the source, not from PA
+        # coverage: see Step B vs Step C in 09-polcal-execution.md.
+        "recommended_df_poltype": recommended_df_poltype,
+        "recommended_df_poltype_basis": df_basis,
         # Reference values, returned as labelled constants with provenance. This
         # tool does not apply them: compare pa_spread_deg against these in the
         # Skill, where the science goal and risk tolerance are known.

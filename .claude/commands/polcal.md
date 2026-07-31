@@ -22,7 +22,8 @@ must already exist — run `/radio-analyst:calibrate` first if not.
    - Category A angle standard present → do Xf (Step 6), regardless of PA spread.
    - No angle standard → skip Steps 3 and 6; D-terms only, and state in the
      report that absolute EVPA is uncalibrated.
-   - Df path comes from `effective_role_at_band`, not from PA spread.
+   - Df path comes from `recommended_df_poltype`; check it against
+     `recommended_df_poltype_basis`. It does not depend on PA spread.
    - For the `Df+QU` path only, compare `pa_spread_deg` against the returned
      `pa_spread_reference_deg` and `pa_spread_practical_floor_deg`, and carry the
      consequence into the report rather than stopping on a threshold.
