@@ -19,6 +19,13 @@ Two independent scores, each normalised to [0, n_antennas]:
 
 Combined score = geo_score + flag_score (when both enabled). Sort descending.
 The full ranked list is returned so the skill can fall back to refant[1].
+
+geo_score's normalisation is set by the single most distant unflagged antenna,
+so in an extended configuration it saturates across the whole core and the
+ranking there is decided by a term carrying almost no information. The
+response therefore also carries `distance_from_centre_m` per antenna and
+`max_distance_m` at top level — geo_score's own inputs — so that saturation is
+visible rather than hidden. Ranking, weighting and sort order are unchanged.
 """
 
 from __future__ import annotations
@@ -36,6 +43,39 @@ TOOL_NAME = "ms_refant"
 # ---------------------------------------------------------------------------
 
 
+def _geo_distances(positions: np.ndarray, flagged_rows: list[bool]) -> tuple[np.ndarray, float]:
+    """
+    Distance of each antenna from the array centre, and the normalising maximum.
+
+    These are the *inputs* to _geo_score. They are returned in the response
+    because geo_score alone hides its own saturation: the normalisation is set
+    by the single most distant unflagged antenna, so in an extended
+    configuration every antenna in the core scores above ~0.94 * n_ant and the
+    geometry term collapses to a near-binary "central or not". Since geometry
+    and flagging are summed with equal weight, the ranking near that boundary
+    is then decided by a saturated term. distance_from_centre_m still separates
+    the antennas that geo_score cannot.
+
+    Args:
+        positions:    Shape (3, n_ant) ECEF XYZ in metres (output of tb.getcol).
+        flagged_rows: Length n_ant booleans — True if FLAG_ROW is set.
+
+    Returns:
+        (distances, max_dist) — distances shape (n_ant,) in metres, for every
+        antenna including flagged ones; max_dist is the maximum over unflagged
+        antennas only (0.0 if none are unflagged).
+    """
+    active = np.array([not f for f in flagged_rows], dtype=bool)
+    if not active.any():
+        return np.zeros(positions.shape[1], dtype=np.float64), 0.0
+
+    # positions shape: (3, n_ant) → transpose to (n_ant, 3)
+    pos_t = positions.T  # (n_ant, 3)
+    centre = np.median(pos_t[active], axis=0)  # (3,)
+    distances = np.linalg.norm(pos_t - centre, axis=1)  # (n_ant,)
+    return distances, float(distances[active].max())
+
+
 def _geo_score(positions: np.ndarray, flagged_rows: list[bool]) -> np.ndarray:
     """
     Compute geometry scores for each antenna.
@@ -50,17 +90,11 @@ def _geo_score(positions: np.ndarray, flagged_rows: list[bool]) -> np.ndarray:
     n_ant = positions.shape[1]
     scores = np.zeros(n_ant, dtype=np.float64)
 
-    # Array centre from non-flagged antennas
     active = np.array([not f for f in flagged_rows], dtype=bool)
     if not active.any():
         return scores  # all flagged — return zeros
 
-    # positions shape: (3, n_ant) → transpose to (n_ant, 3)
-    pos_t = positions.T  # (n_ant, 3)
-    centre = np.median(pos_t[active], axis=0)  # (3,)
-
-    distances = np.linalg.norm(pos_t - centre, axis=1)  # (n_ant,)
-    max_dist = distances[active].max()
+    distances, max_dist = _geo_distances(positions, flagged_rows)
 
     if max_dist == 0.0:
         # All active antennas at the same position — equal scores
@@ -171,8 +205,10 @@ def run(
     # ------------------------------------------------------------------
     if use_geometry:
         geo_scores = _geo_score(positions, flag_row)
+        geo_distances, max_distance_m = _geo_distances(positions, flag_row)
     else:
         geo_scores = np.zeros(n_ant, dtype=np.float64)
+        geo_distances, max_distance_m = np.zeros(n_ant, dtype=np.float64), 0.0
 
     # ------------------------------------------------------------------
     # Flagging score
@@ -220,6 +256,7 @@ def run(
         ranked.append(
             {
                 "antenna": ant_names[ant_idx],
+                "distance_from_centre_m": round(float(geo_distances[ant_idx]), 2),
                 "geo_score": round(float(geo_scores[ant_idx]), 4),
                 "flag_score": round(float(flag_scores[ant_idx]), 4),
                 "combined_score": round(float(combined[ant_idx]), 4),
@@ -243,6 +280,11 @@ def run(
         "refant": fmt_field(best, flag=refant_flag),
         "refant_list": fmt_field(refant_list, flag=refant_flag),
         "n_antennas": n_ant,
+        # geo_score is (1 - distance/max_distance_m) * n_antennas, so it
+        # saturates near 1 * n_antennas for the whole core whenever
+        # max_distance_m is large. These two fields are that computation's
+        # inputs; use them when the top of the ranking is closely spaced.
+        "max_distance_m": round(float(max_distance_m), 2),
         "use_geometry": use_geometry,
         "use_flagging": use_flagging,
         "field_selection": field if field else "<all fields>",
