@@ -14,16 +14,16 @@
       "name": "radio-analyst",
       "description": "Radio interferometric Measurement Set inspector — MCP tools + skills for VLA/MeerKAT/uGMRT",
       "version": "0.1.0",
-      "authors": [
-        { "name": "Srikrishna Sekhar" },
-        { "name": "Preshanth Jagannathan" }
-      ],
-      "source": {
-        "source": "url",
-        "url": "https://github.com/skunkworks-ra/radio-analyst.git"
+      "author": {
+        "name": "Srikrishna Sekhar and Preshanth Jagannathan",
+        "url": "https://github.com/skunkworks-ra"
       },
+      "source": "./",
       "category": "development",
-      "homepage": "https://github.com/skunkworks-ra/radio-analyst"
+      "homepage": "https://github.com/skunkworks-ra/radio-analyst",
+      "repository": "https://github.com/skunkworks-ra/radio-analyst",
+      "license": "GPL-3.0",
+      "keywords": ["radio-astronomy", "interferometry", "CASA", "VLA", "MeerKAT", "uGMRT"]
     }
   ]
 }
