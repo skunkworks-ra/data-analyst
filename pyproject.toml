@@ -46,8 +46,6 @@ ms-create = "ms_create.server:main"
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
 packages = ["src/ms_inspect", "src/ms_modify", "src/ms_create"]
-# Ship the per-telescope reference data (loaded via importlib.resources).
-force-include = { "src/ms_inspect/data" = "ms_inspect/data" }
 artifacts = ["*.yaml"]
 
 # ---------------------------------------------------------------------------
