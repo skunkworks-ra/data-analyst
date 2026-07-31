@@ -236,20 +236,26 @@ class TestCombinedRanking:
 
 
 class TestGeoDistances:
-    """Covers the saturation _geo_score hides, with a synthetic extended array.
+    """Arithmetic of the geometry term on hand-built ECEF positions.
 
-    These are pure-numpy tests on hand-built ECEF positions. They do NOT test
-    that the values are read correctly from a real ANTENNA subtable, nor that
-    the ranking is scientifically right for any real configuration.
+    Scope, stated precisely because it is narrow. These tests show one thing:
+    that (1 - d/d_max) * n_ant compresses when d_max is much larger than the
+    spread among the antennas being compared, and that d itself does not. The
+    positions are a constructed shape, not a real array configuration.
+
+    They do NOT show anything about the combined ranking. flag_score is zero
+    throughout, so the relative influence of the geometry and flagging terms —
+    which are summed with equal weight — is untested here and unmeasured on
+    any real dataset.
     """
 
     @staticmethod
     def _extended_config():
-        """Ten antennas in a 1 km core plus one outlier at 30 km.
+        """Ten antennas spread over 1 km, plus one outlier at 30 km.
 
-        This is the shape of a VLA A-configuration relative to its core: the
-        normalising antenna is tens of times further out than the spread among
-        the candidates you actually want to rank.
+        A constructed shape chosen so the normalising antenna is far outside
+        the spread of the antennas being compared. It is not a model of any
+        real array configuration.
         """
         core_x = np.linspace(-500.0, 500.0, 10)
         x = np.concatenate([core_x, [30000.0]])

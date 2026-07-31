@@ -21,11 +21,19 @@ Combined score = geo_score + flag_score (when both enabled). Sort descending.
 The full ranked list is returned so the skill can fall back to refant[1].
 
 geo_score's normalisation is set by the single most distant unflagged antenna,
-so in an extended configuration it saturates across the whole core and the
-ranking there is decided by a term carrying almost no information. The
-response therefore also carries `distance_from_centre_m` per antenna and
-`max_distance_m` at top level — geo_score's own inputs — so that saturation is
-visible rather than hidden. Ranking, weighting and sort order are unchanged.
+so in an extended configuration it compresses across the whole core: every core
+antenna lands close to the top of the [0, n_antennas] range and geo_score
+separates them only weakly. The response therefore also carries
+`distance_from_centre_m` per antenna and `max_distance_m` at top level —
+geo_score's own inputs — so that compression is visible rather than hidden.
+Ranking, weighting and sort order are unchanged.
+
+What that means for the combined ranking is NOT established here. geo_score and
+flag_score are both normalised to [0, n_antennas], and flag_score compresses in
+its own way (good/max_good) whenever antennas have similar flag fractions.
+Which term dominates near the top of the ranking depends on the spread of both
+on a real dataset, and neither has been measured on one — ms_refant has no
+integration coverage.
 """
 
 from __future__ import annotations
@@ -47,14 +55,12 @@ def _geo_distances(positions: np.ndarray, flagged_rows: list[bool]) -> tuple[np.
     """
     Distance of each antenna from the array centre, and the normalising maximum.
 
-    These are the *inputs* to _geo_score. They are returned in the response
-    because geo_score alone hides its own saturation: the normalisation is set
-    by the single most distant unflagged antenna, so in an extended
-    configuration every antenna in the core scores above ~0.94 * n_ant and the
-    geometry term collapses to a near-binary "central or not". Since geometry
-    and flagging are summed with equal weight, the ranking near that boundary
-    is then decided by a saturated term. distance_from_centre_m still separates
-    the antennas that geo_score cannot.
+    These are the *inputs* to _geo_score, returned in the response because
+    geo_score alone hides its own compression: the normalisation is set by the
+    single most distant unflagged antenna, so in an extended configuration
+    every antenna in the core scores near the top of the range while their
+    actual separations differ by hundreds of metres. distance_from_centre_m
+    preserves that separation.
 
     Args:
         positions:    Shape (3, n_ant) ECEF XYZ in metres (output of tb.getcol).
