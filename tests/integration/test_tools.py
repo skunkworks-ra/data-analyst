@@ -879,3 +879,98 @@ class TestSpwAmpSeverityReal:
 
         recovered = json.loads(sidecar.read_text())
         assert sum(len(e["per_chan"]) for e in recovered["per_spw"]) == n_records
+
+
+@pytest.fixture(scope="module")
+def pol_intent_ms(tmp_path_factory):
+    """A small MS carrying polarisation intents, built from the real test MS.
+
+    Deliberately excludes any catalogued leakage calibrator (no 3C84 / 3C147),
+    so `ms_pol_cal_conditions` cannot identify one from the catalogue and must
+    fall back to CALIBRATE_POL_LEAKAGE intents. One channel only, to keep it
+    small; every field, scan and antenna is preserved, so PA spread and scan
+    counts remain the real ones.
+
+    Writes only inside tmp_path; the source MS is never modified.
+    """
+    if _TEST_MS is None:
+        pytest.skip("RADIO_MCP_TEST_MS not set")
+    from casatasks import split
+
+    from ms_modify import intents as _intents
+
+    out = str(tmp_path_factory.mktemp("pol_intents") / "pol_fallback.ms")
+    split(
+        vis=_TEST_MS,
+        outputvis=out,
+        field="J1331+3030,J1822-0938,3C391 C1",
+        spw="0:0",
+        datacolumn="data",
+        keepflags=True,
+    )
+    # J1822-0938 is the phase calibrator and is in no pol catalogue. It only
+    # becomes the leakage calibrator because it is nominated here, which is the
+    # point: the tool never nominates one itself.
+    written = _intents.set_intents(out, execute=True, pol_leakage_fields=("J1822-0938",))
+    assert written["status"] == "ok"
+    return out
+
+
+@_SKIP
+class TestPolIntentsEndToEnd:
+    """ms_set_intents writes pol intents; ms_pol_cal_conditions reads them back."""
+
+    def test_angle_intent_comes_from_catalogue_identity(self, pol_intent_ms):
+        from ms_inspect.util.casa_context import open_msmd
+
+        with open_msmd(pol_intent_ms) as msmd:
+            names = list(msmd.fieldnames())
+            intents_by_name = {n: set(msmd.intentsforfield(i)) for i, n in enumerate(names)}
+
+        assert any("POL_ANGLE" in i for i in intents_by_name["J1331+3030"])
+        # 3C286's catalogue role lists leakage too; it must not claim that intent.
+        assert not any("POL_LEAKAGE" in i for i in intents_by_name["J1331+3030"])
+
+    def test_leakage_intent_only_where_nominated(self, pol_intent_ms):
+        from ms_inspect.util.casa_context import open_msmd
+
+        with open_msmd(pol_intent_ms) as msmd:
+            names = list(msmd.fieldnames())
+            intents_by_name = {n: set(msmd.intentsforfield(i)) for i, n in enumerate(names)}
+
+        assert any("POL_LEAKAGE" in i for i in intents_by_name["J1822-0938"])
+        assert not any("POL_LEAKAGE" in i for i in intents_by_name["3C391 C1"])
+
+    def test_conditions_finds_the_leakage_cal_through_the_intent_fallback(self, pol_intent_ms):
+        """The path that had no coverage: identification from intents, not catalogue."""
+        from ms_inspect.tools import pol_cal_conditions
+
+        result = pol_cal_conditions.run(pol_intent_ms)
+        leak = result["data"]["leakage_calibrator"]
+
+        assert leak["available"] is True
+        assert leak["source"] == "J1822-0938"
+        # Uncatalogued, so no catalogue properties travel with it.
+        assert leak["category"] is None
+        assert leak["effective_role_at_band"] == "unknown"
+        assert leak["n_calibrator_scans"] > 1
+        assert leak["pa_spread_deg"]["value"] > 0.0
+        # The fallback must say out loud that it used intents, not the catalogue.
+        assert any("POL_LEAKAGE" in w for w in result["warnings"])
+
+    def test_unknown_pol_leakage_source_implies_df_qu(self, pol_intent_ms):
+        from ms_inspect.tools import pol_cal_conditions
+
+        data = pol_cal_conditions.run(pol_intent_ms)["data"]
+
+        assert data["recommended_df_poltype"] == "Df+QU"
+        assert "not known" in data["recommended_df_poltype_basis"]
+
+    def test_angle_cal_is_still_the_catalogue_standard(self, pol_intent_ms):
+        from ms_inspect.tools import pol_cal_conditions
+
+        angle = pol_cal_conditions.run(pol_intent_ms)["data"]["pol_angle_calibrator"]
+
+        assert angle["available"] is True
+        assert angle["source"] == "3C286"
+        assert angle["category"] == "A"

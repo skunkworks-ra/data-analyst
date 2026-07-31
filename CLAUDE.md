@@ -264,7 +264,7 @@ Environment variable reference:
 | `ms_baseline_lengths` | `tools/antennas.py` | computed from ECEF positions |
 | `ms_elevation_vs_time` | `tools/geometry.py` | astropy AltAz (not CASA measures) |
 | `ms_parallactic_angle_vs_time` | `tools/geometry.py` | astropy LST + atan2 |
-| `ms_shadowing_report` | `tools/shadowing.py` | `casatasks.flagdata(mode='shadow', action='calculate')` |
+| `ms_shadowing_report` | `tools/shadowing.py` | `casatasks.flagdata(mode='list', action='calculate')` with [summary, shadow, summary]; the shadow contribution is the difference |
 | `ms_flag_preflight` | `tools/flags.py` | Fast probe: row count, FLAG shape, data volume, runtime estimate, recommended workers |
 | `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` adaptive parallel reads; accepts `n_workers` override |
 
@@ -336,7 +336,7 @@ Functions are also callable directly by skills and scripts.
 
 | Tool | Module | What it does |
 |------|--------|-------------|
-| `ms_set_intents` | `ms_modify/intents.py` | Populate STATE subtable and STATE_ID from calibrator catalogue matching |
+| `ms_set_intents` | `ms_modify/intents.py` | Populate STATE subtable and STATE_ID from calibrator catalogue matching, including `CALIBRATE_POL_ANGLE` / `CALIBRATE_POL_LEAKAGE` from pol-catalogue identity. `pol_leakage_fields` nominates a field the catalogue does not know (the tool never nominates one itself); `pol_sources_available` reports what the MS contains |
 | `ms_apply_preflag` | `ms_modify/preflag.py` | Deterministic pre-cal flagging (online + shadow + clip + tfcrop) + calibrator split |
 | `ms_generate_priorcals` | `ms_modify/priorcals.py` | Generate gc/opac/rq/ap prior caltables via gencal |
 | `ms_setjy` | `ms_modify/setjy.py` | Set Perley-Butler 2017 flux models for standard calibrators. `exclude_fields` omits a field from the Stokes-I pass (use for a pol-angle cal that overlaps a flux/BP cal — its polarized model is set by `ms_setjy_polcal`, and a plain setjy would clobber it) |
@@ -358,9 +358,15 @@ Functions are also callable directly by skills and scripts.
 1. Read fields + positions via `open_msmd`
 2. Guard: raise `IntentsAlreadyPopulatedError` if ≥50% of fields have intents
 3. Match fields against primary catalogue (`calibrators.lookup`) and VLA cone search
-4. Write STATE rows (OBS_MODE, CAL, SIG, SUB_SCAN, FLAG_ROW, REF)
-5. Bulk-update STATE_ID in MAIN table
-6. Supports `dry_run=True` to preview mapping without writing
+4. Add polarisation intents from pol-catalogue identity: a Category A angle
+   standard gets `CALIBRATE_POL_ANGLE`, a dedicated leakage cal (role is
+   leakage and not angle) gets `CALIBRATE_POL_LEAKAGE`. These are additive, not
+   a replacement: 3C286 is both a flux standard and the angle standard.
+   Nominating an uncatalogued field as the leakage cal is a strategy decision
+   and requires `pol_leakage_fields`
+5. Write STATE rows (OBS_MODE, CAL, SIG, SUB_SCAN, FLAG_ROW, REF)
+6. Bulk-update STATE_ID in MAIN table
+7. Supports `dry_run=True` to preview mapping without writing
 
 ---
 

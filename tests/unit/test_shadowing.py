@@ -1,76 +1,119 @@
 """
-Unit tests for tools/shadowing.py's report parser.
+Unit tests for tools/shadowing.py's report parsing.
 
-What these cover: _parse_shadow_report's handling of the return shapes
-flagdata can produce, including the empty-dict case observed for real.
+What these cover: _summaries_by_name across both flagdata(mode='list') return
+arities, and _shadow_delta's before/after subtraction, including that a missing
+or malformed report raises instead of reading as zero shadowing.
 
 What they do NOT cover: the flagdata call itself, the FLAG_CMD read, or the
-assembled envelope. The empty-dict input below is not invented — it is what
-`flagdata(vis=<real MS>, mode='shadow', tolerance=0.0, action='calculate',
-savepars=False, flagbackup=False)` returned from casatasks 6.7.5.18 against
-3C391 D-config on 2026-07-31.
+assembled envelope. The record shapes below are not invented — they are what
+casatasks 6.7.5.18 returned against 3C391 D-config on 2026-07-31, where a
+single summary agent gives a flat record and two or more give reportN wrappers.
 """
 
 from __future__ import annotations
 
-from ms_inspect.tools.shadowing import _parse_shadow_report
+import pytest
+
+from ms_inspect.tools.shadowing import (
+    _SUMMARY_AFTER,
+    _SUMMARY_BEFORE,
+    _shadow_delta,
+    _summaries_by_name,
+)
 
 
-class TestEmptyReport:
-    def test_empty_dict_is_not_measured(self):
-        """The observed real-world case. Must not degrade to (0, 0)."""
-        n_total, n_flagged, note = _parse_shadow_report({})
-
-        assert n_total is None
-        assert n_flagged is None
-        assert note is not None
-        assert "NOT measured" in note
-
-    def test_none_is_not_measured(self):
-        n_total, n_flagged, note = _parse_shadow_report(None)
-        assert (n_total, n_flagged) == (None, None)
-        assert note is not None
-
-    def test_dict_without_total_is_not_measured(self):
-        n_total, n_flagged, note = _parse_shadow_report({"antenna": {}})
-        assert (n_total, n_flagged) == (None, None)
-        assert "no usable 'total'" in note
+def _summary(name: str, flagged: float, total: float = 216417024.0, antenna=None) -> dict:
+    rec = {
+        "name": name,
+        "type": "summary",
+        "flagged": flagged,
+        "total": total,
+    }
+    if antenna is not None:
+        rec["antenna"] = antenna
+    return rec
 
 
-class TestWellFormedReport:
-    def test_nested_total_record(self):
-        n_total, n_flagged, note = _parse_shadow_report(
-            {"total": {"total": 216417024.0, "flagged": 74199808.0}}
-        )
+def _pair(before_flagged: float, after_flagged: float, **kw) -> dict:
+    return {
+        "report0": _summary(_SUMMARY_BEFORE, before_flagged, **kw),
+        "report1": _summary(_SUMMARY_AFTER, after_flagged, **kw),
+    }
+
+
+class TestSummariesByName:
+    def test_single_summary_is_flat(self):
+        """One summary agent: no reportN wrapper, 'name' at the top level."""
+        result = _summary("shadow_before", 74199808.0)
+        assert _summaries_by_name(result) == {"shadow_before": result}
+
+    def test_two_summaries_are_wrapped(self):
+        by_name = _summaries_by_name(_pair(74199808.0, 74199808.0))
+        assert sorted(by_name) == sorted([_SUMMARY_BEFORE, _SUMMARY_AFTER])
+
+    def test_empty_report_raises(self):
+        """The shape mode='shadow' alone returns. Must not read as zero."""
+        with pytest.raises(ValueError, match="no report"):
+            _summaries_by_name({})
+
+    def test_none_raises(self):
+        with pytest.raises(ValueError, match="no report"):
+            _summaries_by_name(None)
+
+    def test_unrecognised_shape_raises_rather_than_defaulting(self):
+        with pytest.raises(ValueError, match="neither a flat summary nor reportN"):
+            _summaries_by_name({"antenna": {}, "spw": {}})
+
+    def test_report_without_a_name_raises(self):
+        with pytest.raises(ValueError, match="no 'name' field"):
+            _summaries_by_name({"report0": {"flagged": 1.0, "total": 2.0}})
+
+
+class TestShadowDelta:
+    def test_delta_isolates_the_shadow_agent(self):
+        """Pre-existing flags belong to 'before' and must not count as shadow."""
+        n_total, n_shadow, per_ant = _shadow_delta(_pair(74199808.0, 74466528.0))
         assert n_total == 216417024
-        assert n_flagged == 74199808
-        assert note is None
+        assert n_shadow == 266720
+        assert per_ant == []
 
-    def test_flat_total_and_flagged(self):
-        """The shape flagdata(mode='summary') really uses: floats at top level.
-
-        Confirmed against the same MS — summary returns 'total' and 'flagged'
-        as top-level floats, not as a nested record.
-        """
-        n_total, n_flagged, note = _parse_shadow_report(
-            {"total": 216417024.0, "flagged": 74199808.0, "antenna": {}}
-        )
+    def test_measured_zero_is_a_real_answer(self):
+        """The 3C391 case: 34% of the data already flagged, none of it shadow."""
+        n_total, n_shadow, _ = _shadow_delta(_pair(74199808.0, 74199808.0))
         assert n_total == 216417024
-        assert n_flagged == 74199808
-        assert note is None
+        assert n_shadow == 0
 
-    def test_partial_nested_record_is_rejected_not_defaulted(self):
-        """A 'total' record missing 'flagged' must not read as zero flagged."""
-        n_total, n_flagged, note = _parse_shadow_report({"total": {"total": 100}})
-
-        assert (n_total, n_flagged) == (None, None)
-        assert "without 'total'/'flagged' keys" in note
-
-    def test_genuine_zero_is_preserved(self):
-        """Measured-as-zero and not-measured must stay distinguishable."""
-        n_total, n_flagged, note = _parse_shadow_report(
-            {"total": {"total": 216417024.0, "flagged": 0.0}}
+    def test_per_antenna_counts_are_also_differences(self):
+        result = _pair(
+            100.0,
+            160.0,
+            antenna={"ea01": {"flagged": 100.0, "total": 1000.0}},
         )
-        assert n_total == 216417024
-        assert n_flagged == 0
-        assert note is None
+        result["report1"]["antenna"] = {"ea01": {"flagged": 160.0, "total": 1000.0}}
+        _, n_shadow, per_ant = _shadow_delta(result)
+        assert n_shadow == 60
+        assert per_ant == [
+            {
+                "antenna_name": "ea01",
+                "shadow_flag_fraction": 0.06,
+                "n_flagged": 60,
+                "n_total": 1000,
+            }
+        ]
+
+    def test_antenna_absent_from_before_counts_from_zero(self):
+        result = _pair(0.0, 50.0)
+        result["report1"]["antenna"] = {"ea09": {"flagged": 50.0, "total": 500.0}}
+        _, _, per_ant = _shadow_delta(result)
+        assert per_ant[0]["antenna_name"] == "ea09"
+        assert per_ant[0]["n_flagged"] == 50
+
+    def test_missing_after_summary_raises(self):
+        with pytest.raises(ValueError, match="no summary named"):
+            _shadow_delta({"report0": _summary(_SUMMARY_BEFORE, 1.0)})
+
+    def test_summary_without_counts_raises(self):
+        broken = {"report0": _summary(_SUMMARY_BEFORE, 1.0), "report1": {"name": _SUMMARY_AFTER}}
+        with pytest.raises(ValueError, match="no 'flagged'/'total'"):
+            _shadow_delta(broken)

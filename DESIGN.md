@@ -704,24 +704,31 @@ This offset is **mount-type and telescope dependent.** The correction table is:
 **Question answered:** Were any antennas shadowed by others during the observation, and how much data is affected?
 
 **CASA calls:**
-- `casatasks.flagdata(vis=..., mode='shadow', tolerance=..., action='calculate', savepars=False, flagbackup=False)` → per-antenna counts of what *would* be flagged. `action='calculate'` makes this read-only; nothing is written to the MS.
+- One `casatasks.flagdata(vis=..., mode='list', action='calculate', savepars=False, flagbackup=False)` run carrying three agents: `mode='summary' name='shadow_before'`, `mode='shadow' tolerance=...`, `mode='summary' name='shadow_after'`. The shadow contribution is `after − before`, overall and per antenna. `action='calculate'` computes in memory; nothing is written to the MS.
 - FLAG_CMD subtable: check for pre-existing shadow flags applied online
 
 If `casatasks` cannot be imported, or the `flagdata` call raises, `method` is
-flagged `INFERRED` and only the FLAG_CMD entries are reported. There is no
-geometric fallback.
+flagged `INFERRED` and only the FLAG_CMD entries are reported. If the run
+returns no usable summary pair, `method` is `UNAVAILABLE` — never a zero. There
+is no geometric fallback.
 
-**Known limitation.** `[RUN]` 2026-07-31, casatasks 6.7.5.18, 3C391 D-config:
-that `flagdata` call returns an **empty dict**. `action='calculate'` emits a
-report only when the run includes a summary agent, which `mode='shadow'` alone
-does not. The shadow measurement therefore does not currently work, `method` is
-flagged `UNAVAILABLE`, and `shadowing_detected` / `shadow_flag_fraction` are
-`null`. Only the FLAG_CMD path is functional. Fixing the measurement (likely
-`mode='list'` with a shadow command plus a named summary) has not been
-attempted.
+**Why the leading summary.** `[RUN]` 2026-07-31, casatasks 6.7.5.18, 3C391
+D-config: `flagdata(mode='shadow', action='calculate')` on its own returns an
+**empty dict**, because `action='calculate'` emits a report only when the run
+includes a summary agent. The old code read that empty dict as
+`shadow_flag_fraction = 0.0`, COMPLETE. A trailing summary alone is not enough
+either: it counts the flags already in the MS (34% on that dataset), so only
+the difference isolates the shadow agent.
 
-**Returned fields** (names read from `tools/shadowing.py`; no example values —
-the only run on record produced no measurement):
+**Verified.** `[RUN]` same MS and CASA version. Control: swapping the shadow
+agent for `mode='manual' antenna='0'` moves the delta by 13,339,392 of
+216,417,024, so the trailing summary demonstrably sees the middle agent's work.
+With the shadow agent the delta is 0, corroborated by the geometry (minimum
+projected baseline 28.0 m against 25 m dishes) and by `action='apply'` on a
+scratch copy. `tolerance_m` is **not** verified: the delta did not respond to
+tolerances from 0 to 1e6 m, so a non-default tolerance ships flagged `SUSPECT`.
+
+**Returned fields** (names read from `tools/shadowing.py`):
 
 | Field | Type | Notes |
 |---|---|---|
@@ -873,7 +880,7 @@ On tool error:
 | `ms_baseline_lengths` | Computed from antenna positions | λ/B_max resolution, LAS per SpW |
 | `ms_elevation_vs_time` | astropy (field coords + array geodetic pos + scan times) | Low-elevation warnings per scan |
 | `ms_parallactic_angle_vs_time` | astropy | PA range per field, D-term solvability note |
-| `ms_shadowing_report` | casatasks.flagdata(mode='shadow', action='calculate') — read-only | Shadow flag fraction overall and per antenna |
+| `ms_shadowing_report` | casatasks.flagdata(mode='list', action='calculate') [summary, shadow, summary] — read-only | Shadow flag fraction overall and per antenna, as the before/after difference |
 | `ms_antenna_flag_fraction` | tb → FLAG column (chunked) | Per-antenna flag fraction, online flag commands |
 
 **Phase 1 (Layers 1 & 2): 13 tools** — the tables above plus `ms_flag_preflight`.

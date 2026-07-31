@@ -82,6 +82,24 @@ class SetIntentsInput(BaseModel):
         default=None,
         description="Deprecated alias for not execute. Use execute instead.",
     )
+    pol_angle_fields: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Field names (or field ids as strings) to mark as the polarisation "
+            "ANGLE calibrator, in addition to any pol-catalogue match. Normally "
+            "left empty: 3C286 / 3C138 / 3C48 are assigned automatically."
+        ),
+    )
+    pol_leakage_fields: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Field names (or field ids as strings) to mark as the polarisation "
+            "LEAKAGE calibrator. Use when no dedicated leakage cal (3C84, OQ208, "
+            "3C147, ...) was observed and you are nominating another field, "
+            "typically the phase calibrator. Rank the options with "
+            "ms_pol_cal_conditions first; the choice is yours, not the tool's."
+        ),
+    )
 
 
 class InitialBandpassInput(BaseModel):
@@ -209,8 +227,9 @@ _run_tool = run_tool
     name="ms_set_intents",
     description=(
         "Populate STATE subtable and STATE_ID for an MS lacking scan intents. "
-        "Cross-matches field names against VLA calibrator catalogue. "
-        "Hard-fails if ≥50% of fields already have intents."
+        "Cross-matches field names against the VLA calibrator and polarisation "
+        "calibrator catalogues, including CALIBRATE_POL_ANGLE / "
+        "CALIBRATE_POL_LEAKAGE. Hard-fails if >=50% of fields already have intents."
     ),
     annotations={
         "title": "Set Intents",
@@ -229,6 +248,13 @@ async def ms_set_intents(params: SetIntentsInput) -> str:
     - Primary catalogue match → CALIBRATE_FLUX / CALIBRATE_BANDPASS
     - VLA calibrator positional match → CALIBRATE_PHASE
     - No match → OBSERVE_TARGET
+    - Pol catalogue, Category A angle standard → CALIBRATE_POL_ANGLE
+    - Pol catalogue, dedicated leakage cal → CALIBRATE_POL_LEAKAGE
+
+    Polarisation intents come from catalogue identity only. If no dedicated
+    leakage calibrator was observed, pol_sources_available reports that and
+    lists what the MS does contain; nominate a field with pol_leakage_fields
+    to add the intent. The tool never nominates one on its own.
 
     Writes the STATE subtable (OBS_MODE, CAL, SIG, SUB_SCAN, FLAG_ROW, REF)
     and updates the STATE_ID column in the MAIN table.
@@ -240,10 +266,12 @@ async def ms_set_intents(params: SetIntentsInput) -> str:
     Args:
         params.ms_path: Path to the Measurement Set.
         params.dry_run: If true, preview only — no writes.
+        params.pol_angle_fields:   Caller-nominated pol angle calibrator fields.
+        params.pol_leakage_fields: Caller-nominated pol leakage calibrator fields.
 
     Returns:
-        JSON envelope with field_intent_map, n_unique_states,
-        state_rows_written, main_rows_updated, dry_run flag.
+        JSON envelope with field_intent_map, pol_sources_available,
+        n_unique_states, state_rows_written, main_rows_updated, execute flag.
     """
     return await _run_tool(
         intents.set_intents,
@@ -251,6 +279,8 @@ async def ms_set_intents(params: SetIntentsInput) -> str:
         dry_run=params.dry_run,
         execute=params.execute,
         workdir=params.workdir,
+        pol_angle_fields=tuple(params.pol_angle_fields),
+        pol_leakage_fields=tuple(params.pol_leakage_fields),
     )
 
 

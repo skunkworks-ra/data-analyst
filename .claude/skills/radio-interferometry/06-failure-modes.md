@@ -109,23 +109,23 @@ Action:
   the data lives using HTTP transport: `RADIO_MCP_TRANSPORT=http`.
 
 ### `ms_shadowing_report` — shadow calculation unavailable
-The tool measures shadowing with
-`casatasks.flagdata(vis=..., mode='shadow', action='calculate')`, which is
-read-only: `action='calculate'` reports what would be flagged without touching
-the MS. It also reads FLAG_CMD for pre-existing online shadow flags.
+The tool measures shadowing with a single read-only
+`casatasks.flagdata(vis=..., mode='list', action='calculate')` run carrying a
+summary, the shadow agent, and a second summary. The shadow contribution is the
+difference between the two summaries, so pre-existing flags in the MS are not
+counted as shadowing. It also reads FLAG_CMD for pre-existing online shadow
+flags.
 
-**Expect this tool to return `UNAVAILABLE` on current CASA.** Verified
-2026-07-31 against casatasks 6.7.5.18 on a real VLA MS: the `flagdata` call
-returns an empty dict. `action='calculate'` applies nothing, and it also
-reports nothing unless the run includes a summary agent, which `mode='shadow'`
-alone does not. So the shadow *measurement* does not work at present. Only the
-FLAG_CMD path does.
+`mode='shadow'` on its own is not used, and must not be reintroduced: verified
+2026-07-31 against casatasks 6.7.5.18 on a real VLA MS, it returns an empty
+dict, because `action='calculate'` emits a report only when the run includes a
+summary agent. The tool used to read that empty dict as zero shadowing.
 
 | `method.flag` | Meaning |
 |---|---|
-| `UNAVAILABLE` | The call returned no report. `shadowing_detected` and `shadow_flag_fraction` are `None`. This is the normal outcome today. |
+| `COMPLETE` | A real measurement. `shadowing_detected: false` here is a genuine finding of no shadowing, which is the normal result away from low elevation in compact configurations. |
+| `UNAVAILABLE` | The run returned no usable summary pair. `shadowing_detected` and `shadow_flag_fraction` are `None`: nobody looked. |
 | `INFERRED` | `casatasks` not importable, or the call raised — exception text in `warnings`. |
-| `COMPLETE` | A real report was parsed. Do not expect this on 6.7.5.18. |
 
 Action in every non-`COMPLETE` case: treat shadowing as **unmeasured**, not as
 absent. `shadowing_detected: null` means nobody looked. If the array is in a

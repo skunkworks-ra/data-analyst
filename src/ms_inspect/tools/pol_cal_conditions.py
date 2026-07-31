@@ -301,7 +301,12 @@ def run(ms_path: str) -> dict:
             angle_cal_entry = entry
             angle_cal_name = fname
             angle_cal_field_id = fid
-        if "leakage" in entry.role and leakage_cal_entry is None:
+        # A *dedicated* leakage calibrator only: role carries "leakage" and not
+        # "angle". Every Category A angle standard also lists "leakage", so
+        # accepting the first role match promotes 3C286 the moment it precedes
+        # the real leakage cal in field order, which is what happened on
+        # 3c391_ctm_mosaic (3C286 at field 0, 3C84 at field 9).
+        if "leakage" in entry.role and "angle" not in entry.role and leakage_cal_entry is None:
             leakage_cal_entry = entry
             leakage_cal_field_id = fid
             leakage_cal_name = fname
@@ -311,6 +316,8 @@ def run(ms_path: str) -> dict:
     # so their PA spread is almost always thin. The reported leakage calibrator
     # is the separately identified source; every field's PA spread is enumerated
     # in leakage_cal_candidates regardless, for the skill to choose from.
+    # The angle cal remains a legitimate Df source through its known model —
+    # that is the skill's call from 09-polcal-execution.md, not a default here.
 
     # --- Fallback: use scan intents to identify pol cals not in the catalogue ---
     # msmd.intentsforfield() returns the complete intent set for a field, populated

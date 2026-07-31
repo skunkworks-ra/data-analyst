@@ -97,21 +97,30 @@ Action: correct all of them to the real call. In `06-failure-modes.md`, the
 **Do not claim the tool is verified working.** It has no integration coverage.
 The claim being fixed is only about *which API it calls*.
 
-**RUN 2026-07-31 — it is not working, and now says so.** `[RUN]` casatasks
+**RUN 2026-07-31 — reporting gap found, then fixed.** `[RUN]` casatasks
 6.7.5.18 against `3c391_ctm_mosaic_10s_spw0.ms`:
 `flagdata(mode='shadow', action='calculate')` returns `{}`. No report, no
 counts. Before the fix in `53fcbea` that surfaced as
 `shadow_flag_fraction = 0.0` / `shadowing_detected = False`, COMPLETE — a
-fabricated clean bill of health. It now returns `UNAVAILABLE` on every field
-with the reason in `warnings`, which is correct but means the tool cannot
-currently measure shadowing at all on this path.
+fabricated clean bill of health.
 
-The fix is knowable from Excluded item B: `action='calculate'` emits a report
-only when the run includes a summary agent, so the call has to become
-`mode='list'` with a shadow agent plus a summary agent, handling both return
-arities. **Not done here** — it is a new measurement path, not a documentation
-correction, and it needs its own before/after against a dataset that actually
-has shadowed baselines (3C391 at 4.6 GHz, D config, may have none).
+`53fcbea` made that `UNAVAILABLE`, which was honest but discarded a number CASA
+will give. The call is now `mode='list'` with `[summary, shadow, summary]`,
+still `action='calculate'`, still read-only; the shadow contribution is the
+difference between the two summaries.
+
+An earlier reading of this — that the trailing summary cannot see the shadow
+agent's in-memory flags — was **wrong**. `[RUN]` control: substituting
+`mode='manual' antenna='0'` for the shadow agent moves the delta by 13,339,392
+of 216,417,024. The summary sees it. The shadow agent genuinely contributes
+zero on this dataset, corroborated by geometry (minimum projected baseline
+28.0 m against 25 m dishes) and by `action='apply'` on a scratch copy. Zero
+here is a measurement, not a silence.
+
+Still open: `tolerance_m` produced no change in the delta anywhere from 0 to
+1e6 m, under calculate or apply, unexplained. A non-default tolerance ships
+flagged `SUSPECT` rather than being treated as effective. A dataset with real
+shadowed baselines would settle it.
 
 ### 3. Narrow two bare excepts in `workflow_status.py`
 
