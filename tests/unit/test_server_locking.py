@@ -126,3 +126,32 @@ def test_does_not_block_event_loop():
 
     asyncio.run(go())
     assert ticks == 20
+
+
+def test_non_path_lock_key_raises():
+    """A first positional arg that was never a path must fail loudly, not lock on junk.
+
+    The failure mode being guarded: a tool whose first arg is an action verb,
+    whose author did not know to pass _lock_path, would otherwise serialize on
+    'append' — i.e. not at all with respect to the MS.
+    """
+    rec = OverlapRecorder()
+
+    def tool(action, workdir, duration=0.05):
+        return rec(workdir, duration=duration)
+
+    async def go():
+        await run_tool(tool, "append", "/work/run1")
+
+    with pytest.raises(ValueError, match="not a resource path"):
+        asyncio.run(go())
+
+
+def test_nonexistent_but_path_shaped_key_is_allowed():
+    """A mistyped MS path reaches the tool, which returns the documented envelope."""
+    rec = OverlapRecorder()
+
+    async def go():
+        return await _run_tool(rec, "/data/typo-does-not-exist.ms")
+
+    assert "typo-does-not-exist.ms" in asyncio.run(go())

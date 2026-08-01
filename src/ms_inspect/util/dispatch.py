@@ -38,6 +38,20 @@ _PATH_LOCKS: dict[str, threading.Lock] = {}
 _PATH_LOCKS_GUARD = threading.Lock()
 
 
+def _is_plausible_lock_key(key: str) -> bool:
+    """
+    True if `key` can be a resource path — it exists, or it is path-shaped.
+
+    Deliberately permissive about non-existence: tools validate their own paths
+    and return a proper error envelope for a typo. What this rejects is a key
+    that was never a path at all, e.g. an action verb passed as the first
+    positional argument by a tool whose author did not know about `_lock_path`.
+    """
+    if os.path.exists(key):
+        return True
+    return os.sep in key or (os.altsep is not None and os.altsep in key)
+
+
 def path_lock(path: str) -> threading.Lock:
     """Return the process-wide lock for `path`, creating it on first use."""
     # realpath: the same MS may be referenced via symlinked aliases
@@ -81,8 +95,26 @@ async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> s
     the resource (e.g. `reduction_log.run(action, workdir, ...)`).
 
     Tools with neither a positional argument nor `_lock_path` run unserialized.
+
+    The convention is checked, not assumed: a key that is neither an existing
+    path nor path-shaped raises, rather than silently locking on something
+    meaningless. Failing open would drop serialization for that tool and surface
+    later as an intermittent CASA crash under concurrency — far harder to
+    diagnose than the error below. A path-shaped key that does not exist is
+    passed through untouched, so a mistyped MS path still reaches the tool's own
+    validation and returns the documented error envelope.
     """
     lock_key = _lock_path if _lock_path is not None else (str(args[0]) if args else None)
+
+    if lock_key is not None and not _is_plausible_lock_key(lock_key):
+        source = "_lock_path" if _lock_path is not None else "first positional argument"
+        raise ValueError(
+            f"run_tool: lock key from {source} is not a resource path: {lock_key!r} "
+            f"(tool {getattr(tool_fn, '__module__', '?')}."
+            f"{getattr(tool_fn, '__qualname__', tool_fn)}). Per-path serialization "
+            "needs the MS/ASDM/image/caltable path; pass _lock_path explicitly for "
+            "tools whose first argument is not the resource."
+        )
 
     def _locked() -> str:
         if lock_key is None:
