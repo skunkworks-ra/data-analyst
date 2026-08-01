@@ -31,7 +31,10 @@ from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import ecef_to_geodetic, mjd_seconds_to_unix
 from ms_inspect.util.formatting import field, response_envelope
 from ms_inspect.util.pol_calibrators import (
+    LOW_POL_FRAC_PCT,
+    POL_DATA_EPOCH,
     PolCalEntry,
+    effective_role_at_band,
     lookup_pol,
     pol_properties_at_freq,
 )
@@ -53,14 +56,8 @@ PA_SPREAD_PROVENANCE = (
     "09-polcal-execution.md for the consequence at each coverage level."
 )
 
-# A polarisation calibrator counts as "low polarization" — and so is usable as a
-# zero-pol leakage calibrator, where a single scan suffices — only where its
-# fractional polarisation is below this level. NRAO VLA polarisation guide
-# wording: 3C84 "low polarization (<1%)"; 3C147 "low polarization below 10 GHz".
-LOW_POL_FRAC_PCT = 1.0
-
-# Pol epoch used for property lookup
-POL_DATA_EPOCH = "2019"
+# LOW_POL_FRAC_PCT and POL_DATA_EPOCH are re-exported from util.pol_calibrators,
+# alongside effective_role_at_band which applies them.
 POL_DATA_SOURCE = (
     "NRAO VLA Observing Guide Table 8.2.7 + evlapolcal/index.html (scraped March 2026)"
 )
@@ -181,34 +178,6 @@ def _pa_spread_deg(
     if len(pa_values) < 2:
         return None
     return max(pa_values) - min(pa_values)
-
-
-def _effective_role_at_band(
-    entry: PolCalEntry | None,
-    band_ghz: float,
-    epoch: str = POL_DATA_EPOCH,
-) -> str:
-    """Effective polcal role of a source AT the observing band (frequency-dependent).
-
-    A source's role is not fixed: it depends on its polarization where you observe.
-      'leakage_zero_pol' — frac_pol < 1% (NRAO low-pol): usable as a zero-pol
-                           leakage cal, single scan suffices for Df.
-      'angle_known_pol'  — frac_pol >= 1% with a defined PA: it has crossed into
-                           the angle-calibrator regime (known polarization); not a
-                           zero-pol leakage cal here. e.g. 3C147/3C84 above ~10 GHz.
-      'known_pol'        — polarized with frac known but PA undefined at this band.
-      'unknown'          — not in the catalogue or out of the tabulated range.
-    """
-    if entry is None or math.isnan(band_ghz):
-        return "unknown"
-    props = pol_properties_at_freq(entry, band_ghz, epoch=epoch)
-    if props is None or props.frac_pol_pct is None:
-        return "unknown"
-    if props.frac_pol_upper_limit or props.frac_pol_pct < LOW_POL_FRAC_PCT:
-        return "leakage_zero_pol"
-    if props.pol_angle_deg is not None:
-        return "angle_known_pol"
-    return "known_pol"
 
 
 def _df_poltype_from_source_knowledge(role_at_band: str) -> tuple[str | None, str]:
@@ -418,7 +387,7 @@ def run(ms_path: str) -> dict:
                 "name": fname,
                 "pa_spread_deg": round(spread_c, 2) if spread_c is not None else None,
                 "n_scans": len(t_mids),
-                "effective_role_at_band": _effective_role_at_band(cat_entry, band_ghz),
+                "effective_role_at_band": effective_role_at_band(cat_entry, band_ghz),
                 "in_pol_catalogue": cat_entry is not None,
                 "is_identified_leakage_cal": fid == leakage_cal_field_id,
                 "is_identified_angle_cal": fid == angle_cal_field_id,
@@ -432,7 +401,7 @@ def run(ms_path: str) -> dict:
     pa_spread_val = leakage_row["pa_spread_deg"] if leakage_row else None
     n_cal_scans = leakage_row["n_scans"] if leakage_row else 0
 
-    leakage_role_at_band = _effective_role_at_band(leakage_cal_entry, band_ghz)
+    leakage_role_at_band = effective_role_at_band(leakage_cal_entry, band_ghz)
 
     if pa_spread_val is not None:
         pa_spread_field = field(pa_spread_val, flag="COMPLETE")

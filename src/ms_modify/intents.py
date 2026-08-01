@@ -15,7 +15,7 @@ from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import rad_to_deg
 from ms_inspect.util.formatting import field, response_envelope
-from ms_inspect.util.pol_calibrators import lookup_pol
+from ms_inspect.util.pol_calibrators import effective_role_at_band, lookup_pol
 from ms_inspect.util.vla_calibrators import cone_search as vla_cone_search
 from ms_modify.exceptions import IntentsAlreadyPopulatedError
 
@@ -165,8 +165,6 @@ def _pol_sources_available(
     calibrator depends on parallactic coverage and on the science goal, and
     `ms_pol_cal_conditions` ranks the candidates for exactly that decision.
     """
-    from ms_inspect.tools.pol_cal_conditions import _effective_role_at_band
-
     intents_by_id = {m["field_id"]: m["intents"] for m in intent_map}
     catalogued: list[dict] = []
     for f in fields:
@@ -181,7 +179,7 @@ def _pol_sources_available(
                 "category": entry.category,
                 "catalogue_role": list(entry.role or []),
                 "effective_role_at_band": (
-                    _effective_role_at_band(entry, band_ghz)
+                    effective_role_at_band(entry, band_ghz)
                     if band_ghz is not None
                     else "unknown (band centre unavailable)"
                 ),

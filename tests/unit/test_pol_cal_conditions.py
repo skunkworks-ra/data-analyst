@@ -15,42 +15,44 @@ from __future__ import annotations
 import math
 
 from ms_inspect.tools.pol_cal_conditions import (
-    LOW_POL_FRAC_PCT,
     PA_SPREAD_NRAO_RECOMMENDED_DEG,
     PA_SPREAD_PRACTICAL_FLOOR_DEG,
     _df_poltype_from_source_knowledge,
-    _effective_role_at_band,
 )
-from ms_inspect.util.pol_calibrators import lookup_pol
+from ms_inspect.util.pol_calibrators import (
+    LOW_POL_FRAC_PCT,
+    effective_role_at_band,
+    lookup_pol,
+)
 
 
 class TestEffectiveRoleAtBand:
     def test_uncatalogued_source_is_unknown(self):
-        assert _effective_role_at_band(None, 1.5) == "unknown"
+        assert effective_role_at_band(None, 1.5) == "unknown"
 
     def test_unreadable_band_is_unknown(self):
         entry = lookup_pol("3C286")
         assert entry is not None
-        assert _effective_role_at_band(entry, float("nan")) == "unknown"
+        assert effective_role_at_band(entry, float("nan")) == "unknown"
 
     def test_3c286_is_polarized_at_l_band(self):
         """3C286 has ~10% polarization with a defined EVPA — angle-cal regime."""
         entry = lookup_pol("3C286")
         assert entry is not None
-        assert _effective_role_at_band(entry, 1.5) == "angle_known_pol"
+        assert effective_role_at_band(entry, 1.5) == "angle_known_pol"
 
     def test_3c84_is_a_zero_pol_leakage_cal_at_l_band(self):
         """NRAO: 3C84 is 'low polarization (<1%)' at the low bands."""
         entry = lookup_pol("3C84")
         assert entry is not None
-        assert _effective_role_at_band(entry, 1.5) == "leakage_zero_pol"
+        assert effective_role_at_band(entry, 1.5) == "leakage_zero_pol"
 
     def test_role_is_frequency_dependent_for_3c147(self):
         """3C147 is low-pol below ~10 GHz and polarized above it — not a fixed role."""
         entry = lookup_pol("3C147")
         assert entry is not None
-        low = _effective_role_at_band(entry, 1.5)
-        high = _effective_role_at_band(entry, 22.0)
+        low = effective_role_at_band(entry, 1.5)
+        high = effective_role_at_band(entry, 22.0)
         assert low == "leakage_zero_pol"
         assert high != "leakage_zero_pol"
 
