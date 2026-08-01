@@ -1,0 +1,22 @@
+# ALMA receiver bands.
+# Edges: ESO ALMA receiver-bands page (columns 1 and 2).
+# https://www.eso.org/public/teles-instr/alma/receiver-bands/
+# Bands 2 and 3 overlap (67–116 vs 84–116): a frequency in the overlap resolves
+# to BOTH bands. band_code() returns None on overlap; the authoritative band for
+# real data comes from parsing ALMA_RB_NN out of SPECTRAL_WINDOW.NAME
+# (resolve_alma_band), with this frequency table as fallback.
+canonical: ALMA
+aliases: [ALMA]
+bands:
+  - {code: "1",  min_ghz: 35.0,  max_ghz: 50.0,  label: "Band 1 (35–50 GHz)"}
+  - {code: "2",  min_ghz: 67.0,  max_ghz: 116.0, label: "Band 2 (67–116 GHz)"}
+  - {code: "3",  min_ghz: 84.0,  max_ghz: 116.0, label: "Band 3 (84–116 GHz)"}
+  - {code: "4",  min_ghz: 125.0, max_ghz: 163.0, label: "Band 4 (125–163 GHz)"}
+  - {code: "5",  min_ghz: 163.0, max_ghz: 211.0, label: "Band 5 (163–211 GHz)"}
+  - {code: "6",  min_ghz: 211.0, max_ghz: 275.0, label: "Band 6 (211–275 GHz)"}
+  - {code: "7",  min_ghz: 275.0, max_ghz: 373.0, label: "Band 7 (275–373 GHz)"}
+  - {code: "8",  min_ghz: 385.0, max_ghz: 500.0, label: "Band 8 (385–500 GHz)"}
+  - {code: "9",  min_ghz: 602.0, max_ghz: 720.0, label: "Band 9 (602–720 GHz)"}
+  - {code: "10", min_ghz: 787.0, max_ghz: 950.0, label: "Band 10 (787–950 GHz)"}
+# No SEFD table for ALMA yet (workflow support parked — see DESIGN-001).
+sefd_jy: {}

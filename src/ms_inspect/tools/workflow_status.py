@@ -27,13 +27,22 @@ def run(ms_path: str, workdir: str) -> dict:
     ms_valid = (p / "table.info").exists()
 
     # 2. Intents populated (check STATE subtable)
-    intents_populated = False
-    try:
-        with open_table(ms_str + "/STATE") as tb:
-            casa_calls.append("tb.open(STATE)")
-            intents_populated = tb.nrows() > 0
-    except Exception:
-        pass
+    #
+    # An absent STATE subtable legitimately means "set_intents has not run".
+    # A STATE subtable that exists but cannot be read (lock, permissions,
+    # corruption) means the probe failed, and must not be reported as
+    # "not populated" — that would drive next_recommended_step to re-run
+    # set_intents over data that may already have intents.
+    intents_populated: bool | None = False
+    intents_error: str | None = None
+    if (p / "STATE").exists():
+        try:
+            with open_table(ms_str + "/STATE") as tb:
+                casa_calls.append("tb.open(STATE)")
+                intents_populated = tb.nrows() > 0
+        except Exception as exc:
+            intents_populated = None
+            intents_error = f"{type(exc).__name__}: {exc}"
 
     # 3. Online flags file present (heuristic: any .flagonline.txt near MS)
     online_flag_candidates = list(p.parent.glob("*.flagonline.txt"))
@@ -53,13 +62,19 @@ def run(ms_path: str, workdir: str) -> dict:
     initial_bandpass_present = init_gain.exists() and bp0.exists()
 
     # 7. CORRECTED populated (check MS main table column)
-    corrected_populated = False
+    #
+    # The MAIN table always exists when ms_valid, so there is no "has not
+    # happened yet" case here: any exception is a genuine read failure and
+    # is reported as such rather than as an absent column.
+    corrected_populated: bool | None = False
+    corrected_error: str | None = None
     try:
         with open_table(ms_str) as tb:
             casa_calls.append("tb.open(MAIN) for colnames")
             corrected_populated = "CORRECTED_DATA" in set(tb.colnames())
-    except Exception:
-        pass
+    except Exception as exc:
+        corrected_populated = None
+        corrected_error = f"{type(exc).__name__}: {exc}"
 
     # 8. Final caltables present
     final_tables = ["delay.K", "bandpass.B", "gain.G", "gain.fluxscaled"]
@@ -70,9 +85,15 @@ def run(ms_path: str, workdir: str) -> dict:
         len(list(wd.glob("*.image.pbcor"))) > 0 or len(list(wd.glob("*.image"))) > 0
     )
 
-    # Derive next_recommended_step
+    # Derive next_recommended_step.
+    #
+    # A failed probe stops the derivation at that point rather than falling
+    # through to the next branch: below a failed probe every subsequent
+    # answer would be inferred from an unknown.
     if not ms_valid:
         next_step = "import_asdm"
+    elif intents_populated is None:
+        next_step = "probe_failed_intents"
     elif not intents_populated:
         next_step = "set_intents"
     elif not calibrators_ms_present:
@@ -81,6 +102,8 @@ def run(ms_path: str, workdir: str) -> dict:
         next_step = "generate_priorcals"
     elif not initial_bandpass_present:
         next_step = "initial_bandpass"
+    elif corrected_populated is None:
+        next_step = "probe_failed_corrected"
     elif not corrected_populated:
         next_step = "apply_initial_rflag_then_applycal"
     elif len(final_caltables_present) < 3:
@@ -90,14 +113,27 @@ def run(ms_path: str, workdir: str) -> dict:
     else:
         next_step = "selfcal_or_done"
 
+    if intents_error is not None:
+        warnings.append(f"STATE subtable exists but could not be read: {intents_error}")
+    if corrected_error is not None:
+        warnings.append(f"MAIN table could not be read for column names: {corrected_error}")
+
     data = {
         "ms_valid": field(ms_valid),
-        "intents_populated": field(intents_populated),
+        "intents_populated": (
+            field(None, "UNAVAILABLE", note=f"STATE read failed: {intents_error}")
+            if intents_populated is None
+            else field(intents_populated)
+        ),
         "online_flags_present": field(online_flags_present),
         "calibrators_ms_present": field(calibrators_ms_present),
         "priorcals_present": priorcals_present,
         "initial_bandpass_present": field(initial_bandpass_present),
-        "corrected_populated": field(corrected_populated),
+        "corrected_populated": (
+            field(None, "UNAVAILABLE", note=f"MAIN colnames read failed: {corrected_error}")
+            if corrected_populated is None
+            else field(corrected_populated)
+        ),
         "final_caltables_present": final_caltables_present,
         "first_image_present": field(first_image_present),
         "workdir": str(wd),

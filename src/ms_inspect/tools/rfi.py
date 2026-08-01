@@ -7,8 +7,9 @@ Computes per-SpW, per-channel flag fractions from the FLAG column.
 Identifies contiguous bad-channel ranges and annotates them with known
 RFI frequency catalogue entries (GPS, GSM, Iridium, etc.).
 
-This is a READ-ONLY diagnostic tool. It does not modify the MS.
-Use ms_apply_flags to act on its output.
+This is a READ-ONLY diagnostic tool. It does not modify the MS. To act on its
+output, use the flagging tools on the separate ms_modify server: ms_apply_rflag,
+or ms_postcal_flag for post-calibration RFI on target and phase-cal fields.
 
 CASA access:
 - tb.getcolslice("FLAG", ...) — chunked parallel read (same strategy as flags.py)

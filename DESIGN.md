@@ -15,15 +15,48 @@ Layers 3–5 (Data Quality, Calibration Readiness, Imaging Preparation) are out 
 > **An MCP tool answers exactly one question with numbers.**  
 > **The Skill answers: given these numbers, what do they mean, and what do I look at next?**
 
-No tool interprets. No tool suggests. No tool chains to another.  
+No tool gates. No tool suggests a next step. No tool chains to another.  
 Interpretation, diagnostic reasoning, and workflow sequencing live exclusively in the Skill document.
+
+**The gate rule.** Tools may return derived values, rankings, and descriptive
+labels, with their inputs included. Tools may **not** return gates, meaning any
+field whose semantic is "you may or may not proceed". Gating requires knowing
+the science goal and the risk tolerance, and only the skill has those.
+
+| Permitted | Forbidden |
+|-----------|-----------|
+| Derived scalars: `dynamic_range`, `severity`, `pa_spread_deg` | Boolean verdicts: `detection_pass`, `xf_feasible`, `meets_threshold` |
+| Descriptive labels with their constants surfaced | `blocker` / `verdict` fields naming what stops you |
+| Rankings with the ranked quantity attached | Substituting the tool's pick for the user's choice |
+| Suggested parameter values, labelled as such | Withholding a value because a threshold was not met |
+
+Inputs travel with outputs: a derived value ships the quantities and constants
+it was computed from, so the skill can recompute it under a different tolerance.
+
+The argument is about failure modes, not about output types. A gate that fails
+loudly costs a CASA error and a retry. A gate that fails silently costs science
+never attempted, with nothing in the output recording what was forgone, and the
+threshold behind it was one constant chosen for a typical case. See
+`docs/session_context.md:65` — D-terms at 24° of parallactic coverage, "marginal,
+solved per user direction". That is why the design prefers **posterior
+verification** (measure the result, report it) over **prior gating** (refuse to
+compute).
+
+The single named exception is `ms_workflow_status.next_recommended_step`: it
+gates on filesystem state rather than a scientific claim, and it fails visibly,
+returning `probe_failed_*` with an `UNAVAILABLE` field instead of inferring past
+an unknown. A second exception needs both of those properties.
 
 This mirrors the professional practice: CASA tools return measurements. The interferometrist's brain — encoded in the Skill — does the science.
 
 ### 1.2 Zen Principles Applied
 
 - **One tool, one question.** If a tool is tempted to answer two questions, it should be two tools.
-- **Numbers, not narratives.** Tools return structured data. The LLM narrates.
+- **Measurements, not gates.** Tools return structured data, including derived
+  values and labels, with the inputs behind them. The LLM decides whether to
+  proceed. (This supersedes an earlier "numbers, not narratives" rule, which
+  constrained output *type* and so nominally banned a derived quantity like a
+  ratio of two measurements. Type was never the risk; gating is. See §1.1.)
 - **Explicit uncertainty.** Every field that could not be retrieved carries a completeness flag. Silence is never used to indicate failure.
 - **Provenance always.** Every returned value states which CASA call produced it, so results are independently verifiable.
 - **Graceful degradation over hard failure.** A tool with partial data returns what it has plus a clear account of what is missing and why.
@@ -537,7 +570,8 @@ Plus a summary block:
 - Derived: angular resolution (arcsec) = `λ / B_max` at centre frequency of each SpW  
   `λ / B_min` = maximum recoverable angular scale (largest angular scale, LAS)
 
-**Note:** This tool computes from antenna positions, not from the UVW column. The UVW column reflects the actual projected baselines during observation — that is a Layer 3 tool (`ms_uv_coverage_stats`). Position-based baseline lengths give the physical maximum; UVW-based gives the actual UV sampling. Both are needed. This tool is Layer 2 (instrument sanity); the UV coverage tool is Layer 3.
+**Note:** This tool computes from antenna positions, not from the UVW column. The UVW column reflects the actual projected baselines during observation — that would be a Layer 3 tool (`ms_uv_coverage_stats`, **not implemented** — no
+such tool is registered on any of the three servers). Position-based baseline lengths give the physical maximum; UVW-based gives the actual UV sampling. Both are needed. This tool is Layer 2 (instrument sanity); the UV coverage tool is Layer 3.
 
 **Returns:**
 ```json
@@ -670,30 +704,42 @@ This offset is **mount-type and telescope dependent.** The correction table is:
 **Question answered:** Were any antennas shadowed by others during the observation, and how much data is affected?
 
 **CASA calls:**
-- `msmd.shadowedAntennas(tolerance=0.0)` → antenna IDs shadowed per scan, if available
-- Fallback if `shadowedAntennas` not available: geometric computation from antenna positions and dish diameters vs elevation/azimuth — note this as `INFERRED`
+- One `casatasks.flagdata(vis=..., mode='list', action='calculate', savepars=False, flagbackup=False)` run carrying three agents: `mode='summary' name='shadow_before'`, `mode='shadow' tolerance=...`, `mode='summary' name='shadow_after'`. The shadow contribution is `after − before`, overall and per antenna. `action='calculate'` computes in memory; nothing is written to the MS.
 - FLAG_CMD subtable: check for pre-existing shadow flags applied online
 
-**Returns:**
-```json
-{
-  "shadowing_detected": true,
-  "shadowed_events": [
-    {
-      "antenna_id": 12,
-      "antenna_name": "ea13",
-      "shadowing_antenna_id": 7,
-      "shadowing_antenna_name": "ea08",
-      "start_utc": "2017-03-15 10:23:01 UTC",
-      "end_utc":   "2017-03-15 10:41:00 UTC",
-      "duration_s": 1080,
-      "field_name": "3C286"
-    }
-  ],
-  "total_shadowed_seconds": 1080,
-  "method": { "value": "msmd.shadowedAntennas", "flag": "COMPLETE" }
-}
-```
+If `casatasks` cannot be imported, or the `flagdata` call raises, `method` is
+flagged `INFERRED` and only the FLAG_CMD entries are reported. If the run
+returns no usable summary pair, `method` is `UNAVAILABLE` — never a zero. There
+is no geometric fallback.
+
+**Why the leading summary.** `[RUN]` 2026-07-31, casatasks 6.7.5.18, 3C391
+D-config: `flagdata(mode='shadow', action='calculate')` on its own returns an
+**empty dict**, because `action='calculate'` emits a report only when the run
+includes a summary agent. The old code read that empty dict as
+`shadow_flag_fraction = 0.0`, COMPLETE. A trailing summary alone is not enough
+either: it counts the flags already in the MS (34% on that dataset), so only
+the difference isolates the shadow agent.
+
+**Verified.** `[RUN]` same MS and CASA version. Control: swapping the shadow
+agent for `mode='manual' antenna='0'` moves the delta by 13,339,392 of
+216,417,024, so the trailing summary demonstrably sees the middle agent's work.
+With the shadow agent the delta is 0, corroborated by the geometry (minimum
+projected baseline 28.0 m against 25 m dishes) and by `action='apply'` on a
+scratch copy. `tolerance_m` is **not** verified: the delta did not respond to
+tolerances from 0 to 1e6 m, so a non-default tolerance ships flagged `SUSPECT`.
+
+**Returned fields** (names read from `tools/shadowing.py`):
+
+| Field | Type | Notes |
+|---|---|---|
+| `shadowing_detected` | field(bool \| null) | `null` + `UNAVAILABLE` when unmeasured. `true` from FLAG_CMD alone is flagged `PARTIAL` |
+| `shadow_flag_fraction` | field(float \| null) | `n_shadow_flagged / n_total_rows` |
+| `n_shadow_flagged`, `n_total_rows` | int \| null | `null`, never `0`, when unmeasured |
+| `tolerance_m` | float | as passed in |
+| `method` | field(str) | which path produced the numbers, and its flag |
+| `shadowed_antennas` | list | `antenna_name`, `shadow_flag_fraction`, `n_flagged`, `n_total` |
+| `flag_cmd_shadow_entries` | list | `row`, `reason`, `command`, `time` |
+| `n_flag_cmd_shadow_entries` | int | |
 
 ---
 
@@ -826,7 +872,7 @@ On tool error:
 | `ms_spectral_window_list` | msmd.chanfreqs, msmd.chanwidths; tb → POLARIZATION, DATA_DESCRIPTION | Band name, channel width, correlation products |
 | `ms_correlator_config` | msmd.timesforscans (dump time); tb → POLARIZATION | Dump time, polarization basis, full-Stokes flag |
 
-### Layer 2 — Instrument Sanity (6 tools)
+### Layer 2 — Instrument Sanity (7 tools)
 
 | Tool | Primary CASA API | Key derived quantities |
 |------|-----------------|----------------------|
@@ -834,7 +880,7 @@ On tool error:
 | `ms_baseline_lengths` | Computed from antenna positions | λ/B_max resolution, LAS per SpW |
 | `ms_elevation_vs_time` | astropy (field coords + array geodetic pos + scan times) | Low-elevation warnings per scan |
 | `ms_parallactic_angle_vs_time` | astropy | PA range per field, D-term solvability note |
-| `ms_shadowing_report` | msmd.shadowedAntennas (fallback: geometric) | Shadowed antenna IDs, duration |
+| `ms_shadowing_report` | casatasks.flagdata(mode='list', action='calculate') [summary, shadow, summary] — read-only | Shadow flag fraction overall and per antenna, as the before/after difference |
 | `ms_antenna_flag_fraction` | tb → FLAG column (chunked) | Per-antenna flag fraction, online flag commands |
 
 **Phase 1 (Layers 1 & 2): 13 tools** — the tables above plus `ms_flag_preflight`.
@@ -881,7 +927,7 @@ On tool error:
 | `ms_refant` | Ranked reference-antenna list by geometry + flag-fraction heuristics |
 | `ms_rfi_channel_stats` | Per-channel flag fractions; persistent RFI bands |
 | `ms_spw_amp_severity` | Robust per-channel amplitude stats aggregated per SpW; RFI severity + estimated discardable fraction (reservoir-sampled) |
-| `ms_pol_cal_feasibility` | Parallactic-angle spread + D-term feasibility gate |
+| `ms_pol_cal_conditions` | Pol calibrator identification, catalogue properties at the observed band, and per-field parallactic-angle spread ranked; no verdict |
 | `ms_residual_stats` | CORRECTED − MODEL amplitude distribution per SpW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | Per-field parallel-hand amplitude + phase RMS of a data column, vector-averaged over the channel range (post-applycal sanity) |
 | `ms_phase_cal_lookup` | Cross-match a sky position against the NRAO VLA phase-calibrator catalog; nearest source, flux, UV limits, per-config quality codes |

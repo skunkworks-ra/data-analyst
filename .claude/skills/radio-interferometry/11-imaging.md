@@ -180,11 +180,16 @@ fresnel = {DISH_DIAMETER_M}**2 / ({MAX_BASELINE_M} * lambda_m)
 
 | Condition | `gridder` | `wprojplanes` |
 |---|---|---|
-| Mosaic AND telescope in `{EVLA, ALMA}` AND W-terms required | `'awp2'` | from Step 5 |
-| Mosaic AND telescope in `{EVLA, ALMA}` AND W-terms not required | `'awp2'` | not set |
-| Mosaic AND telescope NOT in `{EVLA, ALMA}` | see note below | from Step 5 if required |
+| Mosaic AND telescope in `{VLA, ALMA}` AND W-terms required | `'awp2'` | from Step 5 |
+| Mosaic AND telescope in `{VLA, ALMA}` AND W-terms not required | `'awp2'` | not set |
+| Mosaic AND telescope NOT in `{VLA, ALMA}` | see note below | from Step 5 if required |
 | Single pointing AND W-terms required | `'wproject'` | from Step 5 |
 | Single pointing AND W-terms not required | `'standard'` | not set |
+
+Match against the **canonical** telescope name returned by `ms_inspect`
+(`telescope` field) — `VLA`, not the raw `MS::OBSERVATION::TELESCOPE_NAME`
+string, which may be `EVLA` or `JVLA`. Name normalization happens in the
+telescope profile (`src/ms_inspect/data/telescopes/*.yaml`, `aliases`).
 
 **Unsupported mosaic telescope:** use `'wproject'` if W-terms required, else
 `'standard'`. Warn the user: primary beam mosaicing is not applied automatically
@@ -201,13 +206,28 @@ sigma_jy     = SEFD / sqrt(2 * {BANDWIDTH_HZ} * {T_ON_SOURCE_S} * n_baselines)
 threshold    = 3 * sigma_jy
 ```
 
-SEFD reference values (Jy):
+SEFD reference values (Jy). Band codes are **per telescope** — uGMRT numbers its
+own bands and they do not map onto VLA band letters:
 
-| Telescope | P-band | L-band | S-band | C-band | X-band |
-|---|---|---|---|---|---|
-| EVLA | 2600 | 420 | 370 | 310 | 280 |
-| MeerKAT | — | 400 | 380 | 420 | — |
-| uGMRT | 1800 | 600 | 560 | — | — |
+| Telescope | Band | SEFD (Jy) |
+|---|---|---|
+| VLA | P | 2600 |
+| VLA | L | 420 |
+| VLA | S | 370 |
+| VLA | C | 310 |
+| VLA | X | 280 |
+| MeerKAT | L | 400 |
+| MeerKAT | S | 380 |
+| uGMRT | 2 (125–250 MHz) | 1500 |
+| uGMRT | 3 (250–500 MHz) | 350 |
+| uGMRT | 4 (550–850 MHz) | 285 |
+| uGMRT | 5 (1000–1460 MHz) | 300 |
+
+> **Authoritative source:** `src/ms_inspect/data/telescopes/<telescope>.yaml`,
+> key `sefd_jy`. This table is a cross-telescope comparison view only. Read the
+> profile for the value you actually put into the calculation above, and use its
+> band code — bands absent from `sefd_jy` yield SEFD UNAVAILABLE by design, which
+> you must report rather than substitute a guess.
 
 Express `threshold` in mJy, e.g. `'0.5mJy'`. This is a starting estimate —
 tclean will stop at this level or at `niter`, whichever comes first.
@@ -275,9 +295,25 @@ If `rms_jy` is > 3× the radiometer estimate, run `ms_residual_stats` on the
 CORRECTED column before re-imaging — the problem is likely in the calibration,
 not the imaging parameters.
 
-A `detection_pass`=false verdict (peak-to-noise < 10; fail ≤ 5) means no reliable
-source — cross-check Step 0.5. If that gate failed, it's calibration decorrelation,
-not imaging.
+### Reading `detection`
+
+`ms_image_stats` returns a **descriptive** `detection` label over
+`dynamic_range` (peak-to-noise), plus `detection_thresholds` carrying the two
+constants behind it. It does not decide whether you may proceed — you do. Treat
+it as a continuum, and say which level you are at when you report a flux:
+
+| `detection` | `dynamic_range` | What it means, and what you may claim |
+|---|---|---|
+| `undetected` | ≤ 5 | The peak is consistent with a residual or sidelobe spike. Do not report a flux. Cross-check Step 0.5: at this level the usual cause is calibration decorrelation, not imaging parameters. |
+| `marginal` | > 5, < 10 | A source is probably there. A flux may be quoted with the peak-to-noise stated alongside it; do not quote a spectral index, a polarization fraction, or any second-order quantity. |
+| `detection` | ≥ 10 | Report the flux normally. Note that 10 is a floor for *existence*, not for precision — calibrator and self-cal work wants > 100. |
+| `unknown` | not computable | `rms_jy` was zero or negative. Something is wrong with the image, not with the source; check the warnings. |
+
+The boundaries are single constants chosen for a typical case. If the science
+goal justifies it, recompute the level yourself from `dynamic_range` and
+`detection_thresholds` — for a stacking experiment or a known-position
+measurement, a peak-to-noise of 4 at the expected position can be a real
+measurement, and the label alone would have thrown it away.
 
 ---
 

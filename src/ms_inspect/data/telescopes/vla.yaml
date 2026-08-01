@@ -1,0 +1,26 @@
+# VLA frequency bands.
+# Edges: NRAO OSS 2016A, Performance/Bands Table 4 (first two columns).
+# https://science.nrao.edu/facilities/vla/docs/manuals/oss2016A/performance/bands
+# Bands are intervals with real gaps between receivers — a frequency in a gap
+# resolves to no band (None), which is correct.
+canonical: VLA
+aliases: [VLA, EVLA, JVLA]
+bands:
+  - {code: "4",  min_ghz: 0.058, max_ghz: 0.0842, label: "4-band (58–84 MHz)"}
+  - {code: P,    min_ghz: 0.230, max_ghz: 0.473,  label: "P-band (230–470 MHz)"}
+  - {code: L,    min_ghz: 1.000, max_ghz: 2.040,  label: "L-band (1–2 GHz)"}
+  - {code: S,    min_ghz: 2.000, max_ghz: 4.000,  label: "S-band (2–4 GHz)"}
+  - {code: C,    min_ghz: 4.000, max_ghz: 8.000,  label: "C-band (4–8 GHz)"}
+  - {code: X,    min_ghz: 8.000, max_ghz: 12.000, label: "X-band (8–12 GHz)"}
+  - {code: Ku,   min_ghz: 12.000, max_ghz: 18.000, label: "Ku-band (12–18 GHz)"}
+  - {code: K,    min_ghz: 18.000, max_ghz: 26.500, label: "K-band (18–26.5 GHz)"}
+  - {code: Ka,   min_ghz: 26.500, max_ghz: 40.000, label: "Ka-band (26.5–40 GHz)"}
+  - {code: Q,    min_ghz: 40.000, max_ghz: 50.000, label: "Q-band (40–50 GHz)"}
+# SEFD (Jy) keyed by band code. Verbatim from 11-imaging.md §Step 7.
+# Bands without an entry (4, Ku, K, Ka, Q) yield SEFD UNAVAILABLE by design.
+sefd_jy:
+  P: 2600
+  L: 420
+  S: 370
+  C: 310
+  X: 280

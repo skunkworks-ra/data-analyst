@@ -12,8 +12,13 @@ Reads the restored (or pbcor) image and returns:
 For a multi-plane image (frequency cube and/or multi-Stokes, e.g. an IQUV
 polarization cube) it additionally returns `n_planes` and `planes` — a
 per-(Stokes, channel) list of rms_jy / peak_jy / dynamic_range. The scalar
-fields above remain whole-image summaries. Numbers only; interpretation
-(fractional polarization, spectral flatness) belongs in the skill.
+fields above remain whole-image summaries.
+
+`detection` is a descriptive label over dynamic_range, and
+`detection_thresholds` carries the two constants behind it. Neither is a
+go/no-go: whether a given peak-to-noise is sufficient depends on the science
+goal, and that judgement lives in the skill (11-imaging.md), along with all
+other interpretation (fractional polarization, spectral flatness).
 
 All parameters are read from the image header and pixel data;
 no MS access is performed.
@@ -32,23 +37,27 @@ TOOL_NAME = "ms_image_stats"
 
 _MAD_TO_SIGMA = 1.4826
 
-# Peak-to-noise (dynamic range) verdict thresholds.
-#   <= 5        : marginal detection, FAIL
-#   > 5, < 10   : marginal detection, pass
-#   >= 10       : detection, pass
-_P2N_FAIL = 5.0
+# Peak-to-noise (dynamic range) label boundaries. These are descriptive
+# thresholds, not a go/no-go: what peak-to-noise is sufficient depends on the
+# science goal, and that judgement lives in 11-imaging.md. Both constants are
+# returned in the response so the label can be recomputed under a different
+# tolerance.
+#   <= 5        : undetected
+#   > 5, < 10   : marginal
+#   >= 10       : detection
+_P2N_UNDETECTED = 5.0
 _P2N_MARGINAL = 10.0
 
 
-def _classify_detection(dr: float | None) -> tuple[str, bool]:
-    """(label, passed) from a peak-to-noise (dynamic range) value."""
+def _classify_detection(dr: float | None) -> str:
+    """Descriptive peak-to-noise label. No pass/fail semantics."""
     if dr is None:
-        return "unknown", False
-    if dr <= _P2N_FAIL:
-        return "marginal", False
+        return "unknown"
+    if dr <= _P2N_UNDETECTED:
+        return "undetected"
     if dr < _P2N_MARGINAL:
-        return "marginal", True
-    return "detection", True
+        return "marginal"
+    return "detection"
 
 
 def _plane_labels(
@@ -167,13 +176,11 @@ def _per_plane_stats(ia, casa_calls: list[str], warnings: list[str]) -> list[dic
         rms_v = _MAD_TO_SIGMA * float(mad_v)
         peak_v = float(max_v)
         dr = abs(peak_v) / rms_v if rms_v > 0 else None
-        det_label, det_pass = _classify_detection(dr)
         entry = dict(lab)
         entry["rms_jy"] = round(rms_v, 9)
         entry["peak_jy"] = round(peak_v, 9)
         entry["dynamic_range"] = round(dr, 1) if dr is not None else None
-        entry["detection"] = det_label
-        entry["detection_pass"] = det_pass
+        entry["detection"] = _classify_detection(dr)
         planes.append(entry)
     return planes
 
@@ -287,14 +294,6 @@ def run(
     # ------------------------------------------------------------------
     # Build response
     # ------------------------------------------------------------------
-    det_label, det_pass = _classify_detection(dynamic_range)
-    if dynamic_range is not None and not det_pass:
-        warnings.append(
-            f"peak-to-noise {round(dynamic_range, 1)} <= {_P2N_FAIL:g}: marginal "
-            "detection, FAIL. The peak is consistent with a residual/sidelobe "
-            "spike, not a source — do not report this as a detection."
-        )
-
     data: dict = {
         "image_path": fmt_field(str(Path(image_path).expanduser().resolve())),
         "rms_jy": fmt_field(round(rms_val, 9)),
@@ -303,9 +302,19 @@ def run(
             round(dynamic_range, 1) if dynamic_range is not None else None,
             flag="COMPLETE" if dynamic_range is not None else "UNAVAILABLE",
         ),
-        "detection": fmt_field(det_label),
-        "detection_pass": fmt_field(
-            det_pass, flag="COMPLETE" if dynamic_range is not None else "UNAVAILABLE"
+        "detection": fmt_field(
+            _classify_detection(dynamic_range),
+            flag="COMPLETE" if dynamic_range is not None else "UNAVAILABLE",
+        ),
+        # Returned so the label is checkable and recomputable under a
+        # different tolerance. dynamic_range <= undetected_at, or >=
+        # detection_at, are the two boundaries.
+        "detection_thresholds": fmt_field(
+            {
+                "undetected_at_or_below": _P2N_UNDETECTED,
+                "detection_at_or_above": _P2N_MARGINAL,
+                "quantity": "peak-to-noise (dynamic_range)",
+            }
         ),
     }
 

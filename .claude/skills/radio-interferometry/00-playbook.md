@@ -19,6 +19,28 @@ Find your current state in the left column. Run the right-column tool
 
 ## Unknown state? Use ms_workflow_status(ms_path, workdir) — it returns a next_recommended_step label.
 
+## Record every step that worked
+
+After each step you have **validated** — the script ran, the caltable or MS
+came out as expected, the diagnostic looked right — append it to the
+reduction ledger:
+
+```
+ms_reduction_log(action='append', workdir=<workdir>, tool=<tool name>,
+                 params=<the exact params that worked>,
+                 outputs=<paths and key numbers worth keeping>,
+                 rationale=<why, in one line>,
+                 skill_rule=<the file and step you followed, e.g. '07 Step 3'>)
+```
+
+Append the call that worked, not the one you meant to make, and only after
+its output has been checked. The ledger is the working record of this
+reduction: `action='list'` gives a compact step summary when you have lost
+the thread, and `action='render'` emits the ordered recipe plus a replay
+script, which is what makes the reduction reproducible by someone else (or
+by you, six months later). A step that is not appended did not happen as far
+as the record is concerned.
+
 ## Load skill files on demand
 - 01-workflow.md / 01b-workflow-phase2.md — orientation + instrument sanity
 - 02-orientation.md — band tables, intents, mosaics

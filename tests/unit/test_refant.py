@@ -1,7 +1,8 @@
 """
 Unit tests for ms_refant scoring helpers.
 
-No CASA required. Tests cover _geo_score and _flag_score with synthetic inputs.
+No CASA required. Tests cover _geo_score, _geo_distances and _flag_score with
+synthetic hand-built inputs. Nothing here reads a real ANTENNA subtable.
 """
 
 from __future__ import annotations
@@ -227,3 +228,92 @@ class TestCombinedRanking:
 
         best_idx = int(np.argmax(combined))
         assert ant_names[best_idx] == "ea02"
+
+
+# ---------------------------------------------------------------------------
+# _geo_distances — the inputs behind geo_score
+# ---------------------------------------------------------------------------
+
+
+class TestGeoDistances:
+    """Arithmetic of the geometry term on hand-built ECEF positions.
+
+    Scope, stated precisely because it is narrow. These tests show one thing:
+    that (1 - d/d_max) * n_ant compresses when d_max is much larger than the
+    spread among the antennas being compared, and that d itself does not. The
+    positions are a constructed shape, not a real array configuration.
+
+    They do NOT show anything about the combined ranking. flag_score is zero
+    throughout, so the relative influence of the geometry and flagging terms —
+    which are summed with equal weight — is untested here and unmeasured on
+    any real dataset.
+    """
+
+    @staticmethod
+    def _extended_config():
+        """Ten antennas spread over 1 km, plus one outlier at 30 km.
+
+        A constructed shape chosen so the normalising antenna is far outside
+        the spread of the antennas being compared. It is not a model of any
+        real array configuration.
+        """
+        core_x = np.linspace(-500.0, 500.0, 10)
+        x = np.concatenate([core_x, [30000.0]])
+        zeros = np.zeros_like(x)
+        return np.array([x, zeros, zeros])
+
+    def test_geo_score_saturates_across_the_core(self):
+        positions = self._extended_config()
+        flags = [False] * positions.shape[1]
+
+        scores = _geo_score(positions, flags)
+        n_ant = positions.shape[1]
+
+        core_scores = scores[:10] / n_ant  # normalise out the n_ant factor
+        # Every core antenna lands above 0.94 of the maximum possible score:
+        # geo_score cannot separate them.
+        assert core_scores.min() > 0.94
+        assert core_scores.max() - core_scores.min() < 0.06
+
+    def test_distance_still_separates_what_geo_score_cannot(self):
+        from ms_inspect.tools.refant import _geo_distances
+
+        positions = self._extended_config()
+        flags = [False] * positions.shape[1]
+
+        scores = _geo_score(positions, flags)
+        distances, max_dist = _geo_distances(positions, flags)
+
+        # The two extreme core antennas are ~1 km apart in distance-from-centre
+        # terms while their geo_scores differ by a few percent of full scale.
+        spread_m = distances[:10].max() - distances[:10].min()
+        assert spread_m > 400.0
+
+        n_ant = positions.shape[1]
+        score_spread_frac = (scores[:10].max() - scores[:10].min()) / n_ant
+        assert score_spread_frac < 0.06
+
+        # And max_distance_m makes the cause of the saturation visible.
+        assert max_dist == pytest.approx(distances[10])
+        assert max_dist > 25000.0
+
+    def test_all_flagged_returns_zeros(self):
+        from ms_inspect.tools.refant import _geo_distances
+
+        positions = self._extended_config()
+        distances, max_dist = _geo_distances(positions, [True] * positions.shape[1])
+
+        assert max_dist == 0.0
+        assert np.all(distances == 0.0)
+
+    def test_distances_are_reported_for_flagged_antennas_too(self):
+        from ms_inspect.tools.refant import _geo_distances
+
+        positions = self._extended_config()
+        flags = [False] * 10 + [True]  # the far outlier is flagged
+        distances, max_dist = _geo_distances(positions, flags)
+
+        # max_dist normalises over unflagged antennas only ...
+        assert max_dist < 1000.0
+        # ... but the flagged antenna's own distance is still measured.
+        assert distances[10] > 25000.0

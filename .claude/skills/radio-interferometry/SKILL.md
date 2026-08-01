@@ -8,8 +8,9 @@ allowed-tools: ms_observation_info, ms_field_list, ms_scan_list, ms_scan_intent_
                ms_baseline_lengths, ms_elevation_vs_time, ms_parallactic_angle_vs_time,
                ms_shadowing_report, ms_antenna_flag_fraction,
                ms_refant, ms_verify_caltables, ms_rfi_channel_stats, ms_flag_summary,
-               ms_pol_cal_feasibility, ms_online_flag_stats, ms_verify_priorcals,
-               ms_residual_stats, ms_calsol_stats, ms_calsol_plot,
+               ms_pol_cal_conditions, ms_online_flag_stats, ms_verify_priorcals,
+               ms_residual_stats, ms_calsol_stats, ms_calsol_stats_detail, ms_calsol_plot,
+               ms_sdm_summary, ms_reduction_log,
                ms_set_intents, ms_initial_bandpass, ms_apply_rflag, ms_apply_preflag,
                ms_generate_priorcals, ms_setjy, ms_setjy_polcal, ms_apply_initial_rflag,
                ms_gaincal, ms_bandpass, ms_fluxscale, ms_applycal,
@@ -32,26 +33,36 @@ Never ask a tool to interpret its own output. Call a tool, receive structured
 data with completeness flags, then apply the reasoning in the supporting
 knowledge files to decide what the numbers mean and what to do next.
 
+## Locating the supporting files
+
+Every file named below is a **sibling of this `SKILL.md`**, in the same
+directory. Resolve each name against this file's own directory, not against the
+working directory and not against any `.claude/skills/` path — installed as a
+plugin this skill lives in a cache directory that has neither.
+
 ## Start here
 
-@.claude/skills/radio-interferometry/00-playbook.md
-@.claude/skills/radio-interferometry/01-workflow.md
-@.claude/skills/radio-interferometry/01b-workflow-phase2.md
+Read these three now, before anything else:
+
+- `00-playbook.md`
+- `01-workflow.md`
+- `01b-workflow-phase2.md`
 
 ## Read the following files on demand (do NOT load up front)
 
 Read each file with the Read tool only when you reach that stage:
 
-- `.claude/skills/radio-interferometry/02-orientation.md`
-- `.claude/skills/radio-interferometry/03-instrument-sanity.md`
-- `.claude/skills/radio-interferometry/04-diagnostic-reasoning.md`
-- `.claude/skills/radio-interferometry/05-calibrator-science.md`
-- `.claude/skills/radio-interferometry/06-failure-modes.md`
-- `.claude/skills/radio-interferometry/07-calibration-execution.md`
-- `.claude/skills/radio-interferometry/07b-gaincal-recovery.md` (only when a 07 Step 4b check fails)
-- `.claude/skills/radio-interferometry/08-pband-specifics.md`
-- `.claude/skills/radio-interferometry/09-polcal-execution.md`
-- `.claude/skills/radio-interferometry/10-precal-workflow.md`
-- `.claude/skills/radio-interferometry/11-imaging.md`
-- `.claude/skills/radio-interferometry/12-selfcal.md`
-- `.claude/skills/radio-interferometry/13-postcal-rfi-flagging.md`
+- `02-orientation.md`
+- `03-instrument-sanity.md`
+- `04-diagnostic-reasoning.md`
+- `05-calibrator-science.md`
+- `06-failure-modes.md`
+- `07-calibration-execution.md`
+- `07b-gaincal-recovery.md` (only when a 07 Step 4b check fails)
+- `08-pband-specifics.md`
+- `09-polcal-execution.md`
+- `09b-polcal-reference.md` (polarisation reference tables, on demand from 09)
+- `10-precal-workflow.md`
+- `11-imaging.md`
+- `12-selfcal.md`
+- `13-postcal-rfi-flagging.md`

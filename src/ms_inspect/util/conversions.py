@@ -130,65 +130,9 @@ def hz_to_human(freq_hz: float) -> str:
         return f"{freq_hz:.2f} Hz"
 
 
-def freq_to_band_name(freq_hz: float, telescope: str) -> str | None:
-    """
-    Map a centre frequency to a human band name for a given telescope.
-
-    Returns None if the telescope is not recognised — callers should
-    flag this as UNAVAILABLE rather than guessing.
-
-    Confidence: ~90% for VLA/MeerKAT standard bands.
-    uGMRT band boundaries are approximate (official ranges vary slightly
-    by receiver installation status).
-    """
-    freq_ghz = freq_hz / 1e9
-    t = telescope.upper()
-
-    if "VLA" in t or "EVLA" in t or "JVLA" in t:
-        if freq_ghz < 0.30:
-            return "4-band (<300 MHz)"
-        elif freq_ghz < 0.90:
-            return "P-band (230–470 MHz)"
-        elif freq_ghz < 2.00:
-            return "L-band (1–2 GHz)"
-        elif freq_ghz < 4.00:
-            return "S-band (2–4 GHz)"
-        elif freq_ghz < 8.00:
-            return "C-band (4–8 GHz)"
-        elif freq_ghz < 12.00:
-            return "X-band (8–12 GHz)"
-        elif freq_ghz < 18.00:
-            return "Ku-band (12–18 GHz)"
-        elif freq_ghz < 26.50:
-            return "K-band (18–26.5 GHz)"
-        elif freq_ghz < 40.00:
-            return "Ka-band (26.5–40 GHz)"
-        else:
-            return "Q-band (40–50 GHz)"
-
-    elif "MEERKAT" in t or "MKT" in t:
-        if freq_ghz < 0.90:
-            return "UHF-band (544–1088 MHz)"
-        elif freq_ghz < 1.75:
-            return "L-band (856–1712 MHz)"
-        elif freq_ghz < 3.50:
-            return "S-band (1.75–3.5 GHz)"
-        else:
-            return f"Unknown MeerKAT band ({freq_ghz:.3f} GHz)"
-
-    elif "GMRT" in t:
-        if freq_ghz < 0.25:
-            return "Band 1 (120–250 MHz)"
-        elif freq_ghz < 0.50:
-            return "Band 2 (250–500 MHz)"
-        elif freq_ghz < 0.75:
-            return "Band 3 (550–750 MHz)"
-        elif freq_ghz < 1.05:
-            return "Band 4 (700–950 MHz)"
-        else:
-            return "Band 5 (1050–1450 MHz)"
-
-    return None  # unknown telescope — caller flags as UNAVAILABLE
+# Frequency → band name moved to util/telescope.py (TelescopeProfile.band_label),
+# where band edges are data (data/telescopes/*.yaml) and lookup is one interval
+# loop. See MCP_DESIGN.md#DESIGN-002.
 
 
 # ---------------------------------------------------------------------------

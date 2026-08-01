@@ -153,6 +153,37 @@ removes the cause.
 
 ---
 
+## Drilling into a caltable problem — ms_calsol_stats_detail
+
+`ms_calsol_stats` returns a **bounded** summary: its `outliers.low_snr` and
+`outliers.amp_outliers` lists are capped, so a table with a widespread problem
+shows you a truncated sample of it, not the whole thing. The uncapped detail is
+always written to an NPZ sidecar, reported as `npz_path` in the response.
+
+Whenever the summary flags a problem you need to characterise — which antennas,
+which SPWs, is it one baseline's worth of solutions or half the array — go to
+the sidecar rather than re-running the solve or guessing from the sample:
+
+```
+ms_calsol_stats_detail(npz_path=<npz_path from ms_calsol_stats>,
+                       kind='low_snr' | 'amp_outliers' | 'antenna',
+                       antenna=..., spw=..., field=...)
+```
+
+- `kind='low_snr'` — the full low-SNR list, not the capped sample. Use it to
+  decide whether low SNR is confined to a few antennas (flag them) or spread
+  across the array (the solint or the model is wrong).
+- `kind='amp_outliers'` — the full amplitude-outlier list, same question.
+- `kind='antenna'` (with `antenna=` set) — every quantity for one antenna, when
+  you want to know whether a single antenna is bad everywhere or bad in one SPW.
+
+The filters (`antenna`, `spw`, `field`) narrow the slice; `max_rows` caps it,
+hard-limited to 300. Reach for this before any recovery procedure in Step 4b:
+the recovery you pick depends on whether the problem is localised or global,
+and the capped summary cannot tell you which.
+
+---
+
 ## Step 1 — Initial phase calibration (G0)
 
 **Purpose:** remove fast phase variations across time on the bandpass calibrator

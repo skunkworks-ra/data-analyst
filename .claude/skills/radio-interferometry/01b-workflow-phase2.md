@@ -81,9 +81,13 @@ Use `pa_sky_deg` range for coverage assessment only.
   Recommend excising the shadowed antennas from those scans explicitly.
 - Shadowing at low elevation is expected for compact array configurations
   (VLA D-config, MeerKAT inner core). Note which antennas and which scans.
-- If `method.flag == "INFERRED"`: msmd.shadowedAntennas() was unavailable.
-  Check FLAG_CMD entries only. Do not treat absence of events as confirmation
-  of no shadowing.
+- `shadowing_detected: null` with `method.flag == "UNAVAILABLE"` means nobody
+  looked. It is not a finding of no shadowing. Only `method.flag == "COMPLETE"`
+  makes the fractions a real measurement; `shadowing_detected: false` alongside
+  it is a genuine, and common, result. See `06-failure-modes.md`.
+- `tolerance_m` flagged `SUSPECT` means a non-default tolerance was passed but
+  is not known to have taken effect. Read the fractions as the tolerance-0
+  answer.
 
 ### Step 2.6 — `ms_antenna_flag_fraction`
 

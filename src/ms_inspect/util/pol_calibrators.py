@@ -10,13 +10,24 @@ Source: NRAO VLA Observing Guide Tables 8.2.1–8.2.7 and evlapolcal/index.html
 Determinism guarantee: static data, no live web fetch, no CASA dependency.
 
 Used by:
-- tools/pol_cal_feasibility.py — feasibility assessment
+- tools/pol_cal_conditions.py — polarisation-calibration conditions
+- ms_modify/intents.py — pol intent assignment (effective_role_at_band)
 """
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
+
+# A polarisation calibrator counts as "low polarization" — and so is usable as a
+# zero-pol leakage calibrator, where a single scan suffices — only where its
+# fractional polarisation is below this level. NRAO VLA polarisation guide
+# wording: 3C84 "low polarization (<1%)"; 3C147 "low polarization below 10 GHz".
+LOW_POL_FRAC_PCT = 1.0
+
+# Pol epoch used for property lookup
+POL_DATA_EPOCH = "2019"
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -897,3 +908,35 @@ def pol_properties_at_freq(
         frac_pol_upper_limit=upper,
         pol_angle_deg=angle,
     )
+
+
+def effective_role_at_band(
+    entry: PolCalEntry | None,
+    band_ghz: float,
+    epoch: str = POL_DATA_EPOCH,
+) -> str:
+    """Effective polcal role of a source AT the observing band (frequency-dependent).
+
+    A source's role is not fixed: it depends on its polarization where you observe.
+      'leakage_zero_pol' — frac pol < LOW_POL_FRAC_PCT (NRAO low-pol): usable as a
+                           zero-pol leakage cal, single scan suffices for Df.
+      'angle_known_pol'  — frac pol >= that with a defined PA: it has crossed into
+                           the angle-calibrator regime (known polarization); not a
+                           zero-pol leakage cal here. e.g. 3C147/3C84 above ~10 GHz.
+      'known_pol'        — polarized with frac known but PA undefined at this band.
+      'unknown'          — not in the catalogue or out of the tabulated range.
+
+    Public and shared: `ms_pol_cal_conditions` reports it, `ms_set_intents` assigns
+    pol intents from it. Both must agree on the role, so it lives here rather than
+    in either caller.
+    """
+    if entry is None or math.isnan(band_ghz):
+        return "unknown"
+    props = pol_properties_at_freq(entry, band_ghz, epoch=epoch)
+    if props is None or props.frac_pol_pct is None:
+        return "unknown"
+    if props.frac_pol_upper_limit or props.frac_pol_pct < LOW_POL_FRAC_PCT:
+        return "leakage_zero_pol"
+    if props.pol_angle_deg is not None:
+        return "angle_known_pol"
+    return "known_pol"

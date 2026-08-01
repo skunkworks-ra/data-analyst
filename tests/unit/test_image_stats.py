@@ -97,15 +97,53 @@ class TestPlaneLabels:
 
 
 class TestClassifyDetection:
+    """Three descriptive levels, no pass/fail component.
+
+    Covers the pure label function only. It does not cover the response
+    envelope, which needs a real CASA image.
+    """
+
     def test_thresholds(self):
         from ms_inspect.tools.image_stats import _classify_detection
 
-        assert _classify_detection(3.0) == ("marginal", False)
-        assert _classify_detection(5.0) == ("marginal", False)  # boundary: fail
-        assert _classify_detection(7.0) == ("marginal", True)
-        assert _classify_detection(10.0) == ("detection", True)  # boundary: pass
-        assert _classify_detection(120.0) == ("detection", True)
-        assert _classify_detection(None) == ("unknown", False)
+        assert _classify_detection(3.0) == "undetected"
+        assert _classify_detection(5.0) == "undetected"  # boundary, inclusive
+        assert _classify_detection(7.0) == "marginal"
+        assert _classify_detection(10.0) == "detection"  # boundary, inclusive
+        assert _classify_detection(120.0) == "detection"
+        assert _classify_detection(None) == "unknown"
+
+    def test_returns_a_bare_label_not_a_gate(self):
+        """The old contract returned (label, passed). Nothing may reintroduce it."""
+        from ms_inspect.tools.image_stats import _classify_detection
+
+        assert isinstance(_classify_detection(7.0), str)
+
+    def test_low_constant_is_reachable(self):
+        """With two levels both branches below 10 returned 'marginal' and the
+        5.0 constant carried no information. Three levels make it usable."""
+        from ms_inspect.tools.image_stats import (
+            _P2N_MARGINAL,
+            _P2N_UNDETECTED,
+            _classify_detection,
+        )
+
+        assert _classify_detection(_P2N_UNDETECTED - 0.1) == "undetected"
+        assert _classify_detection(_P2N_UNDETECTED + 0.1) == "marginal"
+        assert _classify_detection(_P2N_MARGINAL) == "detection"
+
+
+class TestNoGateFields:
+    """The no-gates contract: this module must not ship a boolean verdict."""
+
+    def test_source_has_no_detection_pass(self):
+        import inspect
+
+        from ms_inspect.tools import image_stats
+
+        src = inspect.getsource(image_stats)
+        assert "detection_pass" not in src
+        assert "do not report this as a detection" not in src
 
 
 class TestRunPathValidation:

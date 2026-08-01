@@ -31,30 +31,77 @@ per-server tool inventory). Read it before making any non-trivial change.
 
 Every tool in `src/ms_inspect/tools/` must obey three rules:
 
-1. **One question, one answer.** A tool returns numbers and completeness flags.
-   It never interprets, never suggests a next step, never chains to another tool.
-2. **Numbers, not narratives.** All returned text is structured data or a
-   provenance annotation. Prose interpretation belongs in `skill/SKILL.md`.
+1. **One question, one answer.** A tool returns measurements and completeness
+   flags. It never suggests a next step and never chains to another tool.
+2. **No gates.** Tools may return derived values, rankings, and descriptive
+   labels, with their inputs included. Tools may **not** return gates, meaning
+   any field whose semantic is "you may or may not proceed". Gating requires
+   knowing the science goal and the risk tolerance, and only the skill has
+   those.
 3. **Explicit uncertainty.** Every field that could not be retrieved carries a
    `CompletionFlag` (`COMPLETE`, `INFERRED`, `PARTIAL`, `SUSPECT`, `UNAVAILABLE`).
    Silence is never used to indicate failure.
 
-Violating the contract — adding interpretation, collapsing flags, adding
-tool-chaining logic — will break the Skill's reasoning model and produce silent
-scientific errors. If you are unsure whether something belongs in a tool or in
-the Skill, it belongs in the Skill.
+### What rule 2 permits and forbids
+
+| Permitted | Forbidden |
+|-----------|-----------|
+| A derived scalar (`dynamic_range`, `severity`, `pa_spread_deg`) | A boolean verdict (`detection_pass`, `xf_feasible`, `meets_threshold`) |
+| A descriptive label with its constants surfaced (`detection` / `marginal` / `undetected`) | A `blocker` or `verdict` field naming what stops you |
+| A ranking with the ranked quantity attached (`ms_refant`, `leakage_cal_candidates`) | Selecting one entry from a ranking and substituting it for the user's choice |
+| A suggested parameter value, labelled as such (`recommended_minblperant`, `suggested.*`) | Withholding a value because a threshold was not met |
+
+**Inputs travel with outputs.** A derived value must ship the quantities and
+constants it was computed from, so the skill can recompute it under a different
+tolerance. A ratio whose numerator and denominator are absent is a verdict
+wearing a number's clothes.
+
+### Why gates specifically
+
+A gate that fails *loudly* costs a CASA error and a retry. A gate that fails
+*silently* costs science that was never attempted, with nothing in the output
+recording what was forgone — and the threshold behind it was one constant chosen
+for a typical case. The motivating case is in `docs/session_context.md:65`:
+D-terms on J1454 at 24 degrees of parallactic coverage, "marginal, solved per
+user direction". The right answer there was "proceed, and limit
+fractional-polarization claims to the few percent level". No boolean can express
+that.
+
+This also states a preference for **posterior verification over prior
+gating**: measure the result and report it, rather than refusing to compute.
+
+**One named exception:** `ms_workflow_status.next_recommended_step`. It gates on
+filesystem state, not on a scientific claim, and it fails visibly — an
+unreadable probe returns `probe_failed_*` and `UNAVAILABLE` rather than
+inferring. Do not add a second exception without the same two properties.
+
+Violating the contract — adding a gate, collapsing flags, adding tool-chaining
+logic — will break the Skill's reasoning model and produce silent scientific
+errors. If you are unsure whether something belongs in a tool or in the Skill,
+it belongs in the Skill.
 
 ---
 
 ## Repository layout
 
 ```
-ms-inspect/
+radio-analyst/
 ├── CLAUDE.md                      ← this file
 ├── DESIGN.md                      ← architecture, failure modes, conventions
+├── README.md
 ├── pixi.toml                      ← environment (conda-forge + casatools via PyPI)
 ├── pyproject.toml                 ← build metadata and tooling config
-├── README.md
+├── .mcp.json                      ← MCP server definitions (all three servers)
+├── .claude-plugin/
+│   ├── plugin.json                ← plugin manifest
+│   └── marketplace.json           ← marketplace catalogue entry
+├── .claude/
+│   ├── skills/
+│   │   ├── radio-interferometry/  ← 18 files: SKILL.md + 00..13 knowledge files
+│   │   │                             (plus wildcat/, unreachable from SKILL.md)
+│   │   └── ms-simulator/          ← SKILL.md + 01..05 knowledge files
+│   └── commands/                  ← inspect, precal, calibrate, polcal, image, simulate
+├── docs/                          ← session context, tool survey, fix plan, handoff
 ├── bin/
 │   ├── serve.sh                   ← MCP plugin entry point (ms-inspect)
 │   ├── serve-modify.sh            ← MCP plugin entry point (ms-modify)
@@ -62,23 +109,27 @@ ms-inspect/
 ├── src/
 │   ├── ms_create/
 │   │   ├── __init__.py            ← version string
-│   │   ├── server.py              ← FastMCP entry point (ingestion utilities, port 8002)
+│   │   ├── server.py              ← FastMCP entry point (ingestion, port 8002)
 │   │   ├── exceptions.py          ← ASDMNotFoundError, ImportFailedError
-│   │   ├── sdm_summary.py         ← ms_sdm_summary tool (pre-conversion ASDM inspection)
-│   │   └── import_asdm.py         ← ms_import_asdm tool
+│   │   ├── sdm_summary.py         ← ms_sdm_summary (pre-conversion ASDM inspection)
+│   │   ├── import_asdm.py         ← ms_import_asdm
+│   │   └── reduction_log.py       ← ms_reduction_log
 │   ├── ms_modify/
 │   │   ├── __init__.py            ← version string
-│   │   ├── server.py              ← FastMCP entry point (write utilities, port 8001)
+│   │   ├── server.py              ← FastMCP entry point (write, port 8001)
 │   │   ├── exceptions.py          ← ms_modify error types
-│   │   ├── intents.py             ← set_intents utility function
+│   │   ├── intents.py             ← ms_set_intents
 │   │   ├── preflag.py             ← ms_apply_preflag
 │   │   ├── priorcals.py           ← ms_generate_priorcals
 │   │   ├── setjy.py               ← ms_setjy
 │   │   ├── setjy_polcal.py        ← ms_setjy_polcal
 │   │   ├── initial_bandpass.py    ← ms_initial_bandpass
 │   │   ├── initial_rflag.py       ← ms_apply_initial_rflag
+│   │   ├── postcal_flag.py        ← ms_postcal_flag
+│   │   ├── flag_caltable.py       ← ms_flag_caltable
 │   │   ├── rflag.py               ← ms_apply_rflag
 │   │   ├── gaincal.py             ← ms_gaincal
+│   │   ├── polcal.py              ← ms_polcal
 │   │   ├── bandpass.py            ← ms_bandpass
 │   │   ├── fluxscale.py           ← ms_fluxscale
 │   │   ├── applycal.py            ← ms_applycal
@@ -97,39 +148,45 @@ ms-inspect/
 │       │   ├── antennas.py        ← ms_antenna_list, ms_baseline_lengths
 │       │   ├── geometry.py        ← ms_elevation_vs_time, ms_parallactic_angle_vs_time
 │       │   ├── shadowing.py       ← ms_shadowing_report
-│       │   ├── flags.py           ← ms_antenna_flag_fraction
+│       │   ├── flags.py           ← ms_flag_preflight, ms_antenna_flag_fraction
 │       │   ├── flag_summary.py    ← ms_flag_summary
 │       │   ├── online_flags.py    ← ms_online_flag_stats
 │       │   ├── verify_import.py   ← ms_verify_import
 │       │   ├── verify_model.py    ← ms_verify_model
+│       │   ├── workflow_status.py ← ms_workflow_status
 │       │   ├── priorcals_check.py ← ms_verify_priorcals
 │       │   ├── caltables.py       ← ms_verify_caltables
 │       │   ├── calsol_stats.py    ← ms_calsol_stats
+│       │   ├── calsol_stats_detail.py ← ms_calsol_stats_detail
 │       │   ├── calsol_plot.py     ← ms_calsol_plot
+│       │   ├── calsol_plot_library.py ← ms_plot_caltable_library
+│       │   ├── gaincal_snr_predict.py ← ms_gaincal_snr_predict
 │       │   ├── refant.py          ← ms_refant
 │       │   ├── residual_stats.py  ← ms_residual_stats
+│       │   ├── corrected_stats.py ← ms_corrected_stats
 │       │   ├── rfi.py             ← ms_rfi_channel_stats
-│       │   ├── pol_cal_feasibility.py ← ms_pol_cal_feasibility
+│       │   ├── spw_amp_severity.py ← ms_spw_amp_severity
+│       │   ├── pol_cal_conditions.py ← ms_pol_cal_conditions
 │       │   └── image_stats.py     ← ms_image_stats
 │       └── util/
 │           ├── casa_context.py    ← context managers: open_msmd, open_table, open_ms, open_image
-│           ├── calibrators.py     ← bundled calibrator catalogue + resolved-source logic
+│           ├── dispatch.py        ← shared tool dispatch used by all three servers
+│           ├── formatting.py      ← response envelope, CompletionFlag, offload_detail
 │           ├── conversions.py     ← MJD→UTC, Hz→GHz, ECEF→geodetic, corr codes, etc.
-│           └── formatting.py      ← response envelope, CompletionFlag, round_dict
-├── tests/
-│   ├── unit/                      ← no CASA required, runs everywhere
-│   │   ├── test_conversions.py
-│   │   ├── test_calibrators.py
-│   │   ├── test_formatting.py
-│   │   ├── test_set_intents.py
-│   │   ├── test_import_asdm.py
-│   │   └── test_verify_import.py
-│   └── integration/               ← requires casatools; auto-uses 3C391 tarball if present
-│       ├── conftest.py            ← 3C391 tarball extraction fixture
-│       ├── test_tools.py
-│       └── test_set_intents.py
-└── skill/
-    └── SKILL.md                   ← interferometrist reasoning document (separate)
+│           ├── telescope.py       ← TelescopeProfile: per-telescope constants
+│           ├── calibrators.py     ← bundled flux/BP calibrator catalogue
+│           ├── vla_calibrators.py ← VLA calibrator cone search
+│           ├── pol_calibrators.py ← polarisation calibrator catalogue
+│           ├── polcal_setjy_fit.py ← polarised model fitting for ms_setjy_polcal
+│           ├── phase_cal_catalog.py ← ms_phase_cal_lookup (reads PhaseCalList.txt)
+│           ├── PhaseCalList.txt   ← NRAO VLA phase-calibrator catalogue (data file)
+│           └── spw_coverage.py    ← SpW frequency-coverage helpers
+└── tests/
+    ├── unit/                      ← no CASA required, runs everywhere (39 modules)
+    └── integration/               ← requires casatools; auto-uses 3C391 tarball if present
+        ├── conftest.py            ← 3C391 tarball extraction fixture
+        ├── test_tools.py
+        └── test_set_intents.py
 ```
 
 ---
@@ -182,6 +239,7 @@ Environment variable reference:
 | `RADIO_MCP_WORKERS` | `4` | Parallel worker count for FLAG column reads (cap 8) |
 | `RADIO_MCP_TEST_MS` | — | Path to pre-extracted MS for integration tests |
 | `RADIO_MCP_TEST_MS_TGZ` | — | Path to `.ms.tgz` tarball; auto-extracted by conftest.py |
+| `RADIO_MCP_TEST_CALTABLE` | — | Path to a G or B caltable; the caltable integration tests in `tests/integration/test_tools.py` skip without it |
 
 ---
 
@@ -198,7 +256,7 @@ Environment variable reference:
 | `ms_spectral_window_list` | `tools/spectral.py` | `msmd.chanfreqs()`, `msmd.chanwidths()`, `tb → POLARIZATION` |
 | `ms_correlator_config` | `tools/spectral.py` | `tb → POLARIZATION`, `msmd.exposuretime()` |
 
-### Layer 2 — Instrument Sanity (6 tools)
+### Layer 2 — Instrument Sanity (7 tools)
 
 | Tool | Module | Primary CASA call |
 |------|--------|-------------------|
@@ -206,7 +264,7 @@ Environment variable reference:
 | `ms_baseline_lengths` | `tools/antennas.py` | computed from ECEF positions |
 | `ms_elevation_vs_time` | `tools/geometry.py` | astropy AltAz (not CASA measures) |
 | `ms_parallactic_angle_vs_time` | `tools/geometry.py` | astropy LST + atan2 |
-| `ms_shadowing_report` | `tools/shadowing.py` | `msmd.shadowedAntennas()` |
+| `ms_shadowing_report` | `tools/shadowing.py` | `casatasks.flagdata(mode='list', action='calculate')` with [summary, shadow, summary]; the shadow contribution is the difference |
 | `ms_flag_preflight` | `tools/flags.py` | Fast probe: row count, FLAG shape, data volume, runtime estimate, recommended workers |
 | `ms_antenna_flag_fraction` | `tools/flags.py` | `tb.getcolslice(FLAG)` adaptive parallel reads; accepts `n_workers` override |
 
@@ -240,7 +298,7 @@ Environment variable reference:
 | `ms_phase_cal_lookup` | `util/phase_cal_catalog.py` | Cross-match a sky position against the NRAO VLA phase-calibrator catalog; nearest source within `max_sep_deg` with flux, UV limits, and per-config quality codes (P/S/W/C/X) |
 | `ms_rfi_channel_stats` | `tools/rfi.py` | Per-channel flag fractions; identifies persistent RFI bands |
 | `ms_spw_amp_severity` | `tools/spw_amp_severity.py` | Robust per-channel amplitude stats (median/MAD/min/max) of any data column, aggregated per SpW. Severity = band_floor vs a clean-SpW anchor (RFI-dominated drop signal) + estimated_discardable_frac (localized-RFI magnitude). Memory-bounded reservoir sampling. |
-| `ms_pol_cal_feasibility` | `tools/pol_cal_feasibility.py` | Parallactic angle spread + D-term feasibility gate |
+| `ms_pol_cal_conditions` | `tools/pol_cal_conditions.py` | Pol calibrator identification, catalogue properties at the observed band, and per-field parallactic-angle spread ranked; no verdict |
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | `tools/corrected_stats.py` | Per-field parallel-hand amplitude (median/robust-std/p95) + phase RMS of a data column, **vector-averaged over the channel range** (so faint sources are not noise-biased). Post-applycal calibration sanity check. |
 
@@ -278,7 +336,7 @@ Functions are also callable directly by skills and scripts.
 
 | Tool | Module | What it does |
 |------|--------|-------------|
-| `ms_set_intents` | `ms_modify/intents.py` | Populate STATE subtable and STATE_ID from calibrator catalogue matching |
+| `ms_set_intents` | `ms_modify/intents.py` | Populate STATE subtable and STATE_ID from calibrator catalogue matching, including `CALIBRATE_POL_ANGLE` / `CALIBRATE_POL_LEAKAGE` from pol-catalogue identity. `pol_leakage_fields` nominates a field the catalogue does not know (the tool never nominates one itself); `pol_sources_available` reports what the MS contains |
 | `ms_apply_preflag` | `ms_modify/preflag.py` | Deterministic pre-cal flagging (online + shadow + clip + tfcrop) + calibrator split |
 | `ms_generate_priorcals` | `ms_modify/priorcals.py` | Generate gc/opac/rq/ap prior caltables via gencal |
 | `ms_setjy` | `ms_modify/setjy.py` | Set Perley-Butler 2017 flux models for standard calibrators. `exclude_fields` omits a field from the Stokes-I pass (use for a pol-angle cal that overlaps a flux/BP cal — its polarized model is set by `ms_setjy_polcal`, and a plain setjy would clobber it) |
@@ -300,9 +358,15 @@ Functions are also callable directly by skills and scripts.
 1. Read fields + positions via `open_msmd`
 2. Guard: raise `IntentsAlreadyPopulatedError` if ≥50% of fields have intents
 3. Match fields against primary catalogue (`calibrators.lookup`) and VLA cone search
-4. Write STATE rows (OBS_MODE, CAL, SIG, SUB_SCAN, FLAG_ROW, REF)
-5. Bulk-update STATE_ID in MAIN table
-6. Supports `dry_run=True` to preview mapping without writing
+4. Add polarisation intents from pol-catalogue identity: a Category A angle
+   standard gets `CALIBRATE_POL_ANGLE`, a dedicated leakage cal (role is
+   leakage and not angle) gets `CALIBRATE_POL_LEAKAGE`. These are additive, not
+   a replacement: 3C286 is both a flux standard and the angle standard.
+   Nominating an uncatalogued field as the leakage cal is a strategy decision
+   and requires `pol_leakage_fields`
+5. Write STATE rows (OBS_MODE, CAL, SIG, SUB_SCAN, FLAG_ROW, REF)
+6. Bulk-update STATE_ID in MAIN table
+7. Supports `dry_run=True` to preview mapping without writing
 
 ---
 
@@ -483,15 +547,19 @@ or create visibility data.
 
 ## Slash commands
 
-Project-scoped commands live in `.claude/commands/` and are checked into the repo.
-Available in Claude Code as `/project:<name>`:
+Commands live in `.claude/commands/` and are checked into the repo. Working in a
+clone they are invoked as `/<name>`; installed from the marketplace they are
+namespaced by the plugin, `/radio-analyst:<name>`. There is no `/project:`
+prefix in either context.
 
 | Command | What it does |
 |---------|-------------|
-| `/project:inspect <ms_path>` | Full Phase 1 + Phase 2 analysis + go/no-go report |
-| `/project:phase1 <ms_path>` | Phase 1 orientation only (6 tools) |
-| `/project:phase2 <ms_path>` | Phase 2 instrument sanity only (6 tools) |
-| `/project:simulate <description>` | Simulate an MS from a natural-language description |
+| `/inspect <ms_path>` | Full Phase 1 + Phase 2 analysis + go/no-go report |
+| `/precal <ms_path>` | Pre-calibration workflow (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
+| `/calibrate <ms_path>` | Full calibration solve (initial phase → delay → bandpass → gain → fluxscale → applycal) |
+| `/polcal <ms_path>` | Polarisation calibration (Kcross → D-terms → Xf → applycal with parang) |
+| `/image <ms_path>` | First-pass continuum/cube imaging with derived tclean parameters |
+| `/simulate <description>` | Simulate an MS from a natural-language description |
 
 ## What is out of scope for this file
 

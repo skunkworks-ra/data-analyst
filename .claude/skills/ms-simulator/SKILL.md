@@ -43,14 +43,20 @@ Every simulation follows these stages in order:
 
 ## Supporting knowledge files
 
-@.claude/skills/ms-simulator/01-conversation-protocol.md
-@.claude/skills/ms-simulator/02-antenna-configs.md
-@.claude/skills/ms-simulator/03-spectral-source.md
-@.claude/skills/ms-simulator/04-corruption-noise.md
-@.claude/skills/ms-simulator/05-execution.md
+Each file below is a **sibling of this `SKILL.md`**, in the same directory.
+Resolve each name against this file's own directory, not against the working
+directory and not against any `.claude/skills/` path — installed as a plugin
+this skill lives in a cache directory that has neither.
+
+- `01-conversation-protocol.md`
+- `02-antenna-configs.md`
+- `03-spectral-source.md`
+- `04-corruption-noise.md`
+- `05-execution.md`
 
 ## Integration with ms-inspect
 
 After simulation, you may validate the output MS using the `ms_inspect` tools
 (Phase 1 orientation). This confirms the MS is readable and structurally sound.
-Use `/project:inspect <output.ms>` or call the tools directly.
+Use the `inspect` command (`/inspect <output.ms>`, or
+`/radio-analyst:inspect` when installed as a plugin) or call the tools directly.

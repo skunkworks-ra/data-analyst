@@ -285,40 +285,72 @@ class TestAntennaFlagFractionReal:
 
 
 @_SKIP
-class TestPolCalFeasibilityReal:
-    """Integration tests for ms_pol_cal_feasibility against a real MS."""
+class TestPolCalConditionsReal:
+    """Integration tests for ms_pol_cal_conditions against a real MS."""
 
     def test_returns_ok(self):
-        from ms_inspect.tools import pol_cal_feasibility
+        from ms_inspect.tools import pol_cal_conditions
 
-        result = pol_cal_feasibility.run(_TEST_MS)
+        result = pol_cal_conditions.run(_TEST_MS)
         assert result["status"] == "ok"
 
-    def test_verdict_is_valid(self):
-        from ms_inspect.tools import pol_cal_feasibility
+    def test_no_gate_fields(self):
+        """The gate fields are gone and must not come back."""
+        from ms_inspect.tools import pol_cal_conditions
 
-        result = pol_cal_feasibility.run(_TEST_MS)
-        verdict = result["data"]["verdict"]
-        assert verdict in {"FULL", "LEAKAGE_ONLY", "DEGRADED", "NOT_FEASIBLE"}
+        data = pol_cal_conditions.run(_TEST_MS)["data"]
+        for gate in ("verdict", "blocker", "xf_feasible", "df_feasible"):
+            assert gate not in data
+        for gate in ("meets_threshold", "single_scan_sufficient"):
+            assert gate not in data["leakage_calibrator"]
+        assert "leakage_cal_alternatives" not in data["leakage_calibrator"]
 
     def test_band_centre_present(self):
-        from ms_inspect.tools import pol_cal_feasibility
+        from ms_inspect.tools import pol_cal_conditions
 
-        result = pol_cal_feasibility.run(_TEST_MS)
+        result = pol_cal_conditions.run(_TEST_MS)
         band = result["data"]["band_centre_ghz"]
         assert band["value"] is not None
         assert band["value"] > 0.0
 
-    def test_pa_spread_threshold_respected(self):
-        """Relaxed threshold should not make NOT_FEASIBLE worse than strict threshold."""
-        from ms_inspect.tools import pol_cal_feasibility
+    def test_every_field_is_a_candidate_ranked_by_pa_spread(self):
+        """Enumeration is unconditional: one row per field, ranked, nothing selected."""
+        from ms_inspect.tools import fields, pol_cal_conditions
 
-        strict = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=90.0)
-        relaxed = pol_cal_feasibility.run(_TEST_MS, pa_spread_threshold_deg=10.0)
+        data = pol_cal_conditions.run(_TEST_MS)["data"]
+        candidates = data["leakage_cal_candidates"]
+        n_fields = len(fields.run(_TEST_MS)["data"]["fields"])
+        assert len(candidates) == n_fields
+        assert {c["field_id"] for c in candidates} == set(range(n_fields))
 
-        _order = {"FULL": 0, "DEGRADED": 1, "LEAKAGE_ONLY": 2, "NOT_FEASIBLE": 3}
-        # A relaxed threshold should never produce a worse verdict than a strict one
-        assert _order[relaxed["data"]["verdict"]] <= _order[strict["data"]["verdict"]]
+        spreads = [c["pa_spread_deg"] for c in candidates if c["pa_spread_deg"] is not None]
+        assert spreads == sorted(spreads, reverse=True)
+        # Fields with no computable spread sort last.
+        first_none = next(
+            (i for i, c in enumerate(candidates) if c["pa_spread_deg"] is None), len(candidates)
+        )
+        assert all(c["pa_spread_deg"] is None for c in candidates[first_none:])
+
+    def test_identified_leakage_cal_matches_its_candidate_row(self):
+        """The reported leakage cal is one of the ranked rows, not a separate computation."""
+        from ms_inspect.tools import pol_cal_conditions
+
+        data = pol_cal_conditions.run(_TEST_MS)["data"]
+        leak = data["leakage_calibrator"]
+        rows = [c for c in data["leakage_cal_candidates"] if c["is_identified_leakage_cal"]]
+        assert len(rows) == (1 if leak["available"] else 0)
+        if rows:
+            assert rows[0]["field_id"] == leak["field_id"]
+            assert rows[0]["pa_spread_deg"] == leak["pa_spread_deg"]["value"]
+            assert rows[0]["n_scans"] == leak["n_calibrator_scans"]
+
+    def test_df_poltype_basis_is_present_whenever_a_poltype_is(self):
+        from ms_inspect.tools import pol_cal_conditions
+
+        data = pol_cal_conditions.run(_TEST_MS)["data"]
+        assert data["recommended_df_poltype"] in {"Df", "Df+QU", None}
+        assert isinstance(data["recommended_df_poltype_basis"], str)
+        assert data["recommended_df_poltype_basis"]
 
 
 @_SKIP
@@ -741,3 +773,204 @@ class TestCalsolPlotReal:
         npz = np.load(result["data"]["npz_path"]["value"], allow_pickle=True)
         assert "ant_names" in npz
         assert "flagged_frac" in npz
+
+
+@_SKIP
+class TestShadowingReal:
+    """Integration tests for ms_shadowing_report against a real MS."""
+
+    def test_returns_ok(self):
+        from ms_inspect.tools import shadowing
+
+        assert shadowing.run(_TEST_MS)["status"] == "ok"
+
+    def test_detection_is_never_a_bare_false_without_a_measurement(self):
+        """A missing flagdata report must read UNAVAILABLE, not 'no shadowing'.
+
+        The failure this guards against is silent: flagdata returning no report
+        used to produce shadowing_detected=False with a COMPLETE flag, which is
+        an assertion the tool had not earned.
+        """
+        from ms_inspect.tools import shadowing
+
+        data = shadowing.run(_TEST_MS)["data"]
+        det = data["shadowing_detected"]
+        if det["value"] is None:
+            assert det["flag"] == "UNAVAILABLE"
+            assert det.get("note")
+        else:
+            assert det["flag"] in {"COMPLETE", "PARTIAL"}
+            # A negative may only be claimed from an actual measurement.
+            if det["value"] is False:
+                assert det["flag"] == "COMPLETE"
+                assert data["n_total_rows"] > 0
+
+    def test_fraction_agrees_with_the_counts_it_was_derived_from(self):
+        from ms_inspect.tools import shadowing
+
+        data = shadowing.run(_TEST_MS)["data"]
+        frac = data["shadow_flag_fraction"]
+        if frac["value"] is not None:
+            assert 0.0 <= frac["value"] <= 1.0
+            n_flagged, n_total = data["n_shadow_flagged"], data["n_total_rows"]
+            assert n_total > 0
+            assert frac["value"] == pytest.approx(n_flagged / n_total, abs=1e-6)
+
+
+@_SKIP
+class TestSpwAmpSeverityReal:
+    """Integration tests for ms_spw_amp_severity against a real MS."""
+
+    def test_returns_ok_with_per_spw_aggregates(self):
+        from ms_inspect.tools import spw_amp_severity
+
+        result = spw_amp_severity.run(_TEST_MS, datacolumn="DATA", max_per_chan_records=0)
+        assert result["status"] == "ok"
+        per_spw = result["data"]["per_spw"]
+        assert per_spw
+        for entry in per_spw:
+            assert entry["n_channels"] > 0
+            assert len(entry["per_chan"]) == entry["n_channels"]
+            assert entry["band_floor"]["value"] > 0.0
+
+    def test_severity_ships_the_inputs_it_was_computed_from(self):
+        """A derived scalar must travel with its numerator and denominator."""
+        from ms_inspect.tools import spw_amp_severity
+
+        data = spw_amp_severity.run(_TEST_MS, datacolumn="DATA", max_per_chan_records=0)["data"]
+        for entry in data["per_spw"]:
+            floor = entry["band_floor"]["value"]
+            sigma_robust = entry["band_robust_sigma"]["value"]
+            assert floor is not None and sigma_robust is not None
+            # elevation_threshold = band_floor + sigma * robust_sigma, recomputable
+            assert entry["elevation_threshold"] == pytest.approx(
+                floor + data["sigma"] * sigma_robust, rel=1e-3
+            )
+            assert 0.0 <= entry["estimated_discardable_frac"]["value"] <= 1.0
+            assert entry["severity"] is not None
+            assert data["clean_floor_anchor"] is not None
+
+    def test_payload_bound_drops_per_chan_and_writes_the_sidecar(self, tmp_path):
+        """Truncation is all-or-nothing, and the dropped detail lands on disk."""
+        import json
+
+        from ms_inspect.tools import spw_amp_severity
+
+        full = spw_amp_severity.run(_TEST_MS, datacolumn="DATA", max_per_chan_records=0)["data"]
+        n_records = sum(len(e["per_chan"]) for e in full["per_spw"])
+        assert n_records > 1  # otherwise the bound below cannot trigger
+
+        sidecar = tmp_path / "per_chan.json"
+        warnings: list[str] = []
+        bounded = spw_amp_severity._bound_per_chan_payload(
+            spw_amp_severity.run(_TEST_MS, datacolumn="DATA", max_per_chan_records=0)["data"],
+            max_per_chan_records=1,
+            sidecar_path=str(sidecar),
+            warnings=warnings,
+        )
+        assert bounded["per_chan_truncated"]["value"] is True
+        assert bounded["n_per_chan_records_dropped"] == n_records
+        assert all("per_chan" not in e for e in bounded["per_spw"])
+        assert sum(e["n_per_chan_omitted"] for e in bounded["per_spw"]) == n_records
+        # Per-SpW aggregates survive truncation untouched.
+        for before, after in zip(full["per_spw"], bounded["per_spw"], strict=True):
+            assert after["band_floor"] == before["band_floor"]
+            assert after["severity"] == before["severity"]
+
+        recovered = json.loads(sidecar.read_text())
+        assert sum(len(e["per_chan"]) for e in recovered["per_spw"]) == n_records
+
+
+@pytest.fixture(scope="module")
+def pol_intent_ms(tmp_path_factory):
+    """A small MS carrying polarisation intents, built from the real test MS.
+
+    Deliberately excludes any catalogued leakage calibrator (no 3C84 / 3C147),
+    so `ms_pol_cal_conditions` cannot identify one from the catalogue and must
+    fall back to CALIBRATE_POL_LEAKAGE intents. One channel only, to keep it
+    small; every field, scan and antenna is preserved, so PA spread and scan
+    counts remain the real ones.
+
+    Writes only inside tmp_path; the source MS is never modified.
+    """
+    if _TEST_MS is None:
+        pytest.skip("RADIO_MCP_TEST_MS not set")
+    from casatasks import split
+
+    from ms_modify import intents as _intents
+
+    out = str(tmp_path_factory.mktemp("pol_intents") / "pol_fallback.ms")
+    split(
+        vis=_TEST_MS,
+        outputvis=out,
+        field="J1331+3030,J1822-0938,3C391 C1",
+        spw="0:0",
+        datacolumn="data",
+        keepflags=True,
+    )
+    # J1822-0938 is the phase calibrator and is in no pol catalogue. It only
+    # becomes the leakage calibrator because it is nominated here, which is the
+    # point: the tool never nominates one itself.
+    written = _intents.set_intents(out, execute=True, pol_leakage_fields=("J1822-0938",))
+    assert written["status"] == "ok"
+    return out
+
+
+@_SKIP
+class TestPolIntentsEndToEnd:
+    """ms_set_intents writes pol intents; ms_pol_cal_conditions reads them back."""
+
+    def test_angle_intent_comes_from_catalogue_identity(self, pol_intent_ms):
+        from ms_inspect.util.casa_context import open_msmd
+
+        with open_msmd(pol_intent_ms) as msmd:
+            names = list(msmd.fieldnames())
+            intents_by_name = {n: set(msmd.intentsforfield(i)) for i, n in enumerate(names)}
+
+        assert any("POL_ANGLE" in i for i in intents_by_name["J1331+3030"])
+        # 3C286's catalogue role lists leakage too; it must not claim that intent.
+        assert not any("POL_LEAKAGE" in i for i in intents_by_name["J1331+3030"])
+
+    def test_leakage_intent_only_where_nominated(self, pol_intent_ms):
+        from ms_inspect.util.casa_context import open_msmd
+
+        with open_msmd(pol_intent_ms) as msmd:
+            names = list(msmd.fieldnames())
+            intents_by_name = {n: set(msmd.intentsforfield(i)) for i, n in enumerate(names)}
+
+        assert any("POL_LEAKAGE" in i for i in intents_by_name["J1822-0938"])
+        assert not any("POL_LEAKAGE" in i for i in intents_by_name["3C391 C1"])
+
+    def test_conditions_finds_the_leakage_cal_through_the_intent_fallback(self, pol_intent_ms):
+        """The path that had no coverage: identification from intents, not catalogue."""
+        from ms_inspect.tools import pol_cal_conditions
+
+        result = pol_cal_conditions.run(pol_intent_ms)
+        leak = result["data"]["leakage_calibrator"]
+
+        assert leak["available"] is True
+        assert leak["source"] == "J1822-0938"
+        # Uncatalogued, so no catalogue properties travel with it.
+        assert leak["category"] is None
+        assert leak["effective_role_at_band"] == "unknown"
+        assert leak["n_calibrator_scans"] > 1
+        assert leak["pa_spread_deg"]["value"] > 0.0
+        # The fallback must say out loud that it used intents, not the catalogue.
+        assert any("POL_LEAKAGE" in w for w in result["warnings"])
+
+    def test_unknown_pol_leakage_source_implies_df_qu(self, pol_intent_ms):
+        from ms_inspect.tools import pol_cal_conditions
+
+        data = pol_cal_conditions.run(pol_intent_ms)["data"]
+
+        assert data["recommended_df_poltype"] == "Df+QU"
+        assert "not known" in data["recommended_df_poltype_basis"]
+
+    def test_angle_cal_is_still_the_catalogue_standard(self, pol_intent_ms):
+        from ms_inspect.tools import pol_cal_conditions
+
+        angle = pol_cal_conditions.run(pol_intent_ms)["data"]["pol_angle_calibrator"]
+
+        assert angle["available"] is True
+        assert angle["source"] == "3C286"
+        assert angle["category"] == "A"

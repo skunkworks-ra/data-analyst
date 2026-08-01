@@ -15,6 +15,7 @@ from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import rad_to_deg
 from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.pol_calibrators import effective_role_at_band, lookup_pol
 from ms_inspect.util.vla_calibrators import cone_search as vla_cone_search
 from ms_modify.exceptions import IntentsAlreadyPopulatedError
 
@@ -23,9 +24,47 @@ TOOL_NAME = "set_intents"
 # If this fraction or more of fields already have intents, refuse to overwrite.
 _ALREADY_POPULATED_THRESHOLD = 0.50
 
+POL_ANGLE_INTENT = "CALIBRATE_POL_ANGLE#ON_SOURCE"
+POL_LEAKAGE_INTENT = "CALIBRATE_POL_LEAKAGE#ON_SOURCE"
+
+
+def _pol_intents_for_field(name: str) -> tuple[list[str], str | None]:
+    """
+    Pure function: polarisation intents implied by a field's *catalogue identity*.
+
+    Identity only, never coverage or strategy:
+      - Category A angle standard (3C286 / 3C138 / 3C48) -> POL_ANGLE.
+      - Dedicated leakage calibrator, i.e. catalogue role is leakage and NOT
+        angle (3C84, OQ208, J0713+4349, J2355+4950, 3C147) -> POL_LEAKAGE.
+
+    A source whose role carries both, which is every Category A standard, gets
+    POL_ANGLE only. It can still serve as a Df source through its known model,
+    but labelling it the leakage calibrator would hide a dedicated zero-pol cal
+    observed in the same track behind whichever field happens to come first.
+
+    Nominating a field that is *not* in the pol catalogue (the phase cal, say)
+    as the leakage calibrator is a calibration-strategy decision and belongs to
+    the caller: pass it in ``pol_leakage_fields``.
+
+    Returns (intents, catalogue_name | None).
+    """
+    entry = lookup_pol(name)
+    if entry is None:
+        return [], None
+
+    role = set(entry.role or [])
+    intents: list[str] = []
+    if "angle" in role and entry.category == "A":
+        intents.append(POL_ANGLE_INTENT)
+    elif "leakage" in role:
+        intents.append(POL_LEAKAGE_INTENT)
+    return intents, entry.b1950_name
+
 
 def _compute_intent_map(
     fields: list[dict],
+    pol_angle_fields: tuple[str, ...] = (),
+    pol_leakage_fields: tuple[str, ...] = (),
 ) -> list[dict]:
     """
     Pure function: compute intent assignments for each field.
@@ -33,12 +72,21 @@ def _compute_intent_map(
     Args:
         fields: List of dicts with keys: field_id, name, ra_deg, dec_deg,
                 existing_intents (set of strings).
+        pol_angle_fields:   Field names or ids the caller nominates as the
+                            polarisation *angle* calibrator.
+        pol_leakage_fields: Field names or ids the caller nominates as the
+                            polarisation *leakage* calibrator. Use this for a
+                            source the pol catalogue does not know, typically
+                            the phase calibrator; the choice is the caller's.
 
     Returns:
         List of dicts: {field_id, name, intents, source}.
-        - source is one of: "primary_catalogue", "vla_cone_search", "default_target"
+        - source is a "+"-joined trail of what contributed, e.g.
+          "primary_catalogue+pol_catalogue" or "vla_cone_search+caller_nominated"
     """
     results = []
+    nominated_angle = {str(x) for x in pol_angle_fields}
+    nominated_leakage = {str(x) for x in pol_leakage_fields}
 
     for f in fields:
         fid = f["field_id"]
@@ -46,48 +94,120 @@ def _compute_intent_map(
         ra_deg = f["ra_deg"]
         dec_deg = f["dec_deg"]
 
+        intents: list[str] = []
+        sources: list[str] = []
+
         # 1. Primary catalogue match
         cal_entry = cal_lookup(name)
         if cal_entry:
-            intents = infer_intents_from_role(cal_entry.role)
-            results.append(
-                {
-                    "field_id": fid,
-                    "name": name,
-                    "intents": intents,
-                    "source": "primary_catalogue",
-                }
-            )
-            continue
+            intents.extend(infer_intents_from_role(cal_entry.role))
+            sources.append("primary_catalogue")
+        else:
+            # 2. VLA cone search positional match
+            matched = False
+            if ra_deg is not None and dec_deg is not None:
+                try:
+                    result = vla_cone_search(ra_deg, dec_deg, radius_arcsec=5.0)
+                    if result is not None and result.name:
+                        intents.append("CALIBRATE_PHASE#ON_SOURCE")
+                        sources.append("vla_cone_search")
+                        matched = True
+                except Exception:
+                    pass  # graceful fallback — treat as target
+            if not matched:
+                # 3. Default: target
+                intents.append("OBSERVE_TARGET#ON_SOURCE")
+                sources.append("default_target")
 
-        # 2. VLA cone search positional match
-        if ra_deg is not None and dec_deg is not None:
-            try:
-                result = vla_cone_search(ra_deg, dec_deg, radius_arcsec=5.0)
-                if result is not None and result.name:
-                    results.append(
-                        {
-                            "field_id": fid,
-                            "name": name,
-                            "intents": ["CALIBRATE_PHASE#ON_SOURCE"],
-                            "source": "vla_cone_search",
-                        }
-                    )
-                    continue
-            except Exception:
-                pass  # graceful fallback — treat as target
+        # 4. Polarisation intents from catalogue identity, on top of the above.
+        # A flux/bandpass calibrator is very often also the pol angle standard;
+        # these are additive, not a replacement.
+        pol_intents, _pol_name = _pol_intents_for_field(name)
+        if pol_intents:
+            intents.extend(pol_intents)
+            sources.append("pol_catalogue")
 
-        # 3. Default: target
+        # 5. Caller nominations, by field name or field id. Applied last so an
+        # explicit choice wins, and recorded so it is visible in the response.
+        if name in nominated_angle or str(fid) in nominated_angle:
+            if POL_ANGLE_INTENT not in intents:
+                intents.append(POL_ANGLE_INTENT)
+            sources.append("caller_nominated_angle")
+        if name in nominated_leakage or str(fid) in nominated_leakage:
+            if POL_LEAKAGE_INTENT not in intents:
+                intents.append(POL_LEAKAGE_INTENT)
+            sources.append("caller_nominated_leakage")
+
         results.append(
             {
                 "field_id": fid,
                 "name": name,
-                "intents": ["OBSERVE_TARGET#ON_SOURCE"],
-                "source": "default_target",
+                "intents": sorted(set(intents)),
+                "source": "+".join(sources),
             }
         )
 
     return results
+
+
+def _pol_sources_available(
+    fields: list[dict],
+    intent_map: list[dict],
+    band_ghz: float | None,
+) -> dict:
+    """
+    Pure function: what polarisation calibration this MS's *sources* can support.
+
+    Enumerates, it does not choose. If no dedicated leakage calibrator was
+    observed, that is reported as a fact with the fields that exist, so the
+    caller can nominate one via ``pol_leakage_fields`` and re-run. The tool
+    never nominates on its own: which field to press into service as a leakage
+    calibrator depends on parallactic coverage and on the science goal, and
+    `ms_pol_cal_conditions` ranks the candidates for exactly that decision.
+    """
+    intents_by_id = {m["field_id"]: m["intents"] for m in intent_map}
+    catalogued: list[dict] = []
+    for f in fields:
+        entry = lookup_pol(f["name"])
+        if entry is None:
+            continue
+        catalogued.append(
+            {
+                "field_id": f["field_id"],
+                "name": f["name"],
+                "catalogue_source": entry.b1950_name,
+                "category": entry.category,
+                "catalogue_role": list(entry.role or []),
+                "effective_role_at_band": (
+                    effective_role_at_band(entry, band_ghz)
+                    if band_ghz is not None
+                    else "unknown (band centre unavailable)"
+                ),
+                "assigned_intents": intents_by_id.get(f["field_id"], []),
+            }
+        )
+
+    has_angle = any(POL_ANGLE_INTENT in m["intents"] for m in intent_map)
+    has_leakage = any(POL_LEAKAGE_INTENT in m["intents"] for m in intent_map)
+
+    return {
+        "band_centre_ghz": band_ghz,
+        "catalogued_pol_sources": catalogued,
+        "angle_intent_assigned": has_angle,
+        "leakage_intent_assigned": has_leakage,
+        "uncatalogued_fields": [
+            {"field_id": m["field_id"], "name": m["name"], "intents": m["intents"]}
+            for m in intent_map
+            if lookup_pol(m["name"]) is None
+        ],
+        "note": (
+            "Polarisation intents are assigned from catalogue identity only. "
+            "If leakage_intent_assigned is false, no dedicated leakage calibrator "
+            "was observed: rank the fields with ms_pol_cal_conditions, then re-run "
+            "with pol_leakage_fields=['<field name>'] to nominate one. Choosing "
+            "that field is a calibration-strategy decision and is left to you."
+        ),
+    }
 
 
 def _build_set_intents_script(
@@ -150,12 +270,20 @@ def set_intents(
     dry_run: bool | None = None,
     execute: bool = False,
     workdir: str = "",
+    pol_angle_fields: tuple[str, ...] | list[str] = (),
+    pol_leakage_fields: tuple[str, ...] | list[str] = (),
 ) -> dict:
     """
     Populate scan intent metadata in a Measurement Set.
 
     Reads field names and positions, matches against calibrator catalogues,
     writes the STATE subtable, and updates STATE_ID in the MAIN table.
+
+    Polarisation intents (CALIBRATE_POL_ANGLE, CALIBRATE_POL_LEAKAGE) are
+    assigned from pol-catalogue identity. To press a field the catalogue does
+    not know into service as a leakage calibrator, name it in
+    ``pol_leakage_fields``: that is a strategy decision, so the tool requires it
+    to be made explicitly rather than inferring one.
 
     Args:
         ms_path:  Path to the Measurement Set.
@@ -164,6 +292,11 @@ def set_intents(
                   If True, write the STATE subtable and update MAIN STATE_ID.
         workdir:  Directory for generated script (only used when execute=False).
         dry_run:  Deprecated alias for ``not execute``. Logs a warning if used.
+        pol_angle_fields:   Field names (or ids as strings) to mark as the
+                            polarisation angle calibrator, in addition to any
+                            catalogue match.
+        pol_leakage_fields: Field names (or ids as strings) to mark as the
+                            polarisation leakage calibrator.
 
     Returns:
         Standard response envelope with the intent mapping and write counts.
@@ -249,7 +382,42 @@ def set_intents(
     # ------------------------------------------------------------------
     # Step 3: Compute intent map
     # ------------------------------------------------------------------
-    intent_map = _compute_intent_map(fields_info)
+    intent_map = _compute_intent_map(
+        fields_info,
+        pol_angle_fields=tuple(pol_angle_fields),
+        pol_leakage_fields=tuple(pol_leakage_fields),
+    )
+
+    # Band centre, for the frequency-dependent pol role annotation only. It
+    # never changes an intent assignment; a failure here costs the annotation,
+    # not the run.
+    band_ghz: float | None = None
+    try:
+        with open_table(str(p / "SPECTRAL_WINDOW")) as tb:
+            chan_freqs = tb.getcell("CHAN_FREQ", 0)
+        band_ghz = round(float(np.median(chan_freqs)) / 1e9, 4)
+        casa_calls.append("tb.getcell('CHAN_FREQ', 0) (band centre for pol roles)")
+    except Exception as e:
+        warnings.append(
+            f"Could not read band centre frequency: {e}. Polarisation roles are "
+            "reported without their frequency dependence resolved."
+        )
+
+    pol_sources = _pol_sources_available(fields_info, intent_map, band_ghz)
+
+    # Name any caller nomination that matched no field, rather than silently
+    # dropping it: a typo here means the leakage intent is simply absent.
+    all_names = {f["name"] for f in fields_info} | {str(f["field_id"]) for f in fields_info}
+    for label, nominated in (
+        ("pol_angle_fields", pol_angle_fields),
+        ("pol_leakage_fields", pol_leakage_fields),
+    ):
+        for entry_name in nominated:
+            if str(entry_name) not in all_names:
+                warnings.append(
+                    f"{label} entry '{entry_name}' matched no field in this MS; "
+                    "no intent was assigned for it."
+                )
 
     # ------------------------------------------------------------------
     # Step 4: Compute obs_modes (needed for both paths)
@@ -287,6 +455,7 @@ def set_intents(
             "state_rows_written": 0,
             "main_rows_updated": 0,
             "execute": False,
+            "pol_sources_available": pol_sources,
         }
         if script_path:
             data["script_path"] = script_path
@@ -374,6 +543,7 @@ def set_intents(
         "state_rows_written": n_state_rows,
         "main_rows_updated": int(n_main_rows),
         "execute": True,
+        "pol_sources_available": pol_sources,
     }
 
     return response_envelope(

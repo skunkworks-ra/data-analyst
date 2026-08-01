@@ -48,6 +48,13 @@ _DEFAULT_MAX_SAMPLES = 5000
 _DEFAULT_ROW_CHUNK = 20_000
 _SEED = 1234  # fixed for reproducibility
 
+# Wire-payload bound on the per-channel drill-down. The measurement is
+# memory-bounded by the reservoir; the *response* was not, and channel count is
+# set by the dataset, not by this tool — a wideband MS puts tens of thousands of
+# per-channel records into one MCP response. The per-SpW aggregates are never
+# capped: they are small, and they are what 13-postcal-rfi-flagging.md consumes.
+_DEFAULT_MAX_PER_CHAN_RECORDS = 2000
+
 
 class _ChanReservoir:
     """Uniform random-key reservoir + exact min/max/counts for one channel."""
@@ -108,6 +115,85 @@ def _corr_first_axis(arr: np.ndarray) -> np.ndarray:
     return np.transpose(arr, (1, 0, 2)).reshape(n_chan, n_corr * n_rows)
 
 
+def _bound_per_chan_payload(
+    data: dict,
+    max_per_chan_records: int,
+    sidecar_path: str,
+    warnings: list[str],
+) -> dict:
+    """
+    Drop the per-channel drill-down from the wire payload if it is too large.
+
+    All-or-nothing per response: a partial slice of one SpW's channels would be
+    a misleading spectrum (the omitted half is where the RFI might be), so
+    either every SpW keeps its `per_chan` or none does. The per-SpW aggregates
+    are never touched.
+
+    The sidecar is written only when truncation actually occurs — this is a
+    read-only tool and must not write next to the caller's MS for nothing.
+
+    Every per_spw entry is required to carry a `per_chan` list. A missing key
+    is a construction bug upstream, not a condition to degrade past, so it
+    raises rather than silently counting zero.
+    """
+    import json as _json
+
+    per_spw = data.get("per_spw")
+    if not isinstance(per_spw, list):
+        raise KeyError("spw_amp_severity: data['per_spw'] missing or not a list")
+
+    for entry in per_spw:
+        if "per_chan" not in entry or not isinstance(entry["per_chan"], list):
+            raise KeyError(
+                f"spw_amp_severity: per_spw entry for spw_id="
+                f"{entry.get('spw_id', '<unknown>')} has no 'per_chan' list"
+            )
+
+    total = sum(len(entry["per_chan"]) for entry in per_spw)
+    data["n_per_chan_records"] = total
+    data["max_per_chan_records"] = max_per_chan_records
+
+    if max_per_chan_records <= 0 or total <= max_per_chan_records:
+        data["per_chan_truncated"] = fmt_field(False)
+        return data
+
+    written: str | None = sidecar_path
+    try:
+        with open(sidecar_path, "w") as fh:
+            _json.dump(data, fh, separators=(",", ":"), default=str)
+    except OSError as exc:
+        written = None
+        warnings.append(
+            f"Could not write per-channel sidecar to {sidecar_path}: {exc}. "
+            "The per-channel detail is dropped from this response and is not "
+            "on disk; re-run with max_per_chan_records=0 to receive it inline."
+        )
+
+    for entry in per_spw:
+        entry["n_per_chan_omitted"] = len(entry.pop("per_chan"))
+
+    data["per_chan_truncated"] = fmt_field(
+        True,
+        "PARTIAL",
+        note=(
+            f"{total} per-channel records exceeded max_per_chan_records="
+            f"{max_per_chan_records}; per_chan dropped from all "
+            f"{len(per_spw)} SpW entries. Per-SpW aggregates are complete."
+        ),
+    )
+    data["n_per_chan_records_dropped"] = total
+    data["detail_path"] = fmt_field(written, flag="COMPLETE" if written else "UNAVAILABLE")
+    data["detail_note"] = (
+        "Full per-channel detail (all SpWs) written to detail_path as compact "
+        "JSON; read it from the filesystem. Alternatively re-run with a larger "
+        "max_per_chan_records, or 0 for no bound."
+        if written
+        else "Sidecar write failed; re-run with max_per_chan_records=0 to "
+        "receive the per-channel detail inline."
+    )
+    return data
+
+
 def run(
     ms_path: str,
     datacolumn: str = "CORRECTED_DATA",
@@ -115,6 +201,7 @@ def run(
     sigma: float = _DEFAULT_SIGMA,
     max_samples_per_chan: int = _DEFAULT_MAX_SAMPLES,
     row_chunk: int = _DEFAULT_ROW_CHUNK,
+    max_per_chan_records: int = _DEFAULT_MAX_PER_CHAN_RECORDS,
 ) -> dict:
     """
     Per-channel robust amplitude stats of a data column, aggregated per SpW.
@@ -129,10 +216,20 @@ def run(
                               Only used to derive the discardable-fraction estimate.
         max_samples_per_chan: Reservoir size per channel (memory knob).
         row_chunk:            Rows read per block (memory knob; smaller = less RAM).
+        max_per_chan_records: Wire-payload bound on the per-channel drill-down,
+                              counted across all SpWs. If the total exceeds it,
+                              `per_chan` is dropped from every SpW and written
+                              to a JSON sidecar instead; the per-SpW aggregates
+                              are never affected. 0 disables the bound.
 
     Returns:
         Standard envelope with per_spw → per-channel robust stats + per-SpW
         aggregate severity numbers. No verdict, no flagging.
+
+        When the per-channel payload is truncated the envelope carries
+        `per_chan_truncated` (PARTIAL), `n_per_chan_records_dropped`,
+        `detail_path` and `detail_note`, and each per_spw entry keeps
+        `n_per_chan_omitted`. Truncation is never silent.
     """
     field = normalize_field_sel(field)
     p = validate_ms_path(ms_path)
@@ -389,6 +486,13 @@ def run(
         "n_spw": len(per_spw),
         "per_spw": per_spw,
     }
+
+    data = _bound_per_chan_payload(
+        data,
+        max_per_chan_records=max_per_chan_records,
+        sidecar_path=ms_str + ".spw_amp_severity.json",
+        warnings=warnings,
+    )
 
     return response_envelope(
         tool_name=TOOL_NAME,

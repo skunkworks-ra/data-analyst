@@ -108,12 +108,37 @@ Action:
 - For very large MSs (> 200 GB), consider running on the HPC node where
   the data lives using HTTP transport: `RADIO_MCP_TRANSPORT=http`.
 
-### `ms_shadowing_report` — `msmd.shadowedAntennas()` unavailable
-Symptom: `method.flag == "INFERRED"`, warning about unavailable method
-Cause: CASA version < 6.4 or a casatools build that omitted this method.
-Action: Only FLAG_CMD shadow entries are reported. Check manually by
-running `flagcmd(vis=..., action='list', flagbackup=False)` in CASA and
-filtering for 'shadow' reason codes.
+### `ms_shadowing_report` — shadow calculation unavailable
+The tool measures shadowing with a single read-only
+`casatasks.flagdata(vis=..., mode='list', action='calculate')` run carrying a
+summary, the shadow agent, and a second summary. The shadow contribution is the
+difference between the two summaries, so pre-existing flags in the MS are not
+counted as shadowing. It also reads FLAG_CMD for pre-existing online shadow
+flags.
+
+`mode='shadow'` on its own is not used, and must not be reintroduced: verified
+2026-07-31 against casatasks 6.7.5.18 on a real VLA MS, it returns an empty
+dict, because `action='calculate'` emits a report only when the run includes a
+summary agent. The tool used to read that empty dict as zero shadowing.
+
+| `method.flag` | Meaning |
+|---|---|
+| `COMPLETE` | A real measurement. `shadowing_detected: false` here is a genuine finding of no shadowing, which is the normal result away from low elevation in compact configurations. |
+| `UNAVAILABLE` | The run returned no usable summary pair. `shadowing_detected` and `shadow_flag_fraction` are `None`: nobody looked. |
+| `INFERRED` | `casatasks` not importable, or the call raised — exception text in `warnings`. |
+
+Action in every non-`COMPLETE` case: treat shadowing as **unmeasured**, not as
+absent. `shadowing_detected: null` means nobody looked. If the array is in a
+compact configuration and the observation runs to low elevation, assume
+shadowing is possible and check manually:
+`flagcmd(vis=..., action='list', flagbackup=False)` in CASA, filtering for
+'shadow' reason codes, or `flagdata(..., mode='shadow', action='apply')` in
+your own session if you are willing to write flags.
+
+Note the previous behaviour, in case you see it in an old log: the tool used to
+return `shadowing_detected: false` with flag `COMPLETE` in exactly this
+situation. Any archived report claiming no shadowing on that basis measured
+nothing.
 
 ---
 
