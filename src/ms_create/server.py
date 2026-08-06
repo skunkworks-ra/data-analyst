@@ -83,6 +83,17 @@ class ReductionLogInput(BaseModel):
     status: str = Field(
         default="ok", description="(append) outcome tag; shuttle only working calls."
     )
+    supersedes: str = Field(
+        default="",
+        description=(
+            "(append) MS path this step REPLACES as the working MS. Set it only "
+            "for a split whose output takes over — the ALMA prior-cal split. Do "
+            "NOT set it for a side-branch split such as the VLA calibrators.ms, "
+            "where later steps correctly return to the original MS. render "
+            "refuses to emit a replay script if a later calibration or imaging "
+            "step still uses a superseded MS."
+        ),
+    )
 
 
 class SDMSummaryInput(BaseModel):
@@ -152,10 +163,14 @@ async def ms_reduction_log(params: ReductionLogInput) -> str:
         params.rationale:  (append) why this step was done.
         params.skill_rule: (append) skill file / threshold cited.
         params.status:     (append) outcome tag.
+        params.supersedes: (append) MS path this step replaces as the working MS.
 
     Returns:
-        JSON envelope: append → n_records; render → recipe + replay_script;
-        list → step/tool/rationale summary.
+        JSON envelope: append → n_records; render → recipe + replay_script, plus
+        the superseded-MS check (ms_chain, n_supersessions_declared,
+        check_effective) and order_violations; list → step/tool/rationale summary.
+        render returns status='error' and NO script if order_violations is
+        non-empty.
     """
     return await _run_tool(
         reduction_log.run,
@@ -167,6 +182,7 @@ async def ms_reduction_log(params: ReductionLogInput) -> str:
         params.rationale,
         params.skill_rule,
         params.status,
+        params.supersedes,
         _lock_path=params.workdir,
     )
 

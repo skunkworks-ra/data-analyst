@@ -103,8 +103,16 @@ def test_unreadable_main_table_yields_unavailable_corrected(fake_ms, monkeypatch
     assert result["completeness_summary"] == "UNAVAILABLE"
 
 
+def _make_calibrators_ms(workdir):
+    cal_ms = workdir / "calibrators.ms"
+    cal_ms.mkdir()
+    (cal_ms / "table.info").write_text("Type = Measurement Set\n")
+    return cal_ms
+
+
 def test_present_corrected_column_reads_true(fake_ms, monkeypatch):
     ms, workdir = fake_ms
+    _make_calibrators_ms(workdir)
     monkeypatch.setattr(
         workflow_status,
         "open_table",
@@ -116,6 +124,53 @@ def test_present_corrected_column_reads_true(fake_ms, monkeypatch):
 
     assert corrected["value"] is True
     assert corrected["flag"] == "COMPLETE"
+
+
+def test_corrected_is_probed_on_calibrators_ms_not_on_the_passed_ms(fake_ms, monkeypatch):
+    """
+    The CORRECTED_DATA probe must read workdir/calibrators.ms, never `ms_path`.
+
+    Regression guard. When it read `ms_path`, the same workdir returned a
+    different next_recommended_step depending on which MS the caller passed,
+    with nothing in the output recording which one was read. Here the passed MS
+    would answer True and calibrators.ms answers False; the result must follow
+    calibrators.ms.
+    """
+    ms, workdir = fake_ms
+    cal_ms = _make_calibrators_ms(workdir)
+    opened: list[str] = []
+
+    def _open(path, *_args, **_kwargs):
+        opened.append(path)
+        if path.endswith("/STATE"):
+            return _table(nrows=3, colnames=[])
+        # The passed MS claims CORRECTED; calibrators.ms does not.
+        if path.startswith(str(cal_ms)):
+            return _table(nrows=1, colnames=["DATA"])
+        return _table(nrows=1, colnames=["DATA", "CORRECTED_DATA"])
+
+    monkeypatch.setattr(workflow_status, "open_table", _open)
+
+    result = _run(ms, workdir)
+
+    assert result["data"]["corrected_populated"]["value"] is False
+    assert str(cal_ms) in opened
+    assert str(ms) not in opened  # the passed MS main table is never read
+    assert result["data"]["probed"]["corrected_from"] == str(cal_ms)
+    assert result["data"]["probed"]["intents_from"] == str(ms)
+
+
+def test_corrected_not_probed_before_calibrators_ms_exists(fake_ms, monkeypatch):
+    """Without calibrators.ms there is nothing to probe, and it must say so."""
+    ms, workdir = fake_ms
+    monkeypatch.setattr(workflow_status, "open_table", _fake_main_table(colnames=["DATA"]))
+
+    result = _run(ms, workdir)
+    corrected = result["data"]["corrected_populated"]
+
+    assert corrected["value"] is False
+    assert "does not exist yet" in corrected["note"]
+    assert result["data"]["probed"]["corrected_from"] is None
 
 
 # --- helpers -----------------------------------------------------------------

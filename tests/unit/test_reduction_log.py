@@ -105,3 +105,144 @@ class TestReductionLog:
 
         with pytest.raises(ComputationError):
             run("list", str(tmp_path / "nope"))
+
+
+class TestSupersededMSCheck:
+    """
+    render must refuse to emit a replay script when a calibration or imaging
+    step uses an MS that a later step replaced.
+
+    Why this matters: the ALMA prior-cal split REPLACES the working MS. The old
+    MS still exists and still opens, but its data has no priors applied. A
+    replay that reaches back to it produces a wrong image and no error. The VLA
+    calibrators.ms split is NOT a replacement — later steps correctly return to
+    the full MS — so supersession is declared per step, never inferred.
+    """
+
+    def test_no_supersession_declared_leaves_check_ineffective_and_says_so(self, tmp_path):
+        wd = str(tmp_path)
+        run("append", wd, tool="ms_gaincal", params={"ms_path": "/d/cal.ms"})
+        out = run("render", wd)
+
+        assert out["data"]["order_violations"] == []
+        assert out["data"]["n_supersessions_declared"]["value"] == 0
+        # A check that cannot fail must not read as evidence.
+        eff = out["data"]["check_effective"]
+        assert eff["value"] is False
+        assert "could not fail" in eff["note"]
+
+    def test_vla_style_return_to_full_ms_is_not_a_violation(self, tmp_path):
+        """calibrators.ms is a side branch; going back to the full MS is correct."""
+        wd = str(tmp_path)
+        run("append", wd, tool="ms_apply_preflag", params={"ms_path": "/d/raw.ms"})
+        run("append", wd, tool="ms_bandpass", params={"ms_path": "/d/calibrators.ms"})
+        run("append", wd, tool="ms_applycal", params={"ms_path": "/d/raw.ms"})
+        run("append", wd, tool="ms_tclean", params={"ms_path": "/d/raw.ms"})
+        out = run("render", wd)
+
+        assert out["data"]["order_violations"] == []
+        assert (tmp_path / "reduction_replay.py").exists()
+
+    def test_using_a_superseded_ms_refuses_to_render(self, tmp_path):
+        from ms_inspect.exceptions import ComputationError
+
+        wd = str(tmp_path)
+        run("append", wd, tool="ms_apply_preflag", params={"ms_path": "/d/raw.ms"})
+        run(
+            "append",
+            wd,
+            tool="ms_apply_priorcals_split",
+            params={"ms_path": "/d/science.ms"},
+            supersedes="/d/raw.ms",
+        )
+        # Wrong: images the pre-split MS, which has no priors applied.
+        run("append", wd, tool="ms_tclean", params={"ms_path": "/d/raw.ms"})
+
+        with pytest.raises(ComputationError) as exc:
+            run("render", wd)
+
+        msg = str(exc.value)
+        assert "/d/raw.ms" in msg
+        assert "ms_tclean" in msg
+        # No script may be left behind for someone to run by mistake.
+        assert not (tmp_path / "reduction_replay.py").exists()
+
+    def test_flagging_a_superseded_ms_is_allowed(self, tmp_path):
+        """Flagging the pre-split MS stays valid; only cal/imaging must move on."""
+        wd = str(tmp_path)
+        run(
+            "append",
+            wd,
+            tool="ms_apply_priorcals_split",
+            params={"ms_path": "/d/science.ms"},
+            supersedes="/d/raw.ms",
+        )
+        run("append", wd, tool="ms_apply_rflag", params={"ms_path": "/d/raw.ms"})
+        out = run("render", wd)
+
+        assert out["data"]["order_violations"] == []
+        assert out["data"]["check_effective"]["value"] is True
+
+    def test_supersession_is_recorded_and_reported(self, tmp_path):
+        wd = str(tmp_path)
+        run(
+            "append",
+            wd,
+            tool="ms_apply_priorcals_split",
+            params={"ms_path": "/d/science.ms"},
+            supersedes="/d/raw.ms",
+        )
+        out = run("render", wd)
+        chain = out["data"]["ms_chain"]
+
+        assert len(chain) == 1
+        assert chain[0]["replaced"] == "/d/raw.ms"
+        assert chain[0]["with"] == "/d/science.ms"
+        assert (
+            json.loads((tmp_path / "reduction_log.jsonl").read_text().splitlines()[0])["supersedes"]
+            == "/d/raw.ms"
+        )
+
+
+class TestReplayScriptMSVariables:
+    """Each MS is declared once and referenced by variable, so a replay cannot
+    end up half on one MS and half on another without it being visible."""
+
+    def test_ms_paths_become_declared_variables(self, tmp_path):
+        wd = str(tmp_path)
+        run("append", wd, tool="ms_bandpass", params={"ms_path": "/d/calibrators.ms"})
+        run("append", wd, tool="ms_tclean", params={"ms_path": "/d/science.ms"})
+        run("render", wd)
+        text = (tmp_path / "reduction_replay.py").read_text()
+
+        assert "calibrators_ms = '/d/calibrators.ms'" in text
+        assert "science_ms = '/d/science.ms'" in text
+        # Referenced by variable, not repeated as a literal in the call.
+        assert "ms_path=calibrators_ms," in text
+        assert "ms_path=science_ms," in text
+        assert "ms_path='/d/calibrators.ms'" not in text
+
+    def test_supersession_is_commented_in_the_script(self, tmp_path):
+        wd = str(tmp_path)
+        run(
+            "append",
+            wd,
+            tool="ms_apply_priorcals_split",
+            params={"ms_path": "/d/science.ms"},
+            supersedes="/d/raw.ms",
+        )
+        run("render", wd)
+        text = (tmp_path / "reduction_replay.py").read_text()
+
+        assert "REPLACED" in text
+        assert "/d/raw.ms" in text
+
+    def test_distinct_ms_with_same_basename_get_distinct_variables(self, tmp_path):
+        wd = str(tmp_path)
+        run("append", wd, tool="ms_bandpass", params={"ms_path": "/a/cal.ms"})
+        run("append", wd, tool="ms_gaincal", params={"ms_path": "/b/cal.ms"})
+        run("render", wd)
+        text = (tmp_path / "reduction_replay.py").read_text()
+
+        assert "cal_ms = '/a/cal.ms'" in text
+        assert "cal_ms_2 = '/b/cal.ms'" in text

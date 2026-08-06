@@ -61,20 +61,34 @@ def run(ms_path: str, workdir: str) -> dict:
     bp0 = wd / "BP0.b"
     initial_bandpass_present = init_gain.exists() and bp0.exists()
 
-    # 7. CORRECTED populated (check MS main table column)
+    # 7. CORRECTED populated
     #
-    # The MAIN table always exists when ms_valid, so there is no "has not
-    # happened yet" case here: any exception is a genuine read failure and
-    # is reported as such rather than as an absent column.
+    # Probed on a NAMED MS, not on the `ms_path` argument. The ladder reaches
+    # this branch only after calibrators.ms exists, and the step it gates
+    # (initial rflag + applycal) operates on calibrators.ms — so calibrators.ms
+    # is what "corrected" means here.
+    #
+    # Probing `ms_path` instead made the answer depend on which MS the caller
+    # happened to pass: the same workdir returned a different
+    # next_recommended_step for the raw MS and for calibrators.ms, with nothing
+    # in the output recording which one was read. Deriving the path from workdir
+    # removes the caller from the decision entirely.
+    #
+    # The MAIN table always exists when the MS is valid, so there is no "has not
+    # happened yet" case here: any exception is a genuine read failure and is
+    # reported as such rather than as an absent column.
     corrected_populated: bool | None = False
     corrected_error: str | None = None
-    try:
-        with open_table(ms_str) as tb:
-            casa_calls.append("tb.open(MAIN) for colnames")
-            corrected_populated = "CORRECTED_DATA" in set(tb.colnames())
-    except Exception as exc:
-        corrected_populated = None
-        corrected_error = f"{type(exc).__name__}: {exc}"
+    corrected_probed_path: str | None = None
+    if calibrators_ms_present:
+        corrected_probed_path = str(calibrators_ms)
+        try:
+            with open_table(corrected_probed_path) as tb:
+                casa_calls.append(f"tb.open({corrected_probed_path}) for colnames")
+                corrected_populated = "CORRECTED_DATA" in set(tb.colnames())
+        except Exception as exc:
+            corrected_populated = None
+            corrected_error = f"{type(exc).__name__}: {exc}"
 
     # 8. Final caltables present
     final_tables = ["delay.K", "bandpass.B", "gain.G", "gain.fluxscaled"]
@@ -132,8 +146,22 @@ def run(ms_path: str, workdir: str) -> dict:
         "corrected_populated": (
             field(None, "UNAVAILABLE", note=f"MAIN colnames read failed: {corrected_error}")
             if corrected_populated is None
-            else field(corrected_populated)
+            else field(
+                corrected_populated,
+                note=(
+                    f"probed {corrected_probed_path}"
+                    if corrected_probed_path is not None
+                    else "not probed — calibrators.ms does not exist yet"
+                ),
+            )
         ),
+        # Which MS each MS-reading probe actually opened. Without this the two
+        # probes below are indistinguishable from each other in the output, and
+        # a wrong answer looks identical to a right one.
+        "probed": {
+            "intents_from": ms_str,
+            "corrected_from": corrected_probed_path,
+        },
         "final_caltables_present": final_caltables_present,
         "first_image_present": field(first_image_present),
         "workdir": str(wd),
