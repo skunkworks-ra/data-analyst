@@ -32,6 +32,7 @@ from ms_inspect.util.conversions import (
 )
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.science_spw import NoScienceSpwError, select_science_spws
 from ms_inspect.util.telescope import profile_from_name
 
 TOOL_NAME = "ms_sdm_summary"
@@ -163,8 +164,14 @@ def run(sdm_path: str) -> dict:
     # --- SpectralWindow: per-SPW setup -------------------------------------
     spw_rows = _rows(sdm, "SpectralWindow")
     spws = []
-    ref_freq_hz = None
     covers_hi = False
+    # Per-window facts kept for the band decision below. The band must NOT come
+    # from whichever window happens to be first: on ALMA the first 32 windows are
+    # the 183 GHz water-vapour radiometer, which reported Band 5 for a Band 6
+    # dataset. See util/science_spw.py.
+    spw_ref_freqs: dict[int, float] = {}
+    spw_nchan: dict[int, int] = {}
+    spw_name_map: dict[int, str] = {}
     for i, r in enumerate(spw_rows):
         nch = _text(r, "numChan")
         n_chan = int(nch) if nch and nch.isdigit() else 0
@@ -174,8 +181,9 @@ def run(sdm_path: str) -> dict:
         rf_hz = float(rf) if rf else 0.0
         bw_hz = float(bw) if bw else 0.0
         cw_hz = float(cw) if cw else 0.0
-        if ref_freq_hz is None and rf_hz:
-            ref_freq_hz = rf_hz
+        spw_ref_freqs[i] = rf_hz
+        spw_nchan[i] = n_chan
+        spw_name_map[i] = _text(r, "name") or ""
         mode, reasoning = _classify_spectral_mode(cw_hz, bw_hz, n_chan)
         # Does this SPW span the HI line? (USB assumed from chanFreqStart upward.)
         fstart = _text(r, "chanFreqStart")
@@ -252,6 +260,42 @@ def run(sdm_path: str) -> dict:
 
     # --- Derived: band + max target elevation (EVLA geometry only) ----------
     _tp = profile_from_name(telescope) if telescope else None
+
+    # Pick the window the band is inferred from.
+    #
+    # ALMA only: restrict to science windows first. This runs BEFORE the MS
+    # exists, so there are no intents to reason from — only the structural
+    # signals (window name and channel count) are available. That is weaker than
+    # the intent rule the MS-side tools use, but it is sufficient here: excluding
+    # the water-vapour windows by name leaves windows 1-24, all Band 6.
+    ref_freq_hz: float | None = None
+    band_note = "from SPW reference frequency"
+    if _tp and _tp.canonical == "ALMA" and spw_ref_freqs:
+        try:
+            sel = select_science_spws(
+                n_chan=spw_nchan,
+                intents_per_spw=None,
+                spw_names=spw_name_map,
+            )
+            science = [s for s in sel.science if spw_ref_freqs.get(s)]
+            if science:
+                ref_freq_hz = spw_ref_freqs[science[0]]
+                band_note = (
+                    f"from the reference frequency of SPW {science[0]}, the first of "
+                    f"{len(sel.science)} science windows. Water-vapour and "
+                    f"frequency-averaged windows are excluded — inferring the band "
+                    f"from the first window reports the wrong band on ALMA data. "
+                    f"Selection is structural (name + channel count) because "
+                    f"intents do not exist before import."
+                )
+        except NoScienceSpwError as exc:
+            warnings.append(
+                f"Could not identify a science spectral window, so the band is "
+                f"inferred from the first window and may be wrong: {exc}"
+            )
+    if ref_freq_hz is None:
+        ref_freq_hz = next((f for f in spw_ref_freqs.values() if f), None)
+
     band = _tp.band_label(ref_freq_hz) if (_tp and ref_freq_hz) else None
     max_el = None
     if telescope and ("VLA" in telescope.upper()) and target_decs_deg:
@@ -279,7 +323,7 @@ def run(sdm_path: str) -> dict:
         "start_utc": fmt_field(start_utc) if start_utc else fmt_field(None, "UNAVAILABLE"),
         "end_utc": fmt_field(end_utc) if end_utc else fmt_field(None, "UNAVAILABLE"),
         "duration": fmt_field(duration) if duration else fmt_field(None, "UNAVAILABLE"),
-        "band_inferred": fmt_field(band, "INFERRED", note="from SPW reference frequency")
+        "band_inferred": fmt_field(band, "INFERRED", note=band_note)
         if band
         else fmt_field(None, "UNAVAILABLE", note="telescope or frequency missing"),
         "n_spw": fmt_field(len(spws)),

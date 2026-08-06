@@ -131,3 +131,94 @@ class TestRun:
         (tmp_path / "empty").mkdir()
         with pytest.raises(ASDMNotFoundError):
             run(str(tmp_path / "empty"))
+
+
+def _write_alma_sdm(root):
+    """
+    Minimal ALMA SDM with the window ORDER that caused the band defect: the
+    water-vapour windows come first, so "first window wins" reports Band 5 for a
+    Band 6 dataset.
+    """
+    sdm = root / "sdm"
+    sdm.mkdir()
+    (sdm / "ASDM.xml").write_text("<ASDM/>\n")
+    (sdm / "ExecBlock.xml").write_text(
+        "<ExecBlockTable><row>"
+        f"<startTime>{_T0}</startTime><endTime>{_T1}</endTime>"
+        "<configName>A</configName>"
+        "<telescopeName>ALMA</telescopeName>"
+        "<observerName>knakanishi</observerName>"
+        "<numAntenna>31</numAntenna>"
+        "</row></ExecBlockTable>"
+    )
+    rows = []
+    # Two water-vapour windows at 183 GHz — Band 5 territory — listed FIRST.
+    for i in range(2):
+        rows.append(
+            "<row><netSideband>DSB</netSideband><numChan>4</numChan>"
+            "<refFreq>1.833E11</refFreq><totBandwidth>7.5E9</totBandwidth>"
+            "<chanFreqStart>1.833E11</chanFreqStart><chanWidth>1.5E9</chanWidth>"
+            f"<name>WVR#{'NOMINAL' if i == 0 else f'Antenna_{i - 1}'}</name></row>"
+        )
+    # A frequency-averaged science window, then a full-resolution one.
+    rows.append(
+        "<row><netSideband>LSB</netSideband><numChan>1</numChan>"
+        "<refFreq>2.2487E11</refFreq><totBandwidth>1.78E9</totBandwidth>"
+        "<chanFreqStart>2.2487E11</chanFreqStart><chanWidth>1.78E9</chanWidth>"
+        "<name>ALMA_RB_06#BB_1#SW-01#CH_AVG</name></row>"
+    )
+    rows.append(
+        "<row><netSideband>LSB</netSideband><numChan>64</numChan>"
+        "<refFreq>2.25E11</refFreq><totBandwidth>2.0E9</totBandwidth>"
+        "<chanFreqStart>2.25E11</chanFreqStart><chanWidth>3.125E7</chanWidth>"
+        "<name>ALMA_RB_06#BB_1#SW-01#FULL_RES</name></row>"
+    )
+    (sdm / "SpectralWindow.xml").write_text(
+        "<SpectralWindowTable>" + "".join(rows) + "</SpectralWindowTable>"
+    )
+    (sdm / "Polarization.xml").write_text(
+        "<PolarizationTable><row><corrType>1 4 XX XY YX YY</corrType></row></PolarizationTable>"
+    )
+    (sdm / "Scan.xml").write_text(
+        "<ScanTable><row><sourceName>3c286</sourceName>"
+        "<scanIntent>1 1 OBSERVE_TARGET</scanIntent></row></ScanTable>"
+    )
+    (sdm / "Field.xml").write_text(
+        "<FieldTable><row><fieldName>3c286</fieldName>"
+        "<referenceDir>1 2 3.5392577776 0.5324852109</referenceDir></row></FieldTable>"
+    )
+    return sdm
+
+
+class TestBandFromScienceWindowOnly:
+    """
+    Regression guard. The band was inferred from the FIRST window with a
+    non-zero reference frequency. On ALMA the first 32 windows are the 183 GHz
+    water-vapour radiometer, so a Band 6 dataset reported "Band 5".
+    """
+
+    def test_water_vapour_windows_do_not_drive_the_band(self, tmp_path):
+        _write_alma_sdm(tmp_path)
+        d = run(str(tmp_path))["data"]
+        assert d["band_inferred"]["value"] == "Band 6 (211–275 GHz)"
+
+    def test_note_records_which_window_and_that_selection_is_structural(self, tmp_path):
+        _write_alma_sdm(tmp_path)
+        note = run(str(tmp_path))["data"]["band_inferred"]["note"]
+        assert "science windows" in note
+        # Before the MS exists there are no intents, and the note must admit it.
+        assert "structural" in note
+
+    def test_frequency_averaged_window_does_not_drive_the_band(self, tmp_path):
+        """The CH_AVG window sits at 224.87 GHz — same band here, so the band
+        alone cannot prove it was skipped. Assert on the chosen window index."""
+        _write_alma_sdm(tmp_path)
+        note = run(str(tmp_path))["data"]["band_inferred"]["note"]
+        assert "SPW 3" in note  # the FULL_RES window, not the CH_AVG one at 2
+
+    def test_non_alma_band_inference_is_unchanged(self, tmp_path):
+        """The restriction is ALMA-only; VLA must keep the old note and value."""
+        _write_sdm(tmp_path, line=True, telescope="EVLA")
+        d = run(str(tmp_path))["data"]
+        assert d["band_inferred"]["note"] == "from SPW reference frequency"
+        assert d["band_inferred"]["value"] is not None
