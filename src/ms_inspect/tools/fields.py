@@ -14,7 +14,7 @@ import math
 
 import numpy as np
 
-from ms_inspect.util.calibrators import infer_intents_from_role
+from ms_inspect.util.calibrators import CalibratorEntry, infer_intents_from_role
 from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, validate_ms_path
 from ms_inspect.util.conversions import rad_to_deg, rad_to_dms, rad_to_hms
@@ -152,7 +152,7 @@ def run(ms_path: str) -> dict:
             cal_resolved = field(None, flag="UNAVAILABLE")
 
         # --- VLA calibrator positional cross-match ---
-        vla_cal_match_field = _vla_positional_match(ra_deg, dec_deg)
+        vla_cal_match_field = _vla_positional_match(ra_deg, dec_deg, cal_entry)
 
         # --- Intents ---
         if intents:
@@ -485,12 +485,30 @@ def _infer_roles_from_scan_pattern(
 def _vla_positional_match(
     ra_deg: float | None,
     dec_deg: float | None,
+    cal_entry: CalibratorEntry | None = None,
 ) -> dict:
     """
     Attempt a positional cross-match against the VLA calibrator database.
 
     Returns a formatted field() dict with the match result.
+
+    Solar-system bodies are skipped deliberately. They move, so the recorded
+    phase centre is a position at one epoch and not an identity. A cone search
+    on it either finds nothing or — worse — lands on an unrelated VLA
+    calibrator that happens to sit near the ecliptic, and reports a confident
+    match. Skipping is stated in the note, not left silent.
     """
+    if cal_entry is not None and cal_entry.solar_system:
+        return field(
+            None,
+            flag="UNAVAILABLE",
+            note=(
+                f"Positional cross-match not attempted: {cal_entry.canonical_name} is a "
+                "solar-system body, so its phase centre is an epoch-dependent position "
+                "rather than an identity."
+            ),
+        )
+
     if ra_deg is None or dec_deg is None:
         return field(None, flag="UNAVAILABLE", note="No coordinates for VLA positional match")
 
