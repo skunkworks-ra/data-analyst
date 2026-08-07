@@ -194,7 +194,11 @@ ms_phase_cal_lookup(
 ### When to call this
 
 During Phase 1 orientation (after `ms_field_list`), for every field whose
-`calibrator_role` or `calibrator_match` suggests it is a phase calibrator.
+`field_role` or `calibrator_match` suggests it is a phase calibrator.
+`field_role` is `["phase"]` when the field's own scan intents say so. A
+`field_role` flagged `INFERRED` came from the catalogue because the field had
+no intents — treat it as suitability, not as evidence of how this observation
+used the source.
 Do this before recommending a calibration strategy — a W-quality source
 at A-config changes the entire calibration approach.
 

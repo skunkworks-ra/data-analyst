@@ -140,11 +140,20 @@ Archival and converted data routinely has incomplete metadata. The following fou
 
 **Symptom:** `msmd.intentsforfield()` returns empty sets, or all fields have intent `""`  
 **Cause:** UVFITS conversion, early MeerKAT data, GMRT LTA exports  
-**Strategy:**
-1. Detect: if fewer than 50% of scans have non-empty intents, trigger heuristic mode.
-2. Infer from field names against a bundled calibrator catalogue (see §3.5).
-3. Return inferred intents tagged `INFERRED` with confidence score.
-4. Fields that cannot be matched are tagged `UNKNOWN_INTENT`.
+**Strategy — the decision is per FIELD, not per MS:**
+1. The field has intents → its role is derived from them, flagged `COMPLETE`.
+2. The field has none, but its name matches the bundled catalogue (see §3.5) → the catalogue role, flagged `INFERRED`. The note must say this is what the source is *suitable for*, not evidence of how this observation used it.
+3. Neither → `UNAVAILABLE`. No guess is substituted.
+
+**Why per field.** An earlier revision gated step 2 on a whole-MS coverage threshold: below 50% of fields carrying intents, the catalogue fallback switched on for everything; at or above it, the fallback was unreachable. A single field missing its intents inside an otherwise well-populated MS therefore got no role at all, even where the catalogue could have answered. Coverage is a property of the MS; having intents is a property of the field, and only the second one should decide.
+
+The 50% threshold survives as *reporting* only — it raises a warning that overall intent coverage is thin. It no longer steers behaviour.
+
+**Intents lose to nothing, and beat the catalogue.** Where both speak and their role sets are **disjoint**, the intents win and a warning names both sides. Disjointness is the test, not inequality: a source the catalogue lists as flux *and* bandpass, used here as bandpass only, is a narrower truth rather than a contradiction. The case this exists for is a catalogue flux calibrator whose intents say `OBSERVE_TARGET` — real, and observed on ALMA 3C286 Band 6 data.
+
+**Role vocabulary.** Intents name more roles than the catalogue can: `flux`, `bandpass`, `phase`, `amplitude`, `delay`, `polangle`, `polleakage`, `target`, `check`. The response field is therefore `field_role`, not `calibrator_role` — `target` is not a kind of calibrator. `catalogue_role` carries the catalogue's answer alongside it as a cross-check.
+
+Technical intents that ride along on calibrators and targets alike — `CALIBRATE_ATMOSPHERE`, `CALIBRATE_POINTING`, `CALIBRATE_WVR` and friends — yield **no** role. They record what was measured, not what the field is for; mapping them would give every ALMA field a role.
 
 ### 3.2 Missing or Unknown Telescope Name
 

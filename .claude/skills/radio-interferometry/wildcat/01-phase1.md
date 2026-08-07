@@ -21,7 +21,8 @@ Note total duration:
 | Check | Pass | Action |
 |-------|------|--------|
 | At least 1 flux cal + 1 phase cal + 1 target | All present | Missing role → flag in summary |
-| `heuristic_intents == false` | Intents explicit | true → verify inferred roles against scan time fractions |
+| Every `field_role.flag == "COMPLETE"` | Roles from intents | Any `INFERRED` → catalogue guess; verify against scan time fractions |
+| No role-disagreement warning | Intents and catalogue agree | Disagreement → intents win; check `catalogue_role` and confirm the flux field |
 | Any `resolved_source == true` | None | Use component model; see `00-core.md` resolved calibrator table |
 | Any `ra_j2000_deg.flag == "SUSPECT"` | None | Elevation + PA UNAVAILABLE for that field |
 | Multiple fields with same `source_id` | None | Mosaic — flag; imaging strategy differs |

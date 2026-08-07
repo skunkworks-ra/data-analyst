@@ -14,7 +14,12 @@ import math
 
 import numpy as np
 
-from ms_inspect.util.calibrators import CalibratorEntry, infer_intents_from_role
+from ms_inspect.util.calibrators import (
+    CalibratorEntry,
+    infer_intents_from_role,
+    role_from_intents,
+    roles_disagree,
+)
 from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, validate_ms_path
 from ms_inspect.util.conversions import rad_to_deg, rad_to_dms, rad_to_hms
@@ -23,8 +28,10 @@ from ms_inspect.util.vla_calibrators import cone_search as vla_cone_search
 
 TOOL_NAME = "ms_field_list"
 
-# Threshold: if fewer than this fraction of fields have non-empty intents,
-# switch to heuristic inference mode.
+# Coverage below this raises a warning, and enables the whole-MS scan-pattern
+# inference. It does NOT decide any field's role — that is per field, from that
+# field's own intents. The response reports the raw fraction and its inputs, so
+# the skill can apply its own threshold.
 _INTENT_COVERAGE_THRESHOLD = 0.50
 
 # Coordinates suspiciously close to (0, 0) — almost certainly a broken export.
@@ -110,8 +117,10 @@ def run(ms_path: str) -> dict:
         warnings.append(
             f"Only {n_with_intents}/{n_fields} fields have scan intent metadata "
             f"({intent_fraction * 100:.0f}% coverage, threshold {_INTENT_COVERAGE_THRESHOLD * 100:.0f}%). "
-            "Switching to heuristic intent inference from field names via calibrator catalogue. "
-            "Inferred intents are tagged INFERRED — verify before use."
+            "Roles are still resolved per field: a field WITH intents uses them. "
+            "Fields without intents fall back to the calibrator catalogue and are "
+            "tagged INFERRED — check those individually rather than trusting this "
+            "MS-wide figure."
         )
 
     # ------------------------------------------------------------------
@@ -140,41 +149,87 @@ def run(ms_path: str) -> dict:
                 flag="COMPLETE",
                 note=f"Matched '{name}' to catalogue entry '{cal_entry.canonical_name}'",
             )
-            cal_role = field(cal_entry.role, flag="COMPLETE")
+            catalogue_role = field(
+                cal_entry.role,
+                flag="COMPLETE",
+                note=(
+                    f"What the catalogue lists {cal_entry.canonical_name} as suitable for. "
+                    "A cross-check against the intents, not the answer."
+                ),
+            )
             cal_standard = field(cal_entry.flux_standard, flag="COMPLETE")
             cal_resolved = field(cal_entry.resolved, flag="COMPLETE")
             if cal_entry.notes:
                 warnings.append(f"[{name}] {cal_entry.notes}")
         else:
             cal_match = field(None, flag="UNAVAILABLE", note="Not in bundled calibrator catalogue")
-            cal_role = field(None, flag="UNAVAILABLE")
+            catalogue_role = field(None, flag="UNAVAILABLE")
             cal_standard = field(None, flag="UNAVAILABLE")
             cal_resolved = field(None, flag="UNAVAILABLE")
+
+        # --- Role resolution: this field's own intents decide ---
+        #
+        # Per FIELD, deliberately. The old code gated the catalogue fallback on
+        # a whole-MS coverage threshold, so one field missing its intents inside
+        # a well-populated MS got no role at all, even where the catalogue could
+        # have answered for it. Coverage is a property of the MS; having intents
+        # is a property of the field.
+        intent_roles = role_from_intents(intents) if intents else []
+        catalogue_roles = cal_entry.role if cal_entry else []
+
+        if intent_roles:
+            role_out = field(
+                intent_roles,
+                flag="COMPLETE",
+                note="Derived from this field's scan intents.",
+            )
+        elif catalogue_roles:
+            role_out = field(
+                catalogue_roles,
+                flag="INFERRED",
+                note=(
+                    "No intents name a role for this field. This is what the catalogue "
+                    f"lists {cal_entry.canonical_name} as suitable for — not evidence of "
+                    "how this observation used it."
+                ),
+            )
+        else:
+            role_out = field(
+                None,
+                flag="UNAVAILABLE",
+                note="No scan intents name a role, and the field is not in the catalogue.",
+            )
+
+        if roles_disagree(intent_roles, catalogue_roles):
+            warnings.append(
+                f"[{name}] Intents and catalogue DISAGREE about this field's role. "
+                f"The MS's scan intents say {intent_roles}; the catalogue lists "
+                f"{cal_entry.canonical_name} as {catalogue_roles}. "
+                "The intents win — they describe this observation, while the catalogue "
+                "describes the source. Verify before calibrating."
+            )
 
         # --- VLA calibrator positional cross-match ---
         vla_cal_match_field = _vla_positional_match(ra_deg, dec_deg, cal_entry)
 
         # --- Intents ---
+        # Also per field. The catalogue fallback used to require heuristic_mode,
+        # which meant a lone field missing its intents was never offered it.
         if intents:
             intent_field = field(sorted(intents), flag="COMPLETE")
-        elif heuristic_mode and cal_entry:
+        elif cal_entry:
             inferred = infer_intents_from_role(cal_entry.role)
             intent_field = field(
                 inferred,
                 flag="INFERRED",
                 note=f"Inferred from calibrator catalogue role: {cal_entry.role}",
             )
-        elif heuristic_mode and scan_sequence:
-            # Defer: will be filled by scan-pattern inference below
-            intent_field = field(
-                [], flag="UNAVAILABLE", note="No intents in MS and no catalogue match for inference"
-            )
-        elif heuristic_mode:
-            intent_field = field(
-                [], flag="UNAVAILABLE", note="No intents in MS and no catalogue match for inference"
-            )
         else:
-            intent_field = field([], flag="UNAVAILABLE", note="No intents recorded for this field")
+            intent_field = field(
+                [],
+                flag="UNAVAILABLE",
+                note="No intents recorded for this field and no catalogue match for inference",
+            )
 
         record = {
             "field_id": fid,
@@ -190,7 +245,10 @@ def run(ms_path: str) -> dict:
             "dec_dms": dec_dms,
             "intents": intent_field,
             "calibrator_match": cal_match,
-            "calibrator_role": cal_role,
+            # field_role, not calibrator_role: the vocabulary includes 'target',
+            # which is not a kind of calibrator.
+            "field_role": role_out,
+            "catalogue_role": catalogue_role,
             "flux_standard": cal_standard,
             "resolved_source": cal_resolved,
             "vla_cal_match": vla_cal_match_field,
@@ -235,7 +293,7 @@ def run(ms_path: str) -> dict:
     # Classify fields into phase_cals and targets
     phase_cal_records = []
     for rec in fields_out:
-        role_field = rec.get("calibrator_role", {})
+        role_field = rec.get("field_role", {})
         role_val = role_field.get("value") if isinstance(role_field, dict) else role_field
         intents_field = rec.get("intents", {})
         intents_val = (
@@ -255,7 +313,7 @@ def run(ms_path: str) -> dict:
             phase_cal_records.append({"name": rec["name"], "ra": ra, "dec": dec})
 
     for rec in fields_out:
-        role_field = rec.get("calibrator_role", {})
+        role_field = rec.get("field_role", {})
         role_val = role_field.get("value") if isinstance(role_field, dict) else role_field
         intents_field = rec.get("intents", {})
         intents_val = (
@@ -310,7 +368,16 @@ def run(ms_path: str) -> dict:
 
     data = {
         "n_fields": n_fields,
-        "heuristic_intents": heuristic_mode,
+        # A measurement, not a verdict. This used to be a boolean
+        # `heuristic_intents`, set from the threshold below — but once role
+        # resolution became per field, that boolean no longer described any
+        # field's role, and it was wrong in both directions: true while a field
+        # with intents used them, false while a field without intents fell back
+        # to the catalogue. The per-field `field_role` flag is the answer; this
+        # is the coverage statistic, with its inputs, for the skill to threshold
+        # as it sees fit.
+        "n_fields_with_intents": n_with_intents,
+        "intent_coverage_fraction": round(intent_fraction, 4),
         "fields": fields_out,
     }
 

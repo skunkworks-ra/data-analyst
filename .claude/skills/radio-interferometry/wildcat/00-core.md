@@ -52,7 +52,10 @@ commissioned Band 1 — check the profile before labelling a band.
 | `SYSTEM_CONFIGURATION` | Slew / setup / dummy — exclude from calibration |
 | `UNSPECIFIED` | No intent — treat as unknown; infer from field name |
 
-If `heuristic_intents==true`: intents were inferred from field names. Treat as `INFERRED` quality.
+Roles resolve per field. Read each field's `field_role` flag: `COMPLETE` means the
+role came from that field's own intents, `INFERRED` means the field had none and
+the calibrator catalogue answered instead. `intent_coverage_fraction` is an MS-wide
+statistic only — it does not tell you about any individual field.
 
 ## Calibrator role taxonomy
 

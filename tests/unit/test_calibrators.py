@@ -16,6 +16,8 @@ from ms_inspect.util.calibrators import (
     is_known_calibrator,
     lookup,
     resolved_warning_message,
+    role_from_intents,
+    roles_disagree,
 )
 
 # ---------------------------------------------------------------------------
@@ -300,3 +302,67 @@ class TestSolarSystemEntries:
         entry = lookup("3C286")
         assert entry is not None
         assert entry.solar_system is False
+
+
+# ---------------------------------------------------------------------------
+# Intent -> role mapping
+# ---------------------------------------------------------------------------
+
+
+class TestRoleFromIntents:
+    def test_suffix_is_ignored(self):
+        # ALMA writes ON_SOURCE, the VLA writes UNSPECIFIED. Same role.
+        assert role_from_intents(["CALIBRATE_FLUX#ON_SOURCE"]) == ["flux"]
+        assert role_from_intents(["CALIBRATE_FLUX#UNSPECIFIED"]) == ["flux"]
+
+    def test_bare_intent_without_suffix(self):
+        assert role_from_intents(["OBSERVE_TARGET"]) == ["target"]
+
+    def test_multiple_roles_are_sorted_and_deduplicated(self):
+        got = role_from_intents(
+            [
+                "CALIBRATE_BANDPASS#ON_SOURCE",
+                "CALIBRATE_FLUX#ON_SOURCE",
+                "CALIBRATE_FLUX#UNSPECIFIED",
+            ]
+        )
+        assert got == ["bandpass", "flux"]
+
+    def test_technical_intents_yield_no_role(self):
+        # These ride along on calibrators and targets alike. Mapping them would
+        # give every ALMA field a role.
+        assert role_from_intents(["CALIBRATE_ATMOSPHERE#ON_SOURCE"]) == []
+        assert role_from_intents(["CALIBRATE_POINTING#ON_SOURCE"]) == []
+        assert role_from_intents(["CALIBRATE_WVR#ON_SOURCE"]) == []
+
+    def test_technical_intents_do_not_mask_a_real_one(self):
+        got = role_from_intents(["CALIBRATE_ATMOSPHERE#ON_SOURCE", "OBSERVE_TARGET#ON_SOURCE"])
+        assert got == ["target"]
+
+    def test_unrecognised_intent_is_ignored_not_guessed(self):
+        assert role_from_intents(["SOMETHING_NEW#ON_SOURCE"]) == []
+
+    def test_empty_input(self):
+        assert role_from_intents([]) == []
+
+    def test_round_trips_with_infer_intents_from_role(self):
+        # The two functions are inverses over the catalogue's own vocabulary.
+        for role in (["flux"], ["bandpass"], ["flux", "bandpass"]):
+            assert role_from_intents(infer_intents_from_role(role)) == sorted(role)
+
+
+class TestRolesDisagree:
+    def test_disjoint_sets_disagree(self):
+        # The ALMA 3C286 case: intents say target, catalogue says flux cal.
+        assert roles_disagree(["target"], ["flux", "bandpass"]) is True
+
+    def test_overlap_is_a_narrower_truth_not_a_contradiction(self):
+        assert roles_disagree(["bandpass"], ["flux", "bandpass"]) is False
+
+    def test_identical_sets_agree(self):
+        assert roles_disagree(["flux", "bandpass"], ["flux", "bandpass"]) is False
+
+    def test_nothing_to_compare_against_is_not_disagreement(self):
+        assert roles_disagree([], ["flux"]) is False
+        assert roles_disagree(["target"], []) is False
+        assert roles_disagree([], []) is False

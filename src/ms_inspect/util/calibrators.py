@@ -22,6 +22,7 @@ No CASA dependency.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 # ---------------------------------------------------------------------------
@@ -620,6 +621,90 @@ def infer_intents_from_role(role: list[str]) -> list[str]:
         "bandpass": "CALIBRATE_BANDPASS#ON_SOURCE",
     }
     return [intent_map[r] for r in role if r in intent_map]
+
+
+# Intent prefix -> role. The inverse of infer_intents_from_role, but over a
+# WIDER vocabulary: the catalogue only ever says 'flux' or 'bandpass', while
+# intents also name the phase calibrator, the target, and the polarisation
+# standards.
+#
+# Keyed on the part before '#', because the suffix is telescope-specific:
+# ALMA writes CALIBRATE_FLUX#ON_SOURCE, the VLA CALIBRATE_FLUX#UNSPECIFIED.
+_INTENT_PREFIX_TO_ROLE: dict[str, str] = {
+    "CALIBRATE_FLUX": "flux",
+    "CALIBRATE_AMPLI": "amplitude",
+    "CALIBRATE_BANDPASS": "bandpass",
+    "CALIBRATE_PHASE": "phase",
+    "CALIBRATE_DELAY": "delay",
+    "CALIBRATE_POL_ANGLE": "polangle",
+    "CALIBRATE_POL_LEAKAGE": "polleakage",
+    "CALIBRATE_POLARIZATION": "polarization",
+    "OBSERVE_TARGET": "target",
+    "OBSERVE_CHECK_SOURCE": "check",
+    "OBSERVE_CHECK": "check",
+}
+
+# Technical intents that ride along on calibrators and targets alike. They say
+# what was measured, not what the field is for, so they must yield no role —
+# otherwise every ALMA field acquires one.
+_NON_ROLE_INTENT_PREFIXES: frozenset[str] = frozenset(
+    {
+        "CALIBRATE_ATMOSPHERE",
+        "CALIBRATE_POINTING",
+        "CALIBRATE_WVR",
+        "CALIBRATE_SIDEBAND_RATIO",
+        "CALIBRATE_FOCUS",
+        "CALIBRATE_FOCUS_X",
+        "CALIBRATE_FOCUS_Y",
+        "CALIBRATE_ANTENNA_POSITION",
+        "CALIBRATE_ANTENNA_PHASE",
+        "CALIBRATE_ANTENNA_POINTING_MODEL",
+        "CALIBRATE_DIFFGAIN",
+        "MAP_ANTENNA_SURFACE",
+        "SYSTEM_CONFIGURATION",
+        "UNSPECIFIED",
+    }
+)
+
+
+def role_from_intents(intents: Iterable[str]) -> list[str]:
+    """
+    Map a field's scan intents to calibration roles.
+
+    Returns a sorted list of roles, or [] when the intents name none. An empty
+    result is meaningful: it says the intents carry no role information, which
+    is the case for a field marked only with technical intents such as
+    CALIBRATE_ATMOSPHERE. It does NOT mean the field has no intents.
+
+    Unrecognised intents are ignored rather than guessed at.
+    """
+    roles: set[str] = set()
+    for intent in intents:
+        prefix = str(intent).split("#", 1)[0].strip().upper()
+        if not prefix or prefix in _NON_ROLE_INTENT_PREFIXES:
+            continue
+        role = _INTENT_PREFIX_TO_ROLE.get(prefix)
+        if role is not None:
+            roles.add(role)
+    return sorted(roles)
+
+
+def roles_disagree(intent_roles: list[str], catalogue_roles: list[str]) -> bool:
+    """
+    True when the intent-derived roles and the catalogue roles contradict.
+
+    The test is DISJOINTNESS, not inequality. A source the catalogue lists as
+    both flux and bandpass, used in this observation as bandpass only, is a
+    narrower truth rather than a contradiction. A source the catalogue calls a
+    flux calibrator whose intents say TARGET shares nothing, and that is the
+    case worth shouting about.
+
+    Two empty sets cannot disagree; neither can a comparison with nothing to
+    compare against.
+    """
+    if not intent_roles or not catalogue_roles:
+        return False
+    return not (set(intent_roles) & set(catalogue_roles))
 
 
 def is_known_calibrator(field_name: str) -> bool:

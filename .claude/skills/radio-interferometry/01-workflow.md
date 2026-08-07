@@ -37,11 +37,26 @@ tool's results make sense.
 
 **You are asking:** What targets and calibrators were observed?
 
-**Decision gate — CHECK completeness:**
-- If `heuristic_intents == true`: intents were inferred from field names.
-  Cross-check inferred intents against scan time fractions in Step 1.4.
+**Decision gate — CHECK completeness, per field:**
+- Read each field's `field_role` flag, not the MS-wide summary. `COMPLETE`
+  means the role came from that field's own scan intents. `INFERRED` means the
+  field had no intents, so the role is the catalogue's view of what the source
+  is *suitable for* — not evidence of how this observation used it.
+  Cross-check every `INFERRED` role against scan time fractions in Step 1.4.
   A field inferred as flux calibrator that received 90% of the time is
   probably wrong — re-examine.
+- `intent_coverage_fraction` (with `n_fields_with_intents` and `n_fields`
+  beside it) reports only how much of the MS carries intents at all. A low
+  figure does **not** mean every field was inferred, and a high one does not
+  mean none was. Threshold it however your situation warrants — the per-field
+  flag remains the answer for any given field.
+- **A role disagreement is a warning you must not skip.** When a field's
+  intents and the catalogue contradict, `field_role` follows the intents,
+  `catalogue_role` keeps the catalogue's answer, and a warning names both. The
+  intents describe this observation; the catalogue describes the source. A
+  catalogue flux calibrator whose intents say target is real — it happens on
+  ALMA data — and calibrating on the catalogue answer there would put the flux
+  scale on the wrong field.
 
 **What to note:**
 - Number of fields and their roles. Minimum viable calibration requires:

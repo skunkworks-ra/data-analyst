@@ -549,18 +549,23 @@ async def ms_field_list(params: MSPathInput) -> str:
     """
     Layer 1, Tool 2: List all observed fields with J2000 coordinates and calibration roles.
 
-    Cross-matches field names against the bundled calibrator catalogue to identify
-    flux calibrators, bandpass calibrators, and resolved sources.
-
-    When scan intents are absent (<50% coverage), falls back to heuristic
-    intent inference from field names. Inferred intents are tagged INFERRED.
+    A field's role comes from its own scan intents. Where a field has no
+    intents, the bundled calibrator catalogue answers instead, tagged INFERRED.
+    The decision is per field, not per MS.
 
     Args:
         params.ms_path: Path to the Measurement Set.
 
     Returns:
         JSON array of field records: field_id, name, ra/dec in deg and HMS/DMS,
-        intents, calibrator_match, calibrator_role, flux_standard, resolved_source.
+        intents, calibrator_match, field_role, catalogue_role, flux_standard,
+        resolved_source.
+
+        field_role is the answer. Its vocabulary is wider than the catalogue's:
+        flux, bandpass, phase, amplitude, delay, polangle, polleakage, target,
+        check. catalogue_role is what the catalogue lists the source as
+        suitable for, retained as a cross-check. When the two contradict, the
+        intents win and a warning names both sides.
     """
     return await _run_tool(fields.run, params.ms_path)
 
