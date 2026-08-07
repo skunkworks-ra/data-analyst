@@ -25,9 +25,30 @@ from ms_inspect.tools.fields import run as field_list_run
 class FakeMsmd:
     """Minimal stand-in for casatools.msmetadata, for ms_field_list only."""
 
-    def __init__(self, specs):
+    def __init__(self, specs, spws_for_field=None, chan_freqs=None, wvr_spws=None):
         # specs: list of (name, intents, ra_deg, dec_deg) indexed by field id
         self._specs = specs
+        # Frequency support is opt-in. When it is absent the accessors raise, as
+        # they would on an msmd build lacking them, and the tool must degrade to
+        # UNAVAILABLE rather than fail.
+        self._spws_for_field = spws_for_field
+        self._chan_freqs = chan_freqs or {}
+        self._wvr_spws = wvr_spws
+
+    def spwsforfield(self, fid):
+        if self._spws_for_field is None:
+            raise AttributeError("spwsforfield")
+        return list(self._spws_for_field[fid])
+
+    def chanfreqs(self, spw):
+        if spw not in self._chan_freqs:
+            raise RuntimeError(f"no such spw {spw}")
+        return list(self._chan_freqs[spw])
+
+    def wvrspws(self):
+        if self._wvr_spws is None:
+            raise AttributeError("wvrspws")
+        return list(self._wvr_spws)
 
     def fieldnames(self):
         return [s[0] for s in self._specs]
@@ -60,10 +81,10 @@ class FakeMsmd:
         return [base, base + 300.0]
 
 
-def _patch(monkeypatch, specs):
+def _patch(monkeypatch, specs, **msmd_kwargs):
     @contextmanager
     def fake_open(_ms_path):
-        yield FakeMsmd(specs)
+        yield FakeMsmd(specs, **msmd_kwargs)
 
     monkeypatch.setattr(fields_mod, "open_msmd", fake_open)
     monkeypatch.setattr(fields_mod, "validate_ms_path", lambda p: p)
@@ -286,3 +307,85 @@ class TestIntentCoverageIsReportedNotGated:
         high_rec = _rec(field_list_run("/fake.ms"), "3C286")
 
         assert low_rec["field_role"] == high_rec["field_role"]
+
+
+# Frequency is per field, not per MS: 3C286 here is observed in the two science
+# windows only, Ceres in one of them. An MS-wide read would give both the same
+# answer and would be wrong for Ceres.
+_ALMA_SPWS = {0: [0, 1, 2], 1: [1]}
+_ALMA_CHAN_FREQS = {
+    # ALMA Band 6, two science windows, frequencies in Hz.
+    1: [2.240e11, 2.245e11, 2.250e11],
+    2: [2.360e11, 2.365e11, 2.370e11],
+    # A water-vapour-radiometer window. Real, and nowhere near the science band.
+    0: [1.8310e11, 1.8315e11],
+}
+
+
+class TestObservingFrequency:
+    """Stage 1 of the flux-standard work: read the frequency, per field."""
+
+    def test_span_covers_only_the_spws_the_field_was_observed_in(self, monkeypatch):
+        _patch(
+            monkeypatch,
+            _ALMA_CONTRADICTION,
+            spws_for_field=_ALMA_SPWS,
+            chan_freqs=_ALMA_CHAN_FREQS,
+            wvr_spws=[0],
+        )
+        result = field_list_run("/fake.ms")
+
+        c286 = _val(_rec(result, "3C286"), "observing_frequency")
+        assert c286["n_spw"] == 2
+        assert abs(c286["min_ghz"] - 224.0) < 1e-6
+        assert abs(c286["max_ghz"] - 237.0) < 1e-6
+        assert abs(c286["centre_ghz"] - 230.5) < 1e-6
+
+        # Ceres saw one window. Its span must be narrower, not the MS-wide span.
+        ceres = _val(_rec(result, "Ceres"), "observing_frequency")
+        assert ceres["n_spw"] == 1
+        assert abs(ceres["min_ghz"] - 224.0) < 1e-6
+        assert abs(ceres["max_ghz"] - 225.0) < 1e-6
+
+    def test_wvr_window_is_excluded_and_the_exclusion_is_reported(self, monkeypatch):
+        _patch(
+            monkeypatch,
+            _ALMA_CONTRADICTION,
+            spws_for_field=_ALMA_SPWS,
+            chan_freqs=_ALMA_CHAN_FREQS,
+            wvr_spws=[0],
+        )
+        rec = _rec(field_list_run("/fake.ms"), "3C286")
+        # 183 GHz would have become the reported minimum had it leaked through.
+        assert _val(rec, "observing_frequency")["min_ghz"] > 200.0
+        assert "WVR" in rec["observing_frequency"]["note"]
+
+    def test_without_a_wvr_accessor_no_window_is_dropped(self, monkeypatch):
+        # A VLA MS: msmd has no wvrspws(), so the tool must not silently drop
+        # spectral windows it cannot classify.
+        _patch(
+            monkeypatch,
+            _ALMA_CONTRADICTION,
+            spws_for_field=_ALMA_SPWS,
+            chan_freqs=_ALMA_CHAN_FREQS,
+        )
+        rec = _rec(field_list_run("/fake.ms"), "3C286")
+        assert _val(rec, "observing_frequency")["n_spw"] == 3
+
+    def test_missing_spw_metadata_degrades_to_unavailable(self, monkeypatch):
+        # The pre-existing fake has no frequency accessors at all.
+        _patch(monkeypatch, _VLA_FULL_INTENTS)
+        rec = _rec(field_list_run("/fake.ms"), "3C286")
+        assert _flag(rec, "observing_frequency") == "UNAVAILABLE"
+        assert _val(rec, "observing_frequency") is None
+
+    def test_unreadable_spw_does_not_lose_the_readable_ones(self, monkeypatch):
+        _patch(
+            monkeypatch,
+            _ALMA_CONTRADICTION,
+            spws_for_field={0: [1, 99], 1: [1]},
+            chan_freqs={1: [2.240e11, 2.250e11]},
+        )
+        rec = _rec(field_list_run("/fake.ms"), "3C286")
+        assert _flag(rec, "observing_frequency") == "COMPLETE"
+        assert abs(_val(rec, "observing_frequency")["max_ghz"] - 225.0) < 1e-6

@@ -106,6 +106,13 @@ def run(ms_path: str) -> dict:
         except Exception:
             scan_sequence = []
 
+        # Observing frequency per field. This tool was field-only until now; the
+        # read is here because frequency is what decides whether a flux standard
+        # applies to a source (see FLUX_STANDARD_DESIGN.md 2.2), and the answer
+        # is per FIELD — a field is only observed in the SpWs it was observed in.
+        field_freqs = _field_frequencies(msmd, n_fields)
+        casa_calls.append("msmd.spwsforfield(field_id) + msmd.chanfreqs(spw) for each field")
+
     # ------------------------------------------------------------------
     # Determine if we're in intent-inference mode
     # ------------------------------------------------------------------
@@ -231,6 +238,31 @@ def run(ms_path: str) -> dict:
                 note="No intents recorded for this field and no catalogue match for inference",
             )
 
+        # --- Observing frequency ---
+        fq = field_freqs[fid] if fid < len(field_freqs) else None
+        if fq and fq["min_ghz"] is not None:
+            fq_note = (
+                f"Span of the {fq['n_spw']} spectral window(s) this field was observed in"
+            )
+            if fq["excluded_spw"]:
+                fq_note += f"; {fq['excluded_spw']} WVR/square-law window(s) excluded"
+            freq_out = field(
+                {
+                    "min_ghz": round(fq["min_ghz"], 6),
+                    "max_ghz": round(fq["max_ghz"], 6),
+                    "centre_ghz": round(fq["centre_ghz"], 6),
+                    "n_spw": fq["n_spw"],
+                },
+                flag="COMPLETE",
+                note=fq_note,
+            )
+        else:
+            freq_out = field(
+                None,
+                flag="UNAVAILABLE",
+                note="No readable spectral window for this field",
+            )
+
         record = {
             "field_id": fid,
             "name": name,
@@ -244,6 +276,7 @@ def run(ms_path: str) -> dict:
             "ra_hms": ra_hms,
             "dec_dms": dec_dms,
             "intents": intent_field,
+            "observing_frequency": freq_out,
             "calibrator_match": cal_match,
             # field_role, not calibrator_role: the vocabulary includes 'target',
             # which is not a kind of calibrator.
@@ -393,6 +426,87 @@ def run(ms_path: str) -> dict:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _field_frequencies(msmd, n_fields: int) -> list[dict]:
+    """
+    Observed frequency coverage per field, in GHz.
+
+    Returns one dict per field id with keys ``min_ghz``, ``max_ghz``,
+    ``centre_ghz``, ``n_spw`` and ``excluded_spw`` — or all-None when the field
+    has no usable spectral window.
+
+    Two deliberate choices:
+
+    - Coverage is the span across the SpWs THIS field was observed in, not the
+      MS-wide span. A flux calibrator observed only in a subset of the SpWs must
+      be judged on that subset.
+    - ALMA water-vapour-radiometer and square-law-detector windows are dropped
+      where the MS declares them. A WVR window sits near 183 GHz and would
+      otherwise drag the reported span far off the science band. The count of
+      what was dropped is reported rather than hidden.
+    """
+    skip_spws: set[int] = set()
+    for probe in ("wvrspws", "almaspws"):
+        try:
+            fn = getattr(msmd, probe)
+            skip_spws.update(int(s) for s in (fn(sqld=True) if probe == "almaspws" else fn()))
+        except Exception:
+            # Not an ALMA MS, or this msmd build has no such accessor. Neither is
+            # an error: a non-ALMA MS has no WVR windows to exclude.
+            continue
+
+    out: list[dict] = []
+    for fid in range(n_fields):
+        empty = {
+            "min_ghz": None,
+            "max_ghz": None,
+            "centre_ghz": None,
+            "n_spw": 0,
+            "excluded_spw": 0,
+        }
+        try:
+            spws = [int(s) for s in msmd.spwsforfield(fid)]
+        except Exception:
+            out.append(empty)
+            continue
+
+        kept = [s for s in spws if s not in skip_spws]
+        n_excluded = len(spws) - len(kept)
+
+        lo: float | None = None
+        hi: float | None = None
+        for spw in kept:
+            try:
+                freqs = np.asarray(msmd.chanfreqs(spw), dtype=float)
+            except Exception:
+                continue
+            freqs = freqs[np.isfinite(freqs)]
+            if freqs.size == 0:
+                continue
+            f_lo = float(freqs.min()) / 1e9
+            f_hi = float(freqs.max()) / 1e9
+            lo = f_lo if lo is None else min(lo, f_lo)
+            hi = f_hi if hi is None else max(hi, f_hi)
+
+        if lo is None or hi is None:
+            empty["excluded_spw"] = n_excluded
+            out.append(empty)
+            continue
+
+        out.append(
+            {
+                "min_ghz": lo,
+                "max_ghz": hi,
+                # Midpoint of the observed span, NOT a bandwidth-weighted mean.
+                # It exists to name the band in one number; the gate should use
+                # min/max, because a span can straddle a model's edge.
+                "centre_ghz": 0.5 * (lo + hi),
+                "n_spw": len(kept),
+                "excluded_spw": n_excluded,
+            }
+        )
+    return out
 
 
 def _extract_coords(

@@ -558,8 +558,12 @@ async def ms_field_list(params: MSPathInput) -> str:
 
     Returns:
         JSON array of field records: field_id, name, ra/dec in deg and HMS/DMS,
-        intents, calibrator_match, field_role, catalogue_role, flux_standard,
-        resolved_source.
+        intents, observing_frequency, calibrator_match, field_role,
+        catalogue_role, flux_standard, resolved_source.
+
+        observing_frequency gives min_ghz/max_ghz/centre_ghz/n_spw across the
+        spectral windows THIS field was observed in, so it can differ between
+        fields of one MS. ALMA water-vapour-radiometer windows are excluded.
 
         field_role is the answer. Its vocabulary is wider than the catalogue's:
         flux, bandpass, phase, amplitude, delay, polangle, polleakage, target,
