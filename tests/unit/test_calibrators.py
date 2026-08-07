@@ -138,7 +138,7 @@ _RESOLVED_ENTRY = CalibratorEntry(
     role=["flux"],
     telescopes=["VLA"],
     resolved=True,
-    flux_standard="Perley-Butler-2017",
+    flux_standard="Perley-Butler 2017",
     safe_uv_range_klambda={
         "L-band (1-2 GHz)": UVRangeEntry(max_klambda=0.5, reference="test ref"),
     },
@@ -152,7 +152,7 @@ _UNRESOLVED_ENTRY = CalibratorEntry(
     role=["flux", "bandpass"],
     telescopes=["VLA"],
     resolved=False,
-    flux_standard="Perley-Butler-2017",
+    flux_standard="Perley-Butler 2017",
 )
 
 
@@ -192,3 +192,111 @@ class TestResolvedWarningMessage:
         assert msg is not None
         assert "WARNING" in msg
         assert "≤0.5 kλ" in msg
+
+
+# ---------------------------------------------------------------------------
+# Catalogue data invariants
+#
+# These guard the data itself, not the lookup logic. Each one exists because
+# the value it checks was wrong at some point and the error was silent.
+# ---------------------------------------------------------------------------
+
+# CASA's own standard strings, spelled as setjy accepts them.
+_CASA_STANDARDS = {
+    "Perley-Butler 2017",
+    "Stevens-Reynolds 2016",
+    "Butler-JPL-Horizons 2012",
+}
+
+
+class TestCatalogueDataInvariants:
+    def test_every_standard_is_a_real_casa_string(self):
+        # A hyphen before the year (our old spelling) is silently accepted by
+        # the catalogue and rejected by setjy.
+        for entry in CATALOGUE:
+            if entry.flux_standard is None:
+                continue
+            assert entry.flux_standard in _CASA_STANDARDS, (
+                f"{entry.canonical_name} names a standard CASA does not accept: "
+                f"{entry.flux_standard!r}"
+            )
+
+    def test_no_alias_maps_to_two_different_sources(self):
+        # _normalise strips separators, so two unrelated names can collapse
+        # onto one key. Whichever entry is listed first would silently win.
+        seen: dict[str, str] = {}
+        for entry in CATALOGUE:
+            for name in [entry.canonical_name, *entry.aka]:
+                key = _normalise(name)
+                other = seen.setdefault(key, entry.canonical_name)
+                assert other == entry.canonical_name, (
+                    f"alias {name!r} normalises to {key!r}, which already belongs to {other}"
+                )
+
+    def test_frequency_ranges_are_ordered_and_positive(self):
+        for entry in CATALOGUE:
+            if entry.freq_range_ghz is None:
+                continue
+            lo, hi = entry.freq_range_ghz
+            assert 0.0 < lo < hi, f"{entry.canonical_name} has range {entry.freq_range_ghz}"
+
+    def test_per_source_ranges_are_not_all_the_standard_range(self):
+        # The defect this replaces was a single per-standard range. If every
+        # Perley-Butler source shares one range, that regression is back.
+        pb = {e.freq_range_ghz for e in CATALOGUE if e.flux_standard == "Perley-Butler 2017"}
+        assert len(pb) > 1, "Perley-Butler sources must carry per-source ranges"
+
+    def test_fornax_a_is_the_narrow_case(self):
+        # Fornax A is valid over 0.2-0.5 GHz. Under a per-standard range it
+        # would pass at 50 GHz, which is the bug in miniature.
+        entry = lookup("Fornax A")
+        assert entry is not None
+        assert entry.freq_range_ghz == (0.2, 0.5)
+
+    def test_source_with_no_casa_standard_is_none_not_a_string(self):
+        entry = lookup("PKS0408-65")
+        assert entry is not None
+        assert entry.flux_standard is None, (
+            "PKS0408-65 has no CASA standard; it must route to a manual flux"
+        )
+
+    def test_all_twenty_perley_butler_sources_are_present(self):
+        pb = [e.canonical_name for e in CATALOGUE if e.flux_standard == "Perley-Butler 2017"]
+        assert len(pb) == 20, f"expected 20 Perley-Butler 2017 sources, found {len(pb)}: {pb}"
+
+
+class TestSolarSystemEntries:
+    def test_fifteen_bodies_present(self):
+        bodies = [e for e in CATALOGUE if e.solar_system]
+        assert len(bodies) == 15
+
+    def test_all_use_the_horizons_standard(self):
+        for entry in CATALOGUE:
+            if entry.solar_system:
+                assert entry.flux_standard == "Butler-JPL-Horizons 2012"
+
+    def test_ranges_are_unknown_not_invented(self):
+        # CASA documents no per-object validity range for this standard.
+        # None means unknown; no caller may gate on it.
+        for entry in CATALOGUE:
+            if entry.solar_system:
+                assert entry.freq_range_ghz is None
+
+    def test_all_marked_resolved(self):
+        # Apparent diameter is ephemeris-dependent and even Lutetia is
+        # resolved on ALMA long baselines. False would fail silently.
+        for entry in CATALOGUE:
+            if entry.solar_system:
+                assert entry.resolved is True
+
+    def test_ceres_resolves(self):
+        # The ALMA test dataset's flux calibrator, absent before this change.
+        entry = lookup("Ceres")
+        assert entry is not None
+        assert entry.solar_system is True
+        assert "flux" in entry.role
+
+    def test_fixed_sources_are_not_marked_solar_system(self):
+        entry = lookup("3C286")
+        assert entry is not None
+        assert entry.solar_system is False

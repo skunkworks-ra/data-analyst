@@ -205,120 +205,66 @@ Partial antenna tables (some antennas fully described, some orphaned) follow the
 
 ### 3.5 Bundled Calibrator Catalogue
 
-A compact, bundled JSON catalogue covers the primary and bandpass calibrators for the three target telescopes. Scope is intentionally restricted to calibrators — phase calibrators are field-specific and not listed here. This catalogue is used for:
+> **Canonical source: `src/ms_inspect/util/calibrators.py`.**
+> The catalogue is a list of `CalibratorEntry` dataclasses in that module. It
+> is not a JSON file and never has been. Read the entries there; this section
+> describes only the schema and the rules that govern it.
+>
+> Earlier revisions of this document inlined a copy of the catalogue data. That
+> copy drifted — it kept eight entries and a set of flux-standard strings CASA
+> does not accept, long after the module had been corrected. Do not reintroduce
+> a second copy here.
+
+A compact, bundled catalogue covers the primary and bandpass calibrators for the supported telescopes, plus the solar-system bodies ALMA uses as flux standards. Scope is intentionally restricted to calibrators — phase calibrators are field-specific and not listed here. This catalogue is used for:
 1. Intent inference (§3.1) — identifying calibrator fields when intents are absent
 2. Flux model validation — checking that the named source has a known flux standard
 3. Resolved source detection — warning when a calibrator requires a component model
 
 #### Catalogue Schema
 
-```json
-{
-  "3C286": {
-    "aka": ["1331+305", "J1331+3030", "1331+3030"],
-    "role": ["flux", "bandpass"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": false,
-    "flux_standard": "Perley-Butler-2017",
-    "notes": "Primary flux and bandpass calibrator for VLA. Linearly polarised ~11% at L-band."
-  },
-  "3C48": {
-    "aka": ["0137+331", "J0137+3309"],
-    "role": ["flux", "bandpass"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": false,
-    "flux_standard": "Perley-Butler-2017",
-    "notes": "Slightly variable at high frequencies. Avoid for polarisation calibration."
-  },
-  "3C147": {
-    "aka": ["0538+498", "J0542+4951"],
-    "role": ["flux"],
-    "telescopes": ["VLA"],
-    "resolved": false,
-    "flux_standard": "Perley-Butler-2017",
-    "notes": null
-  },
-  "3C138": {
-    "aka": ["0518+165", "J0521+1638"],
-    "role": ["flux", "bandpass"],
-    "telescopes": ["VLA"],
-    "resolved": false,
-    "flux_standard": "Perley-Butler-2017",
-    "notes": "Linearly polarised. Useful for R-L phase calibration."
-  },
-  "PKS1934-638": {
-    "aka": ["1934-638", "J1939-6342", "PKS1934"],
-    "role": ["flux", "bandpass"],
-    "telescopes": ["MeerKAT"],
-    "resolved": false,
-    "flux_standard": "Reynolds-1994",
-    "notes": "Primary flux and bandpass calibrator for MeerKAT and ATCA."
-  },
-  "PKS0408-65": {
-    "aka": ["0408-658", "J0408-6545", "PKS0408"],
-    "role": ["flux"],
-    "telescopes": ["MeerKAT"],
-    "resolved": false,
-    "flux_standard": "Stevens-2004",
-    "notes": "Secondary flux calibrator for MeerKAT when 1934 is unavailable."
-  },
-  "CasA": {
-    "aka": ["CAS-A", "J2323+5848", "3C461"],
-    "role": ["flux"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": true,
-    "flux_standard": "Perley-Butler-2017",
-    "safe_uv_range_klambda": {
-      "P-band (230-470 MHz)": { "max_klambda": 2.0,  "reference": "Perley & Butler 2017" },
-      "L-band (1-2 GHz)":     { "max_klambda": 0.5,  "reference": "estimated — use component model" }
+`CalibratorEntry` fields, in declaration order:
+
+| field | type | meaning |
+|---|---|---|
+| `canonical_name` | `str` | the name reported back to the caller |
+| `aka` | `list[str]` | alternative names and coordinate strings, matched after normalisation |
+| `role` | `list[str]` | `'flux'`, `'bandpass'` — what the source is *suitable for*, not what a given observation used it for |
+| `telescopes` | `list[str]` | `'VLA'`, `'MeerKAT'`, `'uGMRT'`, `'ALMA'` |
+| `resolved` | `bool` | needs a component model on long baselines; drives §3.5 handling below |
+| `flux_standard` | `str \| None` | CASA's own standard string, or `None` |
+| `freq_range_ghz` | `tuple[float, float] \| None` | this source's validity range under its standard |
+| `solar_system` | `bool` | moving target; position is not a discriminator |
+| `notes` | `str \| None` | free text surfaced to the caller as a warning |
+| `safe_uv_range_klambda` | `dict[str, UVRangeEntry]` | per-band safe maximum baseline; see below |
+| `casa_model_available` | `bool` | a CASA component model ships for this source |
+| `casa_model_name` | `str \| None` | that model's name, for the `setjy` call |
+
+Three rules constrain the data, each enforced by a test in `tests/unit/test_calibrators.py`:
+
+1. **`flux_standard` is spelled exactly as `setjy` accepts it** — a space before the year, not a hyphen. `'Perley-Butler 2017'`, not `'Perley-Butler-2017'`. `None` means CASA has no standard for the source, and it must be given an explicit manual flux density. It must never be routed to a standard string. PKS0408-65 is the case that forces this.
+
+2. **`freq_range_ghz` is per source, not per standard.** Perley-Butler 2017 spans 0.05–50 GHz *as a standard*, but Fornax A within it is valid only over 0.2–0.5 GHz. A single per-standard range would pass Fornax A at 50 GHz. `None` means the range is **unknown to us** — callers must not read it as unbounded and must not gate on it.
+
+3. **`solar_system` marks a moving target.** Both the name lookup and the VLA positional cross-match must skip the coordinate test rather than mismatch on it. Every solar-system body carries `resolved=True`: apparent diameter varies over the synodic cycle, and even the smallest is resolved on ALMA's long baselines, so `False` would fail silently in the dangerous direction.
+
+Shape of a single entry, for orientation only — the values below are illustrative, not current:
+
+```python
+CalibratorEntry(
+    canonical_name="CygA",
+    aka=["cyg-a", "cyga", "j1959+4044", "3c405", "cygnus-a", "cygnus a"],
+    role=["flux"],
+    telescopes=["VLA", "uGMRT"],
+    resolved=True,
+    flux_standard="Perley-Butler 2017",
+    freq_range_ghz=(0.05, 12.0),
+    notes="Cygnus A. Double-lobed radio galaxy. ...",
+    safe_uv_range_klambda={
+        "L-band (1-2 GHz)": UVRangeEntry(max_klambda=50.0, reference="McKean et al. 2016"),
     },
-    "casa_model_available": true,
-    "casa_model_name": "CasA_Epoch2010.0",
-    "notes": "Highly resolved. Flux varies with time (~0.6%/yr decline at GHz freq). Use setjy with component model only."
-  },
-  "CygA": {
-    "aka": ["CYG-A", "J1959+4044", "3C405"],
-    "role": ["flux"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": true,
-    "flux_standard": "Perley-Butler-2017",
-    "safe_uv_range_klambda": {
-      "P-band (230-470 MHz)": { "max_klambda": 5.0,  "reference": "McKean et al. 2016" },
-      "L-band (1-2 GHz)":     { "max_klambda": 50.0, "reference": "McKean et al. 2016" }
-    },
-    "casa_model_available": true,
-    "casa_model_name": "3C405_CygA",
-    "notes": "Double-lobed radio galaxy. Safe as point source on short baselines only. Component model required for VLA B/A config."
-  },
-  "TauA": {
-    "aka": ["TAU-A", "J0534+2200", "3C144", "M1"],
-    "role": ["flux"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": true,
-    "flux_standard": "Perley-Butler-2017",
-    "safe_uv_range_klambda": {
-      "P-band (230-470 MHz)": { "max_klambda": 1.0,  "reference": "estimated" },
-      "L-band (1-2 GHz)":     { "max_klambda": 5.0,  "reference": "estimated" }
-    },
-    "casa_model_available": true,
-    "casa_model_name": "3C144_TauA",
-    "notes": "Crab Nebula. Extended supernova remnant ~7 arcmin. Use component model. Flux varies ~0.2%/yr."
-  },
-  "VirA": {
-    "aka": ["VIR-A", "J1230+1223", "3C274", "M87"],
-    "role": ["flux"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": true,
-    "flux_standard": "Perley-Butler-2017",
-    "safe_uv_range_klambda": {
-      "P-band (230-470 MHz)": { "max_klambda": 3.0,  "reference": "estimated" },
-      "L-band (1-2 GHz)":     { "max_klambda": 20.0, "reference": "estimated" }
-    },
-    "casa_model_available": true,
-    "casa_model_name": "3C274_VirA",
-    "notes": "M87. Compact core + extended lobes. Jet visible on long baselines. Core variable — use carefully."
-  }
-}
+    casa_model_available=True,
+    casa_model_name="3C405_CygA",
+)
 ```
 
 #### Resolved Calibrator Handling Logic
