@@ -582,6 +582,27 @@ def _instrument_line(run_dir: Path) -> str:
 # -- entry points --------------------------------------------------------
 
 
+class BadRunDir(SystemExit):
+    """A wrong --run path, reported as one line rather than a stack trace."""
+
+
+def _resolve_run(args: argparse.Namespace) -> Path:
+    """Turn --run into a checked run directory.
+
+    Every one of these commands is typed by hand from a data directory, so a
+    typo is the common case. Report it plainly.
+    """
+    run_dir = Path(args.run).expanduser().resolve()
+    if not run_dir.is_dir():
+        raise BadRunDir(f"no such run directory: {run_dir}")
+    if not state_mod.state_path(run_dir).is_file():
+        raise BadRunDir(
+            f"{run_dir} holds no run.json, so it is not a run directory. "
+            f"Create one with: analyst-driver init --run-id NAME --ms PATH --goal TEXT"
+        )
+    return run_dir
+
+
 def _locked_tick(run_dir: Path) -> int:
     """One tick, guarded so two copies of the driver cannot both act."""
     lock = run_dir / ".lock"
@@ -595,7 +616,7 @@ def _locked_tick(run_dir: Path) -> int:
 
 
 def cmd_tick(args: argparse.Namespace) -> int:
-    return _locked_tick(Path(args.run).expanduser())
+    return _locked_tick(_resolve_run(args))
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -605,7 +626,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     the science job runs detached, so nothing holds context open across the
     wait.
     """
-    run_dir = Path(args.run).expanduser()
+    run_dir = _resolve_run(args)
     interval = int(load_config(run_dir)["run"]["poll_seconds"])
     while True:
         rc = _locked_tick(run_dir)
@@ -615,7 +636,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    run_dir = Path(args.run).expanduser()
+    run_dir = _resolve_run(args)
     st = state_mod.load(run_dir)
     print(f"{st.run_id}: {st.status} at step {st.step}")
     print(f"  active MS : {st.active_ms}")

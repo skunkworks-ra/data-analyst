@@ -8,19 +8,43 @@ exits. The driver generates the script, submits it, polls it, harvests the
 result, and calls the model again. An eight-hour `tclean` costs two model calls,
 not eight hours of held context.
 
+## Install the command
+
+From inside the repo, `pixi run analyst-driver …` works as a task.
+
+You will normally want to drive a run from the directory the data lives in, and
+`pixi run` cannot find its manifest from there. So put the wrapper on your PATH
+once:
+
+```bash
+ln -s ~/src/skunkworks-ra/radio-analyst/bin/analyst-driver ~/bin/analyst-driver
+```
+
+It resolves the repo from its own location, so it works from anywhere, through
+a symlink, with the same arguments as the task.
+
 ## Run it
 
 ```bash
-pixi run python driver/driver.py init \
+analyst-driver init \
     --run-id 3c286_b6 \
     --ms  ~/data/3c286.ms \
     --goal "Calibrate and image 3C286, Band 6, Stokes IQUV continuum." \
     --recipe vla_continuum
 
-pixi run python driver/driver.py run    --run <run_dir>   # loop until DONE
-pixi run python driver/driver.py tick   --run <run_dir>   # one pass, then exit
-pixi run python driver/driver.py status --run <run_dir>
+analyst-driver run    --run <run_dir>   # loop until DONE
+analyst-driver tick   --run <run_dir>   # one pass, then exit
+analyst-driver status --run <run_dir>
 ```
+
+`init` prints the run directory and the exact next command. Runs are created
+under `[run] root` in `config.toml`; edit that before the first run.
+
+Set `[executor] kind = "dry"` for the first pass. Scripts are generated but
+never executed, so a whole run takes seconds — you get to read the briefs and
+the decisions before any CASA time is spent.
+
+`run` blocks, so use tmux and watch it with `status` from another shell.
 
 `run` is a plain Python loop: tick, sleep `poll_seconds`, tick. Only that small
 process sleeps. Use `tick` from your own bash loop if you would rather own the
@@ -28,7 +52,7 @@ scheduling:
 
 ```bash
 while :; do
-  pixi run python driver/driver.py tick --run "$RUN"; rc=$?
+  analyst-driver tick --run "$RUN"; rc=$?
   [ $rc -eq 0 ] || exit $rc     # 10 = DONE, 20 = a human is needed
   sleep 60
 done

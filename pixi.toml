@@ -65,12 +65,19 @@ test-unit   = { cmd = "pytest tests/unit/ -v" }
 test-int    = { cmd = "pytest tests/integration/ -v" }
 
 # Lint / format
-lint        = { cmd = "ruff check src/ tests/" }
-fmt         = { cmd = "ruff format src/ tests/" }
-fmt-check   = { cmd = "ruff format --check src/ tests/" }
+lint        = { cmd = "ruff check src/ tests/ driver/" }
+fmt         = { cmd = "ruff format src/ tests/ driver/" }
+fmt-check   = { cmd = "ruff format --check src/ tests/ driver/" }
 
 # CI gate — lint + format check in one pass
-check       = { cmd = "ruff check src/ tests/ && ruff format --check src/ tests/" }
+check       = { cmd = "ruff check src/ tests/ driver/ && ruff format --check src/ tests/ driver/" }
+
+# External loop — runs the long jobs and calls a model only between them.
+#   pixi run analyst-driver init --run-id NAME --ms PATH --goal TEXT
+#   pixi run analyst-driver run  --run <run_dir>
+# This task needs the repo as the working directory. To drive a run from a
+# data directory instead, put bin/analyst-driver on your PATH.
+analyst-driver = { cmd = "python driver/driver.py" }
 
 # Local MCP install / uninstall (user scope, bypasses plugin system)
 install-mcp   = { cmd = "bash bin/install-local.sh" }
