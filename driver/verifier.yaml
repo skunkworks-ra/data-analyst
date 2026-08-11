@@ -1,0 +1,61 @@
+# verifier.yaml — the numeric checks the driver runs after every step.
+#
+# The verifier NEVER decides anything. It reads measurements.json, compares the
+# numbers here, and writes its verdict into BRIEF.md section 6 as evidence. The
+# model then decides. This is posterior verification, not prior gating.
+#
+# These numbers are the single source of truth. The skill prose in
+# skills/07, 10 and 11 quotes them; when you change one here, change it there.
+#
+# A rule fires only when its `key` is present in measurements.json. A missing
+# key is reported as NOT CHECKED, never as a pass. A check that cannot fail is
+# not evidence.
+
+rules:
+
+  - key: flag_fraction
+    op: lte
+    value: 0.50
+    applies_to: [ms_apply_preflag, ms_apply_initial_rflag, ms_apply_rflag,
+                 ms_applycal, ms_postcal_flag]
+    message: >-
+      Flag fraction above 0.50. Check the calibrator elevation before you
+      lower the rflag scales — low elevation residuals are atmospheric, not RFI.
+
+  - key: flag_fraction
+    op: lte
+    value: 0.90
+    severity: severe
+    applies_to: [ms_apply_initial_rflag]
+    message: >-
+      Flag fraction above 0.90. An all-field residual rflag after the initial
+      bandpass causes this. Pass an explicit field.
+
+  - key: antenna_common_fraction
+    op: gte
+    value: 0.50
+    applies_to: [ms_applycal]
+    message: >-
+      Fewer than half the antennas have a usable solution in every table.
+      applymode cannot recover an antenna that has no solution at all. Inspect
+      the a-priori flagging and the solve logs.
+
+  - key: antennas_lost
+    op: lte
+    value: 3
+    applies_to: [ms_initial_bandpass, ms_gaincal, ms_bandpass]
+    message: More than three antennas lost their solutions in this solve.
+
+  - key: dynamic_range
+    op: gte
+    value: 100.0
+    applies_to: [ms_tclean]
+    message: >-
+      Dynamic range below 100. A resolved or low surface brightness target can
+      do this legitimately — check the source before you blame the calibration.
+
+  - key: peak_over_rms
+    op: gte
+    value: 5.0
+    applies_to: [ms_tclean]
+    message: No source above five sigma in the image.

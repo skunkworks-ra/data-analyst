@@ -1,0 +1,122 @@
+# whitelist.yaml — the tools the model may call, and nothing else.
+#
+# Deliberately does NOT declare parameter types. validate.py reads the real
+# run() signature with inspect.signature, so this file cannot drift from the
+# code. It declares only what the code cannot tell us:
+#
+#   module   — the package path whose run() implements the tool
+#   script   — the filename run() writes into the step directory
+#   requires — preconditions the driver checks BEFORE it submits
+#   probe    — a read-only ms_inspect call the driver runs AFTER the job, to
+#              produce measurements.json
+#   note     — one line shown to the model in BRIEF.md section 3
+#
+# Precondition kinds:
+#   ms_exists        the active MS is on disk
+#   has_corrected    the active MS has a CORRECTED_DATA column
+#   file_glob: PAT   at least one path matches PAT, relative to the run dir
+#   step_done: TOOL  TOOL has completed OK at least once in this run
+
+tools:
+
+  ms_apply_preflag:
+    module: ms_modify.preflag
+    script: apply_preflag.py
+    requires: [ms_exists]
+    probe: {tool: ms_flag_summary, params: {}}
+    note: A-priori flags — autocorr, shadow, edge channels, quack.
+
+  ms_generate_priorcals:
+    module: ms_modify.priorcals
+    script: generate_priorcals.py
+    requires: [ms_exists]
+    note: gencal tables — gain curve, requantizer, opacity, antenna position.
+
+  ms_initial_bandpass:
+    module: ms_modify.initial_bandpass
+    script: initial_bandpass.py
+    requires: [ms_exists]
+    probe: {tool: ms_calsol_stats, params: {}}
+    note: Delay plus bandpass, then applycal. Pass applycal_field explicitly.
+
+  ms_apply_initial_rflag:
+    module: ms_modify.initial_rflag
+    script: apply_initial_rflag.py
+    requires: [ms_exists, {step_done: ms_initial_bandpass}]
+    probe: {tool: ms_flag_summary, params: {}}
+    note: Residual rflag. field is required and is never blank.
+
+  ms_apply_rflag:
+    module: ms_modify.rflag
+    script: apply_rflag.py
+    requires: [ms_exists, has_corrected]
+    probe: {tool: ms_flag_summary, params: {}}
+    note: rflag on the CORRECTED column.
+
+  ms_flag_caltable:
+    module: ms_modify.flag_caltable
+    script: flag_caltable.py
+    requires: [ms_exists]
+    note: Autoflag a caltable's solutions. Mode follows the VisCal type.
+
+  ms_setjy:
+    module: ms_modify.setjy
+    script: setjy.py
+    requires: [ms_exists]
+    note: Flux model on the flux calibrator. Set usescratch=True if polcal is in scope.
+
+  ms_setjy_polcal:
+    module: ms_modify.setjy_polcal
+    script: setjy_polcal.py
+    requires: [ms_exists]
+    note: Polarized model — probes Stokes I from PB2017, pol terms from catalogue.
+
+  ms_gaincal:
+    module: ms_modify.gaincal
+    script: gaincal.py
+    requires: [ms_exists]
+    probe: {tool: ms_calsol_stats, params: {}}
+    note: Gain solutions. calmode p or ap.
+
+  ms_bandpass:
+    module: ms_modify.bandpass
+    script: bandpass.py
+    requires: [ms_exists]
+    probe: {tool: ms_calsol_stats, params: {}}
+    note: Final bandpass solve.
+
+  ms_fluxscale:
+    module: ms_modify.fluxscale
+    script: fluxscale.py
+    requires: [ms_exists, {file_glob: "steps/*/*.G"}]
+    note: Bootstrap the flux scale. Needs a G caltable on disk.
+
+  ms_polcal:
+    module: ms_modify.polcal
+    script: polcal.py
+    requires: [ms_exists]
+    note: Cross-hand delay, leakage and angle. Feed basis drives the poltype.
+
+  ms_applycal:
+    module: ms_modify.applycal
+    script: applycal.py
+    requires: [ms_exists]
+    probe: {tool: ms_flag_summary, params: {}}
+    note: Apply the solution tables. Choose applymode deliberately.
+
+  ms_postcal_flag:
+    module: ms_modify.postcal_flag
+    script: postcal_flag.py
+    requires: [ms_exists, has_corrected]
+    probe: {tool: ms_flag_summary, params: {}}
+    note: Post-calibration flagging on the CORRECTED column.
+
+  ms_tclean:
+    module: ms_modify.tclean
+    script: tclean.py
+    requires: [ms_exists, has_corrected]
+    probe: {tool: ms_image_stats, params: {}}
+    note: Imaging. All parameters are explicit — the tool derives nothing.
+
+# Parameters the driver always supplies. The model must never send them.
+driver_owned: [ms_path, workdir, execute]

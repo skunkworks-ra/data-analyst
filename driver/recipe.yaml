@@ -1,0 +1,56 @@
+# recipe.yaml — the usual order of steps.
+#
+# This is a MAP, not a rule. The driver never enforces it. It is rendered into
+# BRIEF.md section 4 so the model knows where it is and what normally comes
+# next. The model may leave the road, and must say why when it does.
+#
+# `driver.py init --recipe <key>` picks one. Add a key per telescope or per
+# science case rather than branching inside a single list.
+
+recipes:
+
+  vla_continuum:
+    description: VLA continuum, Stokes I, single pointing or mosaic.
+    order:
+      - ms_apply_preflag
+      - ms_generate_priorcals
+      - ms_initial_bandpass
+      - ms_apply_initial_rflag
+      - ms_setjy
+      - ms_gaincal
+      - ms_bandpass
+      - ms_fluxscale
+      - ms_applycal
+      - ms_postcal_flag
+      - ms_tclean
+
+  vla_polarization:
+    description: VLA continuum with full Stokes. Polarized model set from the start.
+    order:
+      - ms_apply_preflag
+      - ms_generate_priorcals
+      - ms_initial_bandpass
+      - ms_apply_initial_rflag
+      - ms_setjy_polcal
+      - ms_setjy
+      - ms_gaincal
+      - ms_bandpass
+      - ms_polcal
+      - ms_fluxscale
+      - ms_applycal
+      - ms_postcal_flag
+      - ms_tclean
+
+  alma_12m:
+    description: ALMA 12m interferometric. Priors are applied and split into a new MS.
+    order:
+      - ms_apply_preflag
+      - ms_generate_priorcals
+      - ms_applycal          # priors, then split — ALMA bakes them into a new MS
+      - ms_apply_initial_rflag
+      - ms_setjy
+      - ms_gaincal
+      - ms_bandpass
+      - ms_fluxscale
+      - ms_applycal
+      - ms_tclean

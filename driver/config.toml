@@ -1,0 +1,66 @@
+# driver/config.toml — external loop configuration
+#
+# Copied into each run directory at `driver.py init`, so a run keeps the config
+# it started with. Edit the copy in the run directory to change a live run.
+
+[run]
+# Where run directories are created. `driver.py init` makes <root>/<run_id>/.
+root = "~/work/tests/skunkworks/radio-analyst/runs"
+
+# Hard stops enforced by the driver. The model is never told these numbers —
+# it must choose on the science, not on a perceived budget.
+step_cap = 80            # total steps before the run parks
+wall_clock_hours = 48    # elapsed hours before the run parks
+max_refusals = 2         # invalid decision files per step before the run parks
+
+# Cycle detection: refuse if the same (tool, params) hash reappears inside the
+# last N steps. Catches a model bouncing between two steps forever.
+cycle_window = 6
+
+# `driver.py run` sleeps this long between ticks while a job is pending. The
+# model is not in memory during the sleep — only a small Python process is.
+poll_seconds = 60
+
+# History folds after this many steps. The last N always stay in full.
+history_full_steps = 10
+
+[executor]
+# local — run the script under setsid on this machine (corrino)
+# slurm — sbatch the script and poll sacct
+# dry   — write a fake result immediately; for testing the loop itself
+kind = "local"
+
+[executor.slurm]
+account = ""             # empty = detect via ms_modify.slurm.detect_account()
+partition = ""
+nodes = 1
+ntasks = 1
+cpus_per_task = 8
+mem = "60G"
+time = "08:00:00"
+modules = []
+container_cmd = ""
+
+[backend]
+# Which command runs the model. Both entries below get the same input: one
+# file that is PROMPT.md and BRIEF.md concatenated. The decision leaves through
+# a JSON file the prompt names, never through stdout, so the driver does not
+# care which backend ran.
+kind = "claude"
+
+[backend.claude]
+# {prompt_file} — the concatenated prompt; {rundir} — the run directory
+cmd = "claude -p --permission-mode acceptEdits --add-dir {rundir}"
+stdin = "{prompt_file}"        # feed the file on stdin; empty = pass via cmd
+timeout_s = 1800
+
+[backend.opencode]
+# VERIFY the real non-interactive flag before first use.
+cmd = "opencode run --cwd {rundir}"
+stdin = "{prompt_file}"
+timeout_s = 1800
+
+[provenance]
+# Commit the RUN DIRECTORY after every wake. This is a data directory under
+# [run].root — it is never the code repository. `git init` runs on first use.
+git = true
