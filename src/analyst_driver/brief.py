@@ -16,11 +16,12 @@ to finish, which is worse than a run that parks.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
 
-from analyst_driver.validate import precondition_status
+from analyst_driver.validate import Context, precondition_status
 
 SEVERE_FILES = ("casa.log", "stderr", "stdout")
 
@@ -58,6 +59,25 @@ def first_severe(step_dir: Path) -> str:
 
 
 INLINE_LIST_MAX = 8
+
+# The ms_workflow_status booleans worth telling the model about. Its
+# next_recommended_step is deliberately absent — see whitelist.yaml.
+_WORKFLOW_KEYS = (
+    "intents_populated",
+    "online_flags_present",
+    "calibrators_ms_present",
+    "initial_bandpass_present",
+    "corrected_populated",
+    "first_image_present",
+)
+
+
+def _truthy(v: Any) -> bool:
+    if isinstance(v, dict):
+        if v.get("flag") == "UNAVAILABLE":
+            return False
+        v = v.get("value")
+    return bool(v) if not isinstance(v, list) else len(v) > 0
 
 
 def _plain(v: Any) -> Any:
@@ -107,32 +127,47 @@ def _render_measurements(meas: dict[str, Any]) -> str:
 # -- sections -----------------------------------------------------------
 
 
-def _section_data(ms_rows: list[dict[str, Any]], active_ms: str, instrument: str) -> str:
+def _section_data(ms_rows: list[dict[str, Any]], instrument: str, workflow: dict[str, Any]) -> str:
+    """Which MSs exist, what role each plays, and what is already done.
+
+    The role column matters more than it looks: it is how the model knows that
+    a solve will read calibrators.ms without ever naming a path itself.
+    """
     out = [f"## 2. The data                      [refreshed every wake]\n\n{instrument}\n"]
-    out.append(f"  {'MS':<24} {'fields':<34} {'flagged':>8}  active")
+    out.append(f"  {'MS':<24} {'role':<12} {'fields':<30} {'flagged':>8}")
     for r in ms_rows:
         frac = r.get("flag_fraction")
         shown = f"{frac * 100:.1f}%" if isinstance(frac, int | float) else "unknown"
-        active = "YES" if r["path"] == active_ms else "no"
-        out.append(f"  {r['name']:<24} {r.get('fields', '?'):<34} {shown:>8}  {active}")
+        role = r.get("role") or "—"
+        out.append(f"  {r['name']:<24} {role:<12} {r.get('fields', '?'):<30} {shown:>8}")
+    if not ms_rows:
+        out.append("  (no Measurement Set yet — the input is an ASDM and must be imported)")
+
+    done = [k for k in _WORKFLOW_KEYS if _truthy(workflow.get(k))]
+    if done:
+        out.append("\n  already on disk: " + ", ".join(k.replace("_", " ") for k in done))
+    if "probe_error" in workflow:
+        out.append(f"\n  NOTE: {workflow['probe_error']}")
+
     out.append("\nfull summary: cache/ms_summary.json   (you may re-probe with ms-inspect)")
     return "\n".join(out)
 
 
-def _section_tools(
-    whitelist: dict[str, Any], run_dir: Path, active_ms: Path, tools_done: list[str]
-) -> str:
+def _section_tools(whitelist: dict[str, Any], ctx: Context, resolve_ms) -> str:
     out = ["## 3. Tools you may call            [stable]\n"]
     for name, entry in whitelist["tools"].items():
+        tool_ctx = dataclasses.replace(ctx, ms_path=resolve_ms(name))
         unmet = [
             label
             for req in entry.get("requires", [])
-            for met, label in [precondition_status(req, run_dir, active_ms, tools_done)]
+            for met, label in [precondition_status(req, tool_ctx)]
             if not met
         ]
         status = "MET" if not unmet else f"NOT MET — needs {unmet[0]}"
+        role = entry.get("ms_role", "raw")
+        on = f" · reads {tool_ctx.ms_path.name}" if tool_ctx.ms_path else ""
         out.append(f"  {name:<26} {status}")
-        out.append(f"  {'':<26} {entry.get('note', '')}")
+        out.append(f"  {'':<26} [{role}{on}] {entry.get('note', '')}")
     out.append("\nfull schemas: analyst_driver/whitelist.yaml")
     out.append("Do not pass ms_path, workdir or execute. The driver sets them.")
     return "\n".join(out)
@@ -257,11 +292,11 @@ def render(
     goal: str,
     instrument: str,
     ms_rows: list[dict[str, Any]],
-    active_ms: Path,
+    ctx: Context,
+    resolve_ms,
     whitelist: dict[str, Any],
     recipe: dict[str, Any],
     steps: list[dict[str, Any]],
-    tools_done: list[str],
     last: dict[str, Any] | None,
     last_step_dir: Path | None,
     verdict_text: str,
@@ -278,9 +313,9 @@ def render(
         "",
         f"## 1. Goal                          [stable]\n\n{goal}",
         "",
-        _section_data(ms_rows, str(active_ms), instrument),
+        _section_data(ms_rows, instrument, ctx.workflow),
         "",
-        _section_tools(whitelist, run_dir, active_ms, tools_done),
+        _section_tools(whitelist, ctx, resolve_ms),
         "",
         _section_order(recipe),
         "",

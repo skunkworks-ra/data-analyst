@@ -32,7 +32,7 @@ repository.
 ```bash
 analyst-driver init \
     --run-id 3c286_b6 \
-    --ms  ~/data/3c286.ms \
+    --input ~/data/3c286.ms \
     --goal "Calibrate and image 3C286, Band 6, Stokes IQUV continuum." \
     --recipe vla_continuum
 
@@ -50,6 +50,12 @@ override it, so you never edit a file inside the installed package:
 |---|---|
 | `--root DIR` | create the run somewhere else |
 | `--config FILE` | freeze a different `config.toml` into the run |
+
+`--input` takes a **Measurement Set or an ASDM**. The kind is detected from
+disk — a `table.info` naming a Measurement Set, or an `ASDM.xml` — never from
+the flag, so `--ms` pointing at an ASDM still does the right thing. Starting
+from an ASDM simply means the first step must be `ms_import_asdm`; every MS
+tool reads NOT MET until it has run.
 
 `--config` is how you pick a different executor or backend per run. Once frozen,
 `tick` and `run` read the copy in the run directory and never consult the
@@ -97,9 +103,10 @@ Stop a run at the next tick with `touch <run_dir>/STOP`.
 
 ```
 <run_dir>/
-  run.json               step, status, the job in flight — a cache of the rest
+  run.json               step, status, the job in flight, the MS registry
   BRIEF.md               regenerated at every wake
   PROMPT.md              frozen at init, so a repo edit cannot change a live run
+  processed/             EVERY data product: the split MSs, caltables, images
   decisions/NNN.json     what the model chose, and the driver's provenance block
   steps/NNN-<tool>/      script, logs, rc, measurements.json, step.json
   reduction_log.jsonl    the clean path — only calls that succeeded
@@ -107,6 +114,28 @@ Stop a run at the next tick with `touch <run_dir>/STOP`.
   cache/                 MS summary and instrument line
   STOP                   touch this to park the run at the next tick
 ```
+
+`processed/` is one flat directory, not one per step. `ms_apply_preflag` splits
+`calibrators.ms` at step one, and `ms_workflow_status` reads a single workdir by
+name, so per-step directories would separate an MS from its own caltables.
+
+## Which MS a step runs on
+
+The model never names one. Each tool declares a role in `whitelist.yaml` and the
+driver resolves it against a registry in `run.json`:
+
+| role | what it resolves to |
+|---|---|
+| `raw` | the imported MS. `ms_applycal` writes its target fields |
+| `calibrators` | `calibrators.ms`, split by preflag. Every solve reads this |
+| `target` | the target MS; falls back to raw when no target split exists |
+| `none` | the tool acts on a caltable and takes no MS |
+
+The registry is filled from **planned outputs**: a tool declares the paths its
+script will create when it generates the script, and the driver checks they
+arrived before adopting them. Nothing is found by globbing — a run produces
+several split MSs and a glob cannot say which is which. A planned output that
+never appeared marks the step FAILED rather than passing silently.
 
 The run directory is its own git repository, committed after every turn.
 

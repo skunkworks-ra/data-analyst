@@ -6,12 +6,18 @@
 #
 # `analyst-driver init --recipe <key>` picks one. Add a key per telescope or per
 # science case rather than branching inside a single list.
+#
+# Every order starts with `ms_import_asdm`. The driver drops it from the
+# rendered map when the run was pointed at an MS rather than an ASDM, and the
+# input_is_asdm precondition makes it uncallable in that case anyway. One list
+# therefore serves both starting points, with no duplicated recipes.
 
 recipes:
 
   vla_continuum:
     description: VLA continuum, Stokes I, single pointing or mosaic.
     order:
+      - ms_import_asdm      # skipped when the input is already an MS
       - ms_apply_preflag
       - ms_generate_priorcals
       - ms_initial_bandpass
@@ -27,6 +33,7 @@ recipes:
   vla_polarization:
     description: VLA continuum with full Stokes. Polarized model set from the start.
     order:
+      - ms_import_asdm      # skipped when the input is already an MS
       - ms_apply_preflag
       - ms_generate_priorcals
       - ms_initial_bandpass
@@ -44,6 +51,7 @@ recipes:
   alma_12m:
     description: ALMA 12m interferometric. Priors are applied and split into a new MS.
     order:
+      - ms_import_asdm      # skipped when the input is already an MS
       - ms_apply_preflag
       - ms_generate_priorcals
       - ms_applycal          # priors, then split — ALMA bakes them into a new MS

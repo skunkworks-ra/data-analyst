@@ -5,118 +5,147 @@
 # code. It declares only what the code cannot tell us:
 #
 #   module   — the package path whose run() implements the tool
-#   script   — the filename run() writes into the step directory
+#   ms_role  — which MS the driver passes as ms_path (see below)
 #   requires — preconditions the driver checks BEFORE it submits
 #   probe    — a read-only ms_inspect call the driver runs AFTER the job, to
 #              produce measurements.json
 #   note     — one line shown to the model in BRIEF.md section 3
 #
+# ms_role encodes a rule that already exists in the skills, so the model never
+# has to choose an MS and can never name an arbitrary path:
+#
+#   raw          the imported MS. Calibration reads its calibrator fields;
+#                applycal writes its target fields.
+#   calibrators  calibrators.ms, split out by ms_apply_preflag. Every solve
+#                works on this until applycal.
+#   target       the target MS. Imaging reads this. Falls back to raw when no
+#                target split has happened.
+#   none         the tool takes no MS at all (it acts on a caltable).
+#
 # Precondition kinds:
-#   ms_exists        the active MS is on disk
-#   has_corrected    the active MS has a CORRECTED_DATA column
-#   file_glob: PAT   at least one path matches PAT, relative to the run dir
-#   step_done: TOOL  TOOL has completed OK at least once in this run
+#   input_is_asdm           the run was pointed at an ASDM, not an MS
+#   ms_exists               the MS for this tool's role is on disk
+#   file_glob: PAT          at least one path matches PAT, relative to the run dir
+#   step_done: TOOL         TOOL has completed OK at least once in this run
+#   workflow: KEY           a boolean from ms_workflow_status is true
+#   not_workflow: KEY       ... is false
+#
+# The workflow:* kinds read ms_workflow_status, which already computes what
+# exists in the processed directory and reports UNAVAILABLE rather than False
+# when a probe fails. Its next_recommended_step is NOT used: that ladder is
+# hardwired to VLA priors (gain_curves.gc, opacities.opac) and on ALMA data it
+# answers generate_priorcals forever without warning. In a loop that is a
+# cycle, not a hint. The recipe map is the driver's answer to "what next".
 
 tools:
 
+  ms_import_asdm:
+    module: ms_create.import_asdm
+    ms_role: none
+    requires: [input_is_asdm]
+    note: Import an ASDM into a Measurement Set. Only when the run started from an ASDM.
+
   ms_apply_preflag:
     module: ms_modify.preflag
-    script: apply_preflag.py
+    ms_role: raw
     requires: [ms_exists]
     probe: {tool: ms_flag_summary, params: {}}
-    note: A-priori flags — autocorr, shadow, edge channels, quack.
+    note: A-priori flags in one pass, then splits the calibrators to calibrators.ms.
 
   ms_generate_priorcals:
     module: ms_modify.priorcals
-    script: generate_priorcals.py
+    ms_role: calibrators
     requires: [ms_exists]
     note: gencal tables — gain curve, requantizer, opacity, antenna position.
 
   ms_initial_bandpass:
     module: ms_modify.initial_bandpass
-    script: initial_bandpass.py
-    requires: [ms_exists]
+    ms_role: calibrators
+    requires: [ms_exists, {workflow: calibrators_ms_present}]
     probe: {tool: ms_calsol_stats, params: {}}
     note: Delay plus bandpass, then applycal. Pass applycal_field explicitly.
 
   ms_apply_initial_rflag:
     module: ms_modify.initial_rflag
-    script: apply_initial_rflag.py
+    ms_role: calibrators
     requires: [ms_exists, {step_done: ms_initial_bandpass}]
     probe: {tool: ms_flag_summary, params: {}}
     note: Residual rflag. field is required and is never blank.
 
   ms_apply_rflag:
     module: ms_modify.rflag
-    script: apply_rflag.py
-    requires: [ms_exists, has_corrected]
+    ms_role: calibrators
+    requires: [ms_exists, {workflow: corrected_populated}]
     probe: {tool: ms_flag_summary, params: {}}
     note: rflag on the CORRECTED column.
 
   ms_flag_caltable:
     module: ms_modify.flag_caltable
-    script: flag_caltable.py
-    requires: [ms_exists]
+    ms_role: none
+    requires: []
     note: Autoflag a caltable's solutions. Mode follows the VisCal type.
 
   ms_setjy:
     module: ms_modify.setjy
-    script: setjy.py
+    ms_role: calibrators
     requires: [ms_exists]
     note: Flux model on the flux calibrator. Set usescratch=True if polcal is in scope.
 
   ms_setjy_polcal:
     module: ms_modify.setjy_polcal
-    script: setjy_polcal.py
+    ms_role: calibrators
     requires: [ms_exists]
     note: Polarized model — probes Stokes I from PB2017, pol terms from catalogue.
 
   ms_gaincal:
     module: ms_modify.gaincal
-    script: gaincal.py
+    ms_role: calibrators
     requires: [ms_exists]
     probe: {tool: ms_calsol_stats, params: {}}
     note: Gain solutions. calmode p or ap.
 
   ms_bandpass:
     module: ms_modify.bandpass
-    script: bandpass.py
+    ms_role: calibrators
     requires: [ms_exists]
     probe: {tool: ms_calsol_stats, params: {}}
     note: Final bandpass solve.
 
   ms_fluxscale:
     module: ms_modify.fluxscale
-    script: fluxscale.py
-    requires: [ms_exists, {file_glob: "steps/*/*.G"}]
-    note: Bootstrap the flux scale. Needs a G caltable on disk.
+    ms_role: calibrators
+    requires: [ms_exists, {file_glob: "processed/*.G"}]
+    note: Bootstrap the flux scale. Needs a G caltable in the processed directory.
 
   ms_polcal:
     module: ms_modify.polcal
-    script: polcal.py
+    ms_role: calibrators
     requires: [ms_exists]
     note: Cross-hand delay, leakage and angle. Feed basis drives the poltype.
 
   ms_applycal:
     module: ms_modify.applycal
-    script: applycal.py
+    ms_role: raw
     requires: [ms_exists]
     probe: {tool: ms_flag_summary, params: {}}
-    note: Apply the solution tables. Choose applymode deliberately.
+    note: Apply the solution tables to the target fields. Choose applymode deliberately.
 
   ms_postcal_flag:
     module: ms_modify.postcal_flag
-    script: postcal_flag.py
-    requires: [ms_exists, has_corrected]
+    ms_role: target
+    requires: [ms_exists, {workflow: corrected_populated}]
     probe: {tool: ms_flag_summary, params: {}}
     note: Post-calibration flagging on the CORRECTED column.
 
   ms_tclean:
     module: ms_modify.tclean
-    script: tclean.py
-    requires: [ms_exists, has_corrected]
+    ms_role: target
+    requires: [ms_exists, {workflow: corrected_populated}]
     probe: {tool: ms_image_stats, params: {}}
     note: Imaging. All parameters are explicit — the tool derives nothing.
 
-# Parameters the driver always supplies. The model must never send them.
-driver_owned: [ms_path, workdir, execute]
+# Parameters the driver always supplies, where the tool accepts them. Not every
+# tool takes every one: ms_flag_caltable acts on a caltable and has no ms_path,
+# ms_import_asdm takes asdm_path instead. The driver passes the intersection
+# with each run() signature.
+driver_owned: [ms_path, asdm_path, workdir, execute]

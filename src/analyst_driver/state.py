@@ -27,6 +27,27 @@ STATUS_STOPPED = "STOPPED"
 
 TERMINAL = {STATUS_DONE, STATUS_NEEDS_HUMAN, STATUS_STOPPED}
 
+# What the run was pointed at.
+KIND_MS = "ms"
+KIND_ASDM = "asdm"
+
+# The MS roles a tool may declare in whitelist.yaml, and what each falls back
+# to when it does not exist yet.
+ROLE_RAW = "raw"
+ROLE_CALIBRATORS = "calibrators"
+ROLE_TARGET = "target"
+
+_ROLE_FALLBACK: dict[str, tuple[str, ...]] = {
+    # The raw MS is the one thing always present once an import has happened.
+    ROLE_RAW: (ROLE_RAW,),
+    # Calibration wants calibrators.ms, but before preflag has split it the
+    # calibrator fields are still in the raw MS.
+    ROLE_CALIBRATORS: (ROLE_CALIBRATORS, ROLE_RAW),
+    # Imaging wants the target MS. Without a target split the target fields
+    # live in the raw MS, with their corrected data already applied.
+    ROLE_TARGET: (ROLE_TARGET, ROLE_RAW),
+}
+
 
 @dataclasses.dataclass
 class Pending:
@@ -37,6 +58,9 @@ class Pending:
     tool: str
     submitted_utc: str
     step_dir: str
+    # What the tool said its script would create, captured at generation time.
+    # Checked at harvest: an output that never appeared is a failed step.
+    planned_outputs: list[dict[str, Any]] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -44,8 +68,15 @@ class RunState:
     run_id: str
     goal: str
     recipe: str
-    active_ms: str
     started_utc: str
+    # What the run was pointed at, and which kind it turned out to be.
+    # Fixed at init and never rewritten.
+    input_path: str = ""
+    input_kind: str = KIND_MS  # KIND_MS or KIND_ASDM
+    # Every MS this run knows about, keyed by role. Filled in as steps declare
+    # and then produce them. There is no single "the MS": calibration works on
+    # calibrators, applycal writes the target fields, imaging reads the target.
+    ms_registry: dict[str, str] = dataclasses.field(default_factory=dict)
     status: str = STATUS_IDLE
     step: int = 0
     pending: Pending | None = None
@@ -55,6 +86,24 @@ class RunState:
     # Tools that have completed OK at least once. Feeds the step_done precondition.
     tools_done: list[str] = dataclasses.field(default_factory=list)
     park_reason: str = ""
+
+    # -- the MS registry -------------------------------------------------
+
+    def ms_for(self, role: str) -> str:
+        """Resolve a tool's declared ms_role to a path.
+
+        The roles are a chain, not independent slots. A step that wants the
+        target MS before any split has happened legitimately gets the raw MS,
+        because that is where the target fields still live. Falling back that
+        way is what lets one recipe serve both a split and an unsplit run.
+        """
+        for candidate in _ROLE_FALLBACK.get(role, (role,)):
+            if self.ms_registry.get(candidate):
+                return self.ms_registry[candidate]
+        return ""
+
+    def record_ms(self, role: str, path: str) -> None:
+        self.ms_registry[role] = path
 
     # -- serialisation ---------------------------------------------------
 
@@ -75,6 +124,19 @@ class RunState:
 
 def state_path(run_dir: Path) -> Path:
     return run_dir / STATE_NAME
+
+
+def processed_dir(run_dir: Path) -> Path:
+    """The single workdir every tool is given.
+
+    Every data product lands here: calibrators.ms, the caltables, the images.
+    Per-step workdirs were tried and are wrong — ms_apply_preflag splits
+    calibrators at step one, and ms_workflow_status reads a single flat
+    workdir by name, so scattering products across step directories separates
+    an MS from its own caltables and breaks that tool. Step directories hold
+    the script and the logs, which is the provenance trail, and nothing else.
+    """
+    return run_dir / "processed"
 
 
 def load(run_dir: Path) -> RunState:

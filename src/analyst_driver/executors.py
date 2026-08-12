@@ -4,9 +4,14 @@ executors.py — where a generated script actually runs.
 One interface, three implementations. The driver never learns which is active,
 so moving a run from corrino to SLURM is a one-line config change.
 
-    submit(script, step_dir, name) -> job_id
-    poll(job_id, step_dir)         -> RUNNING | DONE | FAILED
-    exit_code(step_dir)            -> int | None
+    submit(script, step_dir, name, planned) -> job_id
+    poll(job_id, step_dir)                  -> RUNNING | DONE | FAILED
+    exit_code(step_dir)                     -> int | None
+
+`planned` is what the tool said its script would create. Only DryExecutor uses
+it, to fabricate those outputs — without that, every tool that produces an MS
+would be harvested as a failed step in dry mode, because the driver checks
+that each planned output actually arrived.
 
 Job state lives in FILES, not in process memory. The driver exits between
 ticks, so a pid held in RAM would be lost. Every executor writes `rc` into the
@@ -53,7 +58,7 @@ class LocalExecutor:
         self.python = python or shutil.which("python") or "python"
         self.env = env or {}
 
-    def submit(self, script: Path, step_dir: Path, name: str) -> str:
+    def submit(self, script: Path, step_dir: Path, name: str, planned=None) -> str:
         rc = step_dir / RC_NAME
         if rc.exists():
             rc.unlink()
@@ -100,7 +105,7 @@ class SlurmExecutor:
     def __init__(self, cfg: dict) -> None:
         self.cfg = cfg
 
-    def submit(self, script: Path, step_dir: Path, name: str) -> str:
+    def submit(self, script: Path, step_dir: Path, name: str, planned=None) -> str:
         rc = step_dir / RC_NAME
         if rc.exists():
             rc.unlink()
@@ -185,8 +190,22 @@ class DryExecutor:
 
     kind = "dry"
 
-    def submit(self, script: Path, step_dir: Path, name: str) -> str:
-        (step_dir / STDOUT_NAME).write_text(f"DRY RUN — {script.name} was not executed.\n")
+    def submit(self, script: Path, step_dir: Path, name: str, planned=None) -> str:
+        note = [f"DRY RUN — {script.name} was not executed."]
+        for item in planned or []:
+            path = Path(str(item.get("path", "")))
+            if not str(path):
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if item.get("kind") == "ms":
+                # An MS is a directory with a table.info. Fabricate enough of
+                # one that the driver's own checks see a real product.
+                path.mkdir(exist_ok=True)
+                (path / "table.info").write_text("Type = Measurement Set\nSubType = \n")
+            else:
+                path.touch()
+            note.append(f"DRY RUN — fabricated {item.get('role', '?')} at {path}")
+        (step_dir / STDOUT_NAME).write_text("\n".join(note) + "\n")
         (step_dir / STDERR_NAME).write_text("")
         (step_dir / RC_NAME).write_text("0\n")
         return "dry:0"

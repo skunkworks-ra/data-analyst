@@ -1,25 +1,23 @@
 # WORKLOG — analyst_driver (external loop)
 
-## STATUS (2026-08-12) — CHECKPOINT, mid-design
+## STATUS (2026-08-12)
 
 - **Goal**: run a CASA reduction as a sequence of long jobs, calling a model
   only at the decision points. No model process may sit idle waiting on a job —
   that is what evicts KV caches and times out shared local inference servers.
-- **Done**: the loop is built, packaged and green. 895 unit tests pass, ruff
-  clean, and a full dry run completes from an unrelated directory using the
-  installed `analyst-driver` binary. Eleven commits on `external-loop`, unpushed.
-- **In flight**: the **input and layout rework**, designed with the user and
-  agreed, not yet written. See the design entry below dated 2026-08-12. Five
-  parts: `processed/` as the single workdir, `--input` accepting an ASDM or an
-  MS, planned-output reporting in two tools, `ms_role` plus an MS registry, and
-  preconditions re-expressed against `ms_workflow_status`. Scope is `main` only
-  — the alma branch comes later.
-- **Next step after that**: **the first real run.** On corrino:
+- **Done**: the loop is built, packaged, reworked and green. **944 unit tests**
+  pass, ruff clean. Both input paths complete a dry run from an unrelated
+  directory using the installed `analyst-driver` binary: an MS start, and an
+  ASDM start that imports, registers `raw`, then splits and registers
+  `calibrators`. The input and layout rework designed below is **built** —
+  `processed/`, `--input`, planned outputs, `ms_role` plus the registry, and
+  preconditions from `ms_workflow_status`. Scope was `main` only.
+- **Next step**: **the first real run.** On corrino:
 
       pixi install
       ln -s <repo>/.pixi/envs/default/bin/analyst-driver ~/bin/
       # copy config.toml, set executor kind = "local", backend kind = "claude"
-      analyst-driver init --run-id <id> --ms <MS> --goal "..." \
+      analyst-driver init --run-id <id> --input <MS-or-ASDM> --goal "..." \
           --root <work> --config <my-config.toml>
       analyst-driver run --run <run_dir>
 
@@ -48,16 +46,35 @@
   `step_cap` and the identical-call cycle detector are live. User deferred them
   to keep the first cut simple.
 - `recipe.yaml` `alma_12m` lists `ms_applycal` for the priors-then-split step.
-  ALMA actually needs a split into a new MS afterwards, and the driver has no
-  concept of the active MS changing except by rescanning for `*.ms`. Revisit
-  when ALMA data goes through this.
+  ALMA needs a split into a new MS afterwards. The registry now handles a step
+  producing a new MS, so the mechanism exists — what is missing is a tool that
+  performs that split and declares the result as a planned output. Revisit when
+  the alma branch is brought up to date.
+- Nothing yet writes the `target` role. Imaging falls back to `raw`, which is
+  correct for an unsplit run and wrong the moment a target split exists. The
+  fallback is deliberate, but it will quietly image the wrong MS if a split
+  tool lands without declaring `role: target`.
 
 ---
 
-## 2026-08-12 — input and layout rework (DESIGN, agreed with the user)
+## 2026-08-12 — input and layout rework (BUILT)
 
 The driver imposed an MS as the input and gave every step its own workdir. Both
-are wrong. Agreed design, to be built against `main` only:
+were wrong. Built against `main` only; the alma branch comes later.
+
+Two bugs the end-to-end smoke test caught that the unit tests did not:
+
+- An evidence item with an empty `source` resolved to the run directory itself,
+  and reading it raised `IsADirectoryError` out of the validator rather than
+  refusing the decision. `check_evidence` now requires `is_file()`. A model can
+  reach this by citing evidence it could not find, so it was a live crash.
+- `DryExecutor` never created the planned outputs, so after this change every
+  producing tool was harvested as FAILED in dry mode — correct behaviour from
+  the new guard, but it would have made dry runs useless. Dry now fabricates
+  each planned output (an MS as a directory with a `table.info`) and says so in
+  its stdout, so a fabricated product is never mistaken for a real one.
+
+The design as agreed and implemented:
 
 **1. `processed/` is the single workdir.** Every data product — `calibrators.ms`,
 `*.G`, `*.gc`, images — lands there. `steps/NNN-<tool>/` keeps the script, the

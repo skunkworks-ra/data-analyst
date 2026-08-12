@@ -9,7 +9,7 @@ When a job is still running the tick ends in milliseconds and no model is in
 memory. That is the entire point — an eight-hour tclean costs one model call at
 the start and one at the end, not eight hours of held context.
 
-    analyst-driver init   --run-id NAME --ms PATH --goal TEXT [--recipe KEY]
+    analyst-driver init   --run-id NAME --input PATH --goal TEXT [--recipe KEY]
     analyst-driver tick   --run DIR     one pass, then exit
     analyst-driver run    --run DIR     tick, sleep, repeat until DONE or parked
     analyst-driver status --run DIR
@@ -112,6 +112,59 @@ def _unwrap(v: Any) -> Any:
     return v["value"] if isinstance(v, dict) and "value" in v else v
 
 
+# -- the input -----------------------------------------------------------
+
+
+def detect_input_kind(path: Path) -> str:
+    """Decide whether we were handed a Measurement Set or an ASDM.
+
+    Detected from what is on disk, never from the flag the user typed, so
+    `--ms` pointing at an ASDM still does the right thing.
+    """
+    info = path / "table.info"
+    if info.is_file():
+        try:
+            if "Measurement Set" in info.read_text(errors="replace").splitlines()[0]:
+                return state_mod.KIND_MS
+        except (OSError, IndexError):
+            pass
+    if (path / "ASDM.xml").is_file():
+        return state_mod.KIND_ASDM
+    return ""
+
+
+def resolve_ms(st: state_mod.RunState, whitelist: dict, tool: str) -> Path | None:
+    """Which MS this tool operates on, from its declared ms_role."""
+    role = whitelist["tools"][tool].get("ms_role", state_mod.ROLE_RAW)
+    if role == "none":
+        return None
+    resolved = st.ms_for(role)
+    return Path(resolved) if resolved else None
+
+
+def workflow_status(run_dir: Path, st: state_mod.RunState) -> dict[str, Any]:
+    """One ms_workflow_status call per tick, feeding preconditions and the brief.
+
+    Only its booleans are used. `next_recommended_step` is ignored on purpose:
+    that ladder will not advance past generate_priorcals until gain_curves.gc
+    and opacities.opac exist, which are VLA tables, so on ALMA data it answers
+    the same step forever and does not warn. In a loop that is a cycle, not a
+    hint.
+    """
+    mod_name = _tool_index().get("ms_workflow_status")
+    ms = st.ms_for(state_mod.ROLE_RAW)
+    if not mod_name or not ms or not Path(ms).exists():
+        return {}
+    try:
+        data = importlib.import_module(mod_name).run(
+            ms_path=ms, workdir=str(state_mod.processed_dir(run_dir))
+        )["data"]
+    except Exception as exc:
+        return {"probe_error": f"ms_workflow_status raised {type(exc).__name__}: {exc}"}
+    data.pop("next_recommended_step", None)
+    return data
+
+
 # -- run directory -------------------------------------------------------
 
 
@@ -131,7 +184,20 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"{run_dir} already exists. Use --force to reuse it.", file=sys.stderr)
         return 1
 
-    for sub in ("steps", "decisions", "cache"):
+    raw_input = Path(args.input or args.ms).expanduser().resolve()
+    if not raw_input.is_dir():
+        print(f"no such input: {raw_input}", file=sys.stderr)
+        return 1
+    kind = detect_input_kind(raw_input)
+    if not kind:
+        print(
+            f"{raw_input} is neither a Measurement Set nor an ASDM. "
+            "An MS has a table.info naming one; an ASDM has an ASDM.xml.",
+            file=sys.stderr,
+        )
+        return 1
+
+    for sub in ("steps", "decisions", "cache", "processed"):
         (run_dir / sub).mkdir(parents=True, exist_ok=True)
 
     # Freeze the config and the contract into the run. A later edit to the
@@ -140,42 +206,53 @@ def cmd_init(args: argparse.Namespace) -> int:
     for name in ("whitelist.yaml", "recipe.yaml", "verifier.yaml", "PROMPT.md"):
         (run_dir / name).write_text((HERE / name).read_text())
 
-    ms = Path(args.ms).expanduser().resolve()
     st = state_mod.RunState(
         run_id=args.run_id,
         goal=args.goal,
         recipe=args.recipe,
-        active_ms=str(ms),
+        input_path=str(raw_input),
+        input_kind=kind,
         started_utc=_now(),
         status=state_mod.STATUS_IDLE,
     )
+    # An MS input is the raw MS from the start. An ASDM has produced no MS
+    # yet, so the registry stays empty and every MS tool reads NOT MET until
+    # ms_import_asdm has run.
+    if kind == state_mod.KIND_MS:
+        st.record_ms(state_mod.ROLE_RAW, str(raw_input))
     state_mod.save(run_dir, st)
 
-    _refresh_ms_cache(run_dir, ms, probe_fields=True)
-    _write_instrument_summary(run_dir, ms)
-    print(f"initialised {run_dir}")
+    _refresh_ms_cache(run_dir, st, probe_fields=True)
+    _write_instrument_summary(run_dir, raw_input, kind)
+    print(f"initialised {run_dir} from {kind.upper()} {raw_input.name}")
+    if kind == state_mod.KIND_ASDM:
+        print("input is an ASDM — the first step must be ms_import_asdm")
     print(f"next: analyst-driver run --run {run_dir}")
     return 0
 
 
-def _refresh_ms_cache(run_dir: Path, active_ms: Path, probe_fields: bool = False) -> None:
-    """Keep cache/ms_summary.json honest as splits create new MSs.
+def _refresh_ms_cache(run_dir: Path, st: state_mod.RunState, probe_fields: bool = False) -> None:
+    """Keep cache/ms_summary.json in step with the registry.
 
-    Rescans for .ms directories every tick, so a split shows up in the brief
-    without the model having to be told about it. Values we do not have are
-    written as unknown, never guessed.
+    Driven by the registry, not by globbing: a run produces several split MSs
+    and a glob cannot say which is which. Anything found in `processed/` that
+    the registry does not know about is still listed, with no role, so a
+    product nobody declared is visible rather than silently absent.
     """
     cache = run_dir / "cache" / "ms_summary.json"
     known: dict[str, Any] = json.loads(cache.read_text()) if cache.exists() else {}
 
-    candidates = {str(active_ms)}
-    for base in (run_dir, active_ms.parent):
-        candidates.update(str(p) for p in base.glob("*.ms") if p.is_dir())
+    roles: dict[str, str] = {}
+    for role, path in st.ms_registry.items():
+        roles.setdefault(path, role)
+    for stray in state_mod.processed_dir(run_dir).glob("*.ms"):
+        roles.setdefault(str(stray), "")
 
-    for path in sorted(candidates):
+    for path, role in sorted(roles.items()):
         entry = known.setdefault(
             path, {"name": Path(path).name, "fields": "?", "flag_fraction": None}
         )
+        entry["role"] = role
         if probe_fields and entry["fields"] == "?":
             entry["fields"] = _probe_fields(path)
     cache.write_text(json.dumps(known, indent=2) + "\n")
@@ -198,19 +275,45 @@ def _probe_fields(ms_path: str) -> str:
         return "?"
 
 
-def _write_instrument_summary(run_dir: Path, ms_path: Path) -> None:
+def _asdm_summary_line(sdm_path: Path) -> str:
+    """The ASDM equivalent of the MS instrument line.
+
+    ms_sdm_summary takes only sdm_path — no workdir, no execute — so it is a
+    probe the driver runs, never a step the model runs.
+    """
+    mod_name = _tool_index().get("ms_sdm_summary")
+    if not mod_name:
+        return f"ASDM {sdm_path.name} (ms_sdm_summary unavailable)"
+    try:
+        d = importlib.import_module(mod_name).run(sdm_path=str(sdm_path))["data"]
+    except Exception as exc:
+        return f"ASDM {sdm_path.name} (summary failed: {type(exc).__name__})"
+    bits = [
+        str(_unwrap(d[k]))
+        for k in ("telescope_name", "n_antennas", "n_scans", "band", "total_duration_human")
+        if k in d and _unwrap(d[k]) not in (None, "")
+    ]
+    return "ASDM · " + " · ".join(bits) if bits else f"ASDM {sdm_path.name}"
+
+
+def _write_instrument_summary(run_dir: Path, path: Path, kind: str) -> None:
     """Cache the one-line instrument description shown at the top of section 2.
 
     Read straight from the MS subtables rather than through a tool, because
-    this must not fail when a particular ms_inspect module is unavailable.
+    this must not fail when a particular ms_inspect module is unavailable. An
+    ASDM has no such subtables, so it goes to ms_sdm_summary instead; where
+    neither works the line says so rather than guessing.
     """
+    out = run_dir / "cache" / "instrument.txt"
+    if kind == state_mod.KIND_ASDM:
+        out.write_text(_asdm_summary_line(path) + "\n")
+        return
+
     bits: list[str] = []
     idx = _tool_index()
     if "ms_observation_info" in idx:
         try:
-            d = importlib.import_module(idx["ms_observation_info"]).run(ms_path=str(ms_path))[
-                "data"
-            ]
+            d = importlib.import_module(idx["ms_observation_info"]).run(ms_path=str(path))["data"]
             bits.append(str(_unwrap(d.get("telescope_name", "?"))))
             bits.append(f"{_unwrap(d.get('total_duration_human', '?'))} on sky")
         except Exception:
@@ -219,10 +322,10 @@ def _write_instrument_summary(run_dir: Path, ms_path: Path) -> None:
         from casatools import table
 
         tb = table()
-        tb.open(str(ms_path / "ANTENNA"))
+        tb.open(str(path / "ANTENNA"))
         bits.insert(1, f"{tb.nrows()} antennas")
         tb.close()
-        tb.open(str(ms_path / "SPECTRAL_WINDOW"))
+        tb.open(str(path / "SPECTRAL_WINDOW"))
         nchan = tb.getcol("NUM_CHAN")
         freqs = [tb.getcell("REF_FREQUENCY", i) / 1e9 for i in range(tb.nrows())]
         tb.close()
@@ -230,7 +333,7 @@ def _write_instrument_summary(run_dir: Path, ms_path: Path) -> None:
         bits.append(f"{len(nchan)} spw × {int(nchan[0])} ch · {span}")
     except Exception:
         pass
-    (run_dir / "cache" / "instrument.txt").write_text(" · ".join(b for b in bits if b) + "\n")
+    out.write_text(" · ".join(b for b in bits if b) or "(instrument summary unavailable)")
 
 
 def _ms_rows(run_dir: Path) -> list[dict[str, Any]]:
@@ -313,6 +416,30 @@ def _headline(measurements: dict[str, Any]) -> str:
     return ""
 
 
+def adopt_outputs(st: state_mod.RunState, planned: list[dict[str, Any]]) -> tuple[list[str], str]:
+    """Check each planned output arrived, and register the MSs among them.
+
+    The tool declared these paths when it generated the script, so nothing is
+    guessed and nothing is globbed — a run produces several split MSs and a
+    glob cannot say which is which. A planned output that never appeared is a
+    failed step, not a silent success, so it is returned as a problem.
+    """
+    adopted: list[str] = []
+    missing: list[str] = []
+    for item in planned:
+        path = str(item.get("path", ""))
+        if not path or not Path(path).exists():
+            missing.append(path or "(unnamed output)")
+            continue
+        if item.get("kind") == "ms" and item.get("role"):
+            st.record_ms(str(item["role"]), path)
+            adopted.append(f"{item['role']}={Path(path).name}")
+    problem = (
+        "the step reported success but did not produce: " + ", ".join(missing) if missing else ""
+    )
+    return adopted, problem
+
+
 def harvest(run_dir: Path, st: state_mod.RunState, whitelist: dict, ex) -> dict[str, Any]:
     """Turn a finished job into a step record plus measurements.json."""
     pending = st.pending
@@ -320,10 +447,19 @@ def harvest(run_dir: Path, st: state_mod.RunState, whitelist: dict, ex) -> dict[
     rc = ex.exit_code(step_dir)
     result = "OK" if rc == 0 else "FAILED"
 
+    adopted: list[str] = []
+    missing = ""
+    if result == "OK":
+        adopted, missing = adopt_outputs(st, pending.planned_outputs)
+        if missing:
+            result = "FAILED"
+
     entry = whitelist["tools"][pending.tool]
-    measurements = _run_probe(entry, Path(st.active_ms), step_dir) if result == "OK" else {}
+    probe_ms = resolve_ms(st, whitelist, pending.tool)
+    measurements = _run_probe(entry, probe_ms, step_dir) if result == "OK" and probe_ms else {}
     (step_dir / "measurements.json").write_text(json.dumps(measurements, indent=2) + "\n")
-    _record_flag_fraction(run_dir, st.active_ms, measurements)
+    if probe_ms:
+        _record_flag_fraction(run_dir, str(probe_ms), measurements)
 
     decision = json.loads(state_mod.decision_path(run_dir, pending.step).read_text())
     inner = decision.get("decision", decision)
@@ -334,11 +470,15 @@ def harvest(run_dir: Path, st: state_mod.RunState, whitelist: dict, ex) -> dict[
         "params": inner.get("params", {}),
         "result": result,
         "exit_code": rc,
-        "headline": _headline(measurements),
+        "headline": _headline(measurements) or (", ".join(adopted) if adopted else ""),
         "duration": _duration(pending.submitted_utc),
         "rationale": inner.get("rationale", ""),
         "step_dir": str(step_dir),
+        "ms_used": str(probe_ms) if probe_ms else "",
+        "produced": adopted,
     }
+    if missing:
+        record["missing_outputs"] = missing
     (step_dir / "step.json").write_text(json.dumps(record, indent=2) + "\n")
 
     if result == "OK" and pending.tool not in st.tools_done:
@@ -394,27 +534,66 @@ def check_cycle(st: state_mod.RunState, digest: str, window: int) -> str:
 
 def generate_script(
     run_dir: Path, st: state_mod.RunState, whitelist: dict, inner: dict[str, Any]
-) -> tuple[Path, Path]:
-    """Ask the tool to write its script. Returns (step_dir, script_path).
+) -> tuple[Path, Path, list[dict[str, Any]]]:
+    """Ask the tool to write its script.
 
-    ms_path, workdir and execute are the driver's to set. The model supplies
-    the science parameters and nothing else, so a generated script is always
-    rooted in this run's step directory.
+    Returns (step_dir, script_path, planned_outputs).
+
+    The driver owns four parameters and the model owns the science ones. Which
+    MS comes from the tool's declared ms_role, so the model never names an MS
+    and can never reach a path outside this run.
+
+    workdir is `processed/`, shared by every step, because that is where the
+    products belong and what ms_workflow_status reads. The step directory
+    holds only the script and the logs.
     """
     tool = inner["tool"]
     step_dir = state_mod.step_dir(run_dir, st.step, tool)
     step_dir.mkdir(parents=True, exist_ok=True)
+    processed = state_mod.processed_dir(run_dir)
+    processed.mkdir(parents=True, exist_ok=True)
     module = importlib.import_module(whitelist["tools"][tool]["module"])
 
     # Not every tool takes every driver-owned parameter: ms_flag_caltable acts
-    # on a caltable and has no ms_path at all. Supply the intersection, so a
-    # tool that does not want one is not handed it.
+    # on a caltable and has no ms_path, ms_import_asdm takes asdm_path.
+    # Supply the intersection, so a tool is never handed one it does not want.
     accepted = set(inspect.signature(module.run).parameters)
-    owned = {"ms_path": st.active_ms, "workdir": str(step_dir), "execute": False}
+    ms = resolve_ms(st, whitelist, tool)
+    owned = {
+        "ms_path": str(ms) if ms else "",
+        "asdm_path": st.input_path,
+        "workdir": str(processed),
+        "execute": False,
+    }
     kwargs = {k: v for k, v in owned.items() if k in accepted}
 
-    resp = module.run(**kwargs, **inner.get("params", {}))
-    return step_dir, Path(_unwrap(resp["data"]["script_path"]))
+    data = module.run(**kwargs, **inner.get("params", {}))["data"]
+    script = Path(_unwrap(data["script_path"]))
+
+    # Tools write their script into workdir, which is now shared. Move it into
+    # the step directory so one step's script cannot overwrite another's on a
+    # redo. The generated scripts carry absolute paths, so moving is safe.
+    if script.parent != step_dir:
+        moved = step_dir / script.name
+        moved.write_text(script.read_text())
+        script.unlink()
+        script = moved
+
+    return step_dir, script, list(data.get("planned_outputs") or [])
+
+
+def _rendered_recipe(recipe: dict[str, Any], st: state_mod.RunState) -> dict[str, Any]:
+    """Drop the optional import step from the map on an MS run.
+
+    Every recipe lists ms_import_asdm first, so one list serves both starting
+    points. Showing it to a model that started from an MS would only invite a
+    step the input_is_asdm precondition already refuses.
+    """
+    if st.input_kind == state_mod.KIND_ASDM:
+        return recipe
+    out = dict(recipe)
+    out["order"] = [t for t in recipe.get("order", []) if t != "ms_import_asdm"]
+    return out
 
 
 # -- the tick ------------------------------------------------------------
@@ -448,7 +627,11 @@ def tick(run_dir: Path) -> int:  # noqa: C901 - the loop is a flat sequence, kep
     if reason:
         return park(run_dir, st, state_mod.STATUS_STOPPED, reason)
 
-    _refresh_ms_cache(run_dir, Path(st.active_ms))
+    _refresh_ms_cache(run_dir, st)
+
+    # One ms_workflow_status call per tick. Its booleans drive the
+    # preconditions and section 2; its next_recommended_step is discarded.
+    workflow = workflow_status(run_dir, st)
 
     # 3. ask the model, with up to max_refusals attempts
     st.step += 1
@@ -471,11 +654,16 @@ def tick(run_dir: Path) -> int:  # noqa: C901 - the loop is a flat sequence, kep
             goal=st.goal,
             instrument=_instrument_line(run_dir),
             ms_rows=_ms_rows(run_dir),
-            active_ms=Path(st.active_ms),
+            ctx=validate_mod.Context(
+                run_dir=run_dir,
+                tools_done=st.tools_done,
+                input_kind=st.input_kind,
+                workflow=workflow,
+            ),
+            resolve_ms=lambda tool: resolve_ms(st, whitelist, tool),
             whitelist=whitelist,
-            recipe=recipes[st.recipe],
+            recipe=_rendered_recipe(recipes[st.recipe], st),
             steps=_step_records(run_dir),
-            tools_done=st.tools_done,
             last=completed,
             last_step_dir=Path(completed["step_dir"]) if completed else None,
             verdict_text=verdict_text,
@@ -488,8 +676,21 @@ def tick(run_dir: Path) -> int:  # noqa: C901 - the loop is a flat sequence, kep
 
         try:
             backends.run_model(cfg["backend"], run_dir, prompt_file, decision_file)
+            peeked = validate_mod.load_decision(decision_file)
             inner = validate_mod.validate(
-                decision_file, whitelist, run_dir, Path(st.active_ms), st.tools_done
+                decision_file,
+                whitelist,
+                validate_mod.Context(
+                    run_dir=run_dir,
+                    tools_done=st.tools_done,
+                    input_kind=st.input_kind,
+                    workflow=workflow,
+                    ms_path=(
+                        resolve_ms(st, whitelist, peeked["tool"])
+                        if peeked.get("tool") in whitelist["tools"]
+                        else None
+                    ),
+                ),
             )
         except (backends.BackendError, validate_mod.Refusal) as exc:
             refusals.append(str(exc))
@@ -519,7 +720,7 @@ def tick(run_dir: Path) -> int:  # noqa: C901 - the loop is a flat sequence, kep
             # itself is the strictest check of the model's parameters, so a tool
             # that rejects them is a refusal to hand back — not a crash.
             try:
-                step_dir, script = generate_script(run_dir, st, whitelist, inner)
+                step_dir, script, planned = generate_script(run_dir, st, whitelist, inner)
             except Exception as exc:
                 problem = (
                     f"- {inner['tool']} rejected these parameters: {type(exc).__name__}: {exc}"
@@ -538,7 +739,7 @@ def tick(run_dir: Path) -> int:  # noqa: C901 - the loop is a flat sequence, kep
         "tool": inner.get("tool", ""),
         "backend": cfg["backend"]["kind"],
         "executor": ex.kind,
-        "active_ms": st.active_ms,
+        "ms_registry": dict(st.ms_registry),
         "refusals": len(refusals),
     }
     warnings = commit_mod.commit_turn(
@@ -569,13 +770,14 @@ def tick(run_dir: Path) -> int:  # noqa: C901 - the loop is a flat sequence, kep
 
     # 5. submit the script generated above
     tool = inner["tool"]
-    job_id = ex.submit(script, step_dir, f"{st.run_id}-{st.step:03d}")
+    job_id = ex.submit(script, step_dir, f"{st.run_id}-{st.step:03d}", planned)
     st.pending = state_mod.Pending(
         job_id=job_id,
         step=st.step,
         tool=tool,
         submitted_utc=_now(),
         step_dir=str(step_dir),
+        planned_outputs=planned,
     )
     st.call_digests.append(state_mod.call_digest(tool, inner.get("params", {})))
     st.status = state_mod.STATUS_RUNNING
@@ -608,7 +810,7 @@ def _resolve_run(args: argparse.Namespace) -> Path:
     if not state_mod.state_path(run_dir).is_file():
         raise BadRunDir(
             f"{run_dir} holds no run.json, so it is not a run directory. "
-            f"Create one with: analyst-driver init --run-id NAME --ms PATH --goal TEXT"
+            f"Create one with: analyst-driver init --run-id NAME --input PATH --goal TEXT"
         )
     return run_dir
 
@@ -649,7 +851,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     run_dir = _resolve_run(args)
     st = state_mod.load(run_dir)
     print(f"{st.run_id}: {st.status} at step {st.step}")
-    print(f"  active MS : {st.active_ms}")
+    print(f"  input     : {st.input_kind.upper()} {st.input_path}")
+    for role, path in sorted(st.ms_registry.items()):
+        print(f"  {role:<10}: {path}")
     if st.pending:
         print(f"  pending   : {st.pending.tool} as {st.pending.job_id}")
     if st.park_reason:
@@ -667,7 +871,10 @@ def main(argv: list[str] | None = None) -> int:
 
     i = sub.add_parser("init", help="create a run directory")
     i.add_argument("--run-id", required=True)
-    i.add_argument("--ms", required=True, help="the Measurement Set to reduce")
+    i.add_argument(
+        "--input", default="", help="the Measurement Set or ASDM to reduce (kind is detected)"
+    )
+    i.add_argument("--ms", default="", help="alias for --input, kept for older invocations")
     i.add_argument("--goal", required=True, help="one or two sentences; the model reads this")
     i.add_argument("--recipe", default="vla_continuum", help="the usual order to show as a map")
     i.add_argument("--root", default="", help="where to create the run (overrides the config)")

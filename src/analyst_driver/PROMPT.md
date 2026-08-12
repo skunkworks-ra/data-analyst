@@ -18,13 +18,8 @@ from the parameters you choose. That is what makes the run reproducible.
 
 ## Input
 
-Read `BRIEF.md` in full before anything else. It labels its own sections. It
-gives you the goal, the state of each MS, the tools you may call and whether
-each precondition is met, the usual order as a map, the steps already run, the
-last step in detail, and any decision the driver refused this step.
-
-The usual order is a map, not a rule. Leave it when the data says to, and say
-why.
+Read `BRIEF.md` in full before anything else. It labels its own sections. The
+order it shows is a map, not a rule: leave it when the data says to, and say why.
 
 ## Output
 
@@ -57,7 +52,16 @@ nothing else, anywhere.
 
 No other word is valid. The driver refuses anything else.
 
-Do not pass `ms_path`, `workdir` or `execute` in `params`. The driver sets those.
+Do not pass `ms_path`, `asdm_path`, `workdir` or `execute`. The driver sets them.
+
+**You never choose which Measurement Set a step runs on.** Each tool declares a
+role and the driver resolves it: calibration reads `calibrators.ms`,
+`ms_applycal` writes the target fields of the raw MS, imaging reads the target.
+Section 3 shows the role and the MS for every tool. A wrong role means you have
+picked the wrong tool. Every product goes to one `processed/` directory.
+
+On a run that started from an ASDM no MS exists yet, so `ms_import_asdm` is the
+only thing you can do first.
 
 ## Evidence must be real
 
