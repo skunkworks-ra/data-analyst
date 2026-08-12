@@ -11,9 +11,9 @@ from __future__ import annotations
 import json
 import time
 
-import backends
-import executors
 import pytest
+
+from analyst_driver import backends, executors
 
 
 def step_dir(run_dir, name="001-x"):

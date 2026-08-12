@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-import brief as brief_mod
+from analyst_driver import brief as brief_mod
 
 RECIPE = {"description": "VLA continuum.", "order": ["ms_apply_preflag", "ms_gaincal"]}
 

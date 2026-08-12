@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from validate import precondition_status
+from analyst_driver.validate import precondition_status
 
 SEVERE_FILES = ("casa.log", "stderr", "stdout")
 
@@ -133,7 +133,7 @@ def _section_tools(
         status = "MET" if not unmet else f"NOT MET — needs {unmet[0]}"
         out.append(f"  {name:<26} {status}")
         out.append(f"  {'':<26} {entry.get('note', '')}")
-    out.append("\nfull schemas: driver/whitelist.yaml")
+    out.append("\nfull schemas: analyst_driver/whitelist.yaml")
     out.append("Do not pass ms_path, workdir or execute. The driver sets them.")
     return "\n".join(out)
 

@@ -11,7 +11,8 @@ from __future__ import annotations
 import json
 
 import pytest
-import state as state_mod
+
+from analyst_driver import state as state_mod
 
 
 def make(**kw) -> state_mod.RunState:

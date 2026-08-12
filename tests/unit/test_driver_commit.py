@@ -12,8 +12,9 @@ from __future__ import annotations
 import json
 import subprocess
 
-import commit as commit_mod
 import pytest
+
+from analyst_driver import commit as commit_mod
 
 
 def decision_file(run_dir, payload=None):

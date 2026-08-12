@@ -1,24 +1,22 @@
 """
 conftest.py — unit test fixtures.
 
-The driver is a standalone script directory, not an installed package: its
-modules import each other by bare name (``from validate import ...``) so that
-``driver.py`` runs from a copy anywhere on disk. Tests therefore need
-``driver/`` on sys.path, exactly as ``driver.py`` puts it there itself.
+analyst_driver is an installed package like the others, so nothing here has to
+manipulate sys.path. The packaged defaults are located through the package
+itself, which means these tests exercise the same files a real run freezes
+into its run directory.
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
-DRIVER_DIR = Path(__file__).resolve().parents[2] / "driver"
+import analyst_driver
 
-if str(DRIVER_DIR) not in sys.path:
-    sys.path.insert(0, str(DRIVER_DIR))
+DRIVER_DIR = Path(analyst_driver.__file__).resolve().parent
 
 
 @pytest.fixture

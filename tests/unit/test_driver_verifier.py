@@ -10,7 +10,8 @@ evidence.
 from __future__ import annotations
 
 import pytest
-import verifier
+
+from analyst_driver import verifier
 
 
 def test_pass_when_the_number_is_inside_the_limit(rules):

@@ -1,4 +1,4 @@
-# driver — the external loop
+# analyst-driver — the external loop
 
 Runs a CASA reduction as a sequence of long jobs, and calls a model only at the
 decision points between them.
@@ -10,18 +10,22 @@ not eight hours of held context.
 
 ## Install the command
 
-From inside the repo, `pixi run analyst-driver …` works as a task.
-
-You will normally want to drive a run from the directory the data lives in, and
-`pixi run` cannot find its manifest from there. So put the wrapper on your PATH
-once:
+`analyst-driver` is a console script, so installing the environment builds it:
 
 ```bash
-ln -s ~/src/skunkworks-ra/radio-analyst/bin/analyst-driver ~/bin/analyst-driver
+pixi install
 ```
 
-It resolves the repo from its own location, so it works from anywhere, through
-a symlink, with the same arguments as the task.
+That puts a real binary in `.pixi/envs/default/bin/analyst-driver`, carrying the
+environment's Python in its shebang. It needs no `pixi run` and works from any
+directory. Symlink it once:
+
+```bash
+ln -s ~/src/skunkworks-ra/radio-analyst/.pixi/envs/default/bin/analyst-driver ~/bin/
+```
+
+You will normally drive a run from the directory the data lives in, not from the
+repository.
 
 ## Run it
 
@@ -37,8 +41,19 @@ analyst-driver tick   --run <run_dir>   # one pass, then exit
 analyst-driver status --run <run_dir>
 ```
 
-`init` prints the run directory and the exact next command. Runs are created
-under `[run] root` in `config.toml`; edit that before the first run.
+`init` prints the run directory and the exact next command.
+
+Runs are created under `[run] root` in the packaged `config.toml`. Two flags
+override it, so you never edit a file inside the installed package:
+
+| flag | what it does |
+|---|---|
+| `--root DIR` | create the run somewhere else |
+| `--config FILE` | freeze a different `config.toml` into the run |
+
+`--config` is how you pick a different executor or backend per run. Once frozen,
+`tick` and `run` read the copy in the run directory and never consult the
+package again.
 
 Set `[executor] kind = "dry"` for the first pass. Scripts are generated but
 never executed, so a whole run takes seconds — you get to read the briefs and
@@ -69,7 +84,7 @@ Stop a run at the next tick with `touch <run_dir>/STOP`.
 | `whitelist.yaml` | the tools the model may call, their preconditions and probes |
 | `recipe.yaml` | the usual order of steps, per telescope — a map, not a rule |
 | `verifier.yaml` | the numeric checks, and the single source of truth for them |
-| `driver.py` | the loop |
+| `driver.py` | the loop; the `analyst-driver` entry point |
 | `brief.py` | renders `BRIEF.md`, the model's whole view of the world |
 | `validate.py` | refuses a bad decision before it costs compute |
 | `verifier.py` | applies `verifier.yaml` to a finished step |
@@ -138,6 +153,7 @@ Verify `opencode`'s real non-interactive flag before first use. The entry in
 
 ## Testing without CASA
 
-Set `[executor] kind = "dry"`. Scripts are generated but never run, and every
-step returns success at once. That exercises the brief, the validator, the
-ledger and the replay script in seconds.
+Copy `config.toml`, set `[executor] kind = "dry"`, and pass it with `--config`.
+Scripts are generated but never run, and every step returns success at once.
+That exercises the brief, the validator, the ledger and the replay script in
+seconds, without touching the packaged defaults.

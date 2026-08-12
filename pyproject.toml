@@ -40,13 +40,18 @@ casa = [
 ms-inspect = "ms_inspect.server:main"
 ms-modify = "ms_modify.server:main"
 ms-create = "ms_create.server:main"
+# The external loop. Once the environment is on PATH this runs from any
+# directory, which is the normal case — you drive a run from the data.
+analyst-driver = "analyst_driver.driver:main"
 
 # ---------------------------------------------------------------------------
 # Hatch — source layout
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
-packages = ["src/ms_inspect", "src/ms_modify", "src/ms_create"]
-artifacts = ["*.yaml"]
+packages = ["src/ms_inspect", "src/ms_modify", "src/ms_create", "src/analyst_driver"]
+# analyst_driver ships its defaults as package data: init copies config.toml,
+# the three yaml files and PROMPT.md into each run directory.
+artifacts = ["*.yaml", "*.toml", "*.md"]
 
 # ---------------------------------------------------------------------------
 # Ruff

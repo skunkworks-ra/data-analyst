@@ -16,7 +16,8 @@ import json
 from pathlib import Path
 
 import pytest
-import validate
+
+from analyst_driver import validate
 
 
 def write(run_dir: Path, decision: dict) -> Path:

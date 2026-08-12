@@ -1,6 +1,5 @@
-#!/usr/bin/env python
 """
-driver.py — the external loop.
+analyst-driver — the external loop.
 
 The model decides. The driver runs. Those two never wait on each other.
 
@@ -10,10 +9,12 @@ When a job is still running the tick ends in milliseconds and no model is in
 memory. That is the entire point — an eight-hour tclean costs one model call at
 the start and one at the end, not eight hours of held context.
 
-    driver.py init  --run-id NAME --ms PATH --goal TEXT [--recipe KEY]
-    driver.py tick  --run DIR      one pass, then exit
-    driver.py run   --run DIR      tick, sleep, repeat until DONE or parked
-    driver.py status --run DIR
+    analyst-driver init   --run-id NAME --ms PATH --goal TEXT [--recipe KEY]
+    analyst-driver tick   --run DIR     one pass, then exit
+    analyst-driver run    --run DIR     tick, sleep, repeat until DONE or parked
+    analyst-driver status --run DIR
+
+Run it from wherever the data lives, not from the repository.
 
 Exit codes from `tick`: 0 keep going · 10 DONE · 20 parked, a human is needed.
 """
@@ -35,16 +36,16 @@ from typing import Any
 
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+from analyst_driver import backends, executors
+from analyst_driver import brief as brief_mod
+from analyst_driver import commit as commit_mod
+from analyst_driver import state as state_mod
+from analyst_driver import validate as validate_mod
+from analyst_driver import verifier as verifier_mod
 
-import backends  # noqa: E402
-import brief as brief_mod  # noqa: E402
-import commit as commit_mod  # noqa: E402
-import executors  # noqa: E402
-import state as state_mod  # noqa: E402
-import validate as validate_mod  # noqa: E402
-import verifier as verifier_mod  # noqa: E402
-
+# The packaged defaults. config.toml, whitelist.yaml, recipe.yaml,
+# verifier.yaml and PROMPT.md all ship inside the package, and init copies
+# them into the run directory so a later edit here cannot change a live run.
 HERE = Path(__file__).resolve().parent
 
 EXIT_CONTINUE = 0
@@ -115,8 +116,16 @@ def _unwrap(v: Any) -> Any:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    cfg = tomllib.loads((HERE / "config.toml").read_text())
-    root = Path(cfg["run"]["root"]).expanduser()
+    # --config selects an alternative profile. Without it the packaged
+    # defaults are used, and changing where runs live would mean editing a
+    # file inside the installed package.
+    config_src = Path(args.config).expanduser().resolve() if args.config else HERE / "config.toml"
+    if not config_src.is_file():
+        print(f"no such config file: {config_src}", file=sys.stderr)
+        return 1
+
+    cfg = tomllib.loads(config_src.read_text())
+    root = Path(args.root or cfg["run"]["root"]).expanduser().resolve()
     run_dir = root / args.run_id
     if run_dir.exists() and not args.force:
         print(f"{run_dir} already exists. Use --force to reuse it.", file=sys.stderr)
@@ -126,8 +135,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         (run_dir / sub).mkdir(parents=True, exist_ok=True)
 
     # Freeze the config and the contract into the run. A later edit to the
-    # repo must not change how a run already in flight behaves.
-    for name in ("config.toml", "whitelist.yaml", "recipe.yaml", "verifier.yaml", "PROMPT.md"):
+    # package must not change how a run already in flight behaves.
+    (run_dir / "config.toml").write_text(config_src.read_text())
+    for name in ("whitelist.yaml", "recipe.yaml", "verifier.yaml", "PROMPT.md"):
         (run_dir / name).write_text((HERE / name).read_text())
 
     ms = Path(args.ms).expanduser().resolve()
@@ -144,7 +154,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     _refresh_ms_cache(run_dir, ms, probe_fields=True)
     _write_instrument_summary(run_dir, ms)
     print(f"initialised {run_dir}")
-    print(f"next: driver.py run --run {run_dir}")
+    print(f"next: analyst-driver run --run {run_dir}")
     return 0
 
 
@@ -657,10 +667,12 @@ def main(argv: list[str] | None = None) -> int:
 
     i = sub.add_parser("init", help="create a run directory")
     i.add_argument("--run-id", required=True)
-    i.add_argument("--ms", required=True)
-    i.add_argument("--goal", required=True)
-    i.add_argument("--recipe", default="vla_continuum")
-    i.add_argument("--force", action="store_true")
+    i.add_argument("--ms", required=True, help="the Measurement Set to reduce")
+    i.add_argument("--goal", required=True, help="one or two sentences; the model reads this")
+    i.add_argument("--recipe", default="vla_continuum", help="the usual order to show as a map")
+    i.add_argument("--root", default="", help="where to create the run (overrides the config)")
+    i.add_argument("--config", default="", help="an alternative config.toml to freeze into the run")
+    i.add_argument("--force", action="store_true", help="reuse an existing run directory")
     i.set_defaults(fn=cmd_init)
 
     for name, fn, helptext in (

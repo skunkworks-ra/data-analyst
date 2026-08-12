@@ -4422,7 +4422,7 @@ packages:
 - pypi: ./
   name: ms-inspect
   version: 0.1.0
-  sha256: da3c5ffcd42c043af69b92eadc47f00277b959b1c706bad387bd4b4aff644a73
+  sha256: 5455c940d605ee159dfec6df0b9d9284bad0d94ba74aaee59ee4a8473ce99f9b
   requires_dist:
   - mcp[cli]>=1.0
   - numpy>=1.26

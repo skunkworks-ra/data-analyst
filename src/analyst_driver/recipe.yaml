@@ -4,7 +4,7 @@
 # BRIEF.md section 4 so the model knows where it is and what normally comes
 # next. The model may leave the road, and must say why when it does.
 #
-# `driver.py init --recipe <key>` picks one. Add a key per telescope or per
+# `analyst-driver init --recipe <key>` picks one. Add a key per telescope or per
 # science case rather than branching inside a single list.
 
 recipes:

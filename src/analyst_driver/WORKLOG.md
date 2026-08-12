@@ -1,4 +1,4 @@
-# WORKLOG — driver (external loop)
+# WORKLOG — analyst_driver (external loop)
 
 ## STATUS (2026-08-11)
 
@@ -8,6 +8,10 @@
 - **Next step**: run it for real. `[executor] kind = "local"`,
   `[backend] kind = "claude"`, against a real MS on corrino. Everything below
   has only been exercised with `kind = "dry"` and a stub backend.
+- **Then**: the permissions work — designed with the user, not built. Read-only
+  tool flags for the backend, a path-root allowlist extending
+  `ms_modify/pathguard.py`, and an approval gate before submit for the first
+  live runs.
 - **Blocked on**: nothing.
 
 ### Open items
@@ -15,11 +19,10 @@
 - `opencode`'s non-interactive flag in `config.toml` is a **guess**. Verify
   before first use. The contract itself is backend-agnostic (the decision leaves
   through a file, not stdout), so only the command template should need editing.
-- `SlurmExecutor` is written but never executed. `LocalExecutor` and
-  `DryExecutor` are exercised. The sbatch body duplicates a little of
-  `ms_modify/slurm.py` — fold them together once SLURM is actually used.
-- No unit tests yet. The validator was checked by a one-off script covering all
-  nine refusal paths; that should become `tests/unit/test_driver_validate.py`.
+- `SlurmExecutor` has never met a real scheduler. It is unit-tested against a
+  mocked `sbatch`/`sacct`; `LocalExecutor` and `DryExecutor` are exercised for
+  real. The sbatch body duplicates a little of `ms_modify/slurm.py` — fold them
+  together once SLURM is actually used.
 - Per-tool call caps are designed but **not implemented** — only the total
   `step_cap` and the identical-call cycle detector are live. User deferred them
   to keep the first cut simple.
@@ -27,6 +30,34 @@
   ALMA actually needs a split into a new MS afterwards, and the driver has no
   concept of the active MS changing except by rescanning for `*.ms`. Revisit
   when ALMA data goes through this.
+
+---
+
+## 2026-08-11 — packaged as `analyst-driver`
+
+Moved `driver/` to `src/analyst_driver/` and added an `analyst-driver` console
+script, matching how `ms-inspect` / `ms-modify` / `ms-create` already work.
+
+Why: `pixi run` searches the cwd and its parents for a manifest, so a task
+could only ever be invoked from the repo — and the normal case is driving a run
+from the directory the data lives in. A shell wrapper worked but was the wrong
+shape when the repo already installs itself editable and ships console scripts.
+`pixi install` now builds the binary; one symlink makes it global.
+
+Dropped: `bin/analyst-driver`, and the pixi task with it. `sys.path.insert` is
+gone from `driver.py`; the modules import each other as `analyst_driver.*`.
+The package no longer copies anywhere and runs standalone — a property nobody
+asked for, and not the one that matters. The reproducibility guarantee is that
+`init` freezes `config.toml` and `PROMPT.md` into the run directory, which is
+unchanged.
+
+Added `init --root` and `init --config` so a different run location, executor
+or backend needs no edit inside the installed package. `--config` is what the
+dry-run smoke test uses.
+
+Python packages cannot contain a hyphen, so the directory is `analyst_driver`
+and only the command is `analyst-driver`. Same split as `ms_inspect` /
+`ms-inspect`.
 
 ---
 

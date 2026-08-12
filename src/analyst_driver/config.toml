@@ -1,10 +1,10 @@
-# driver/config.toml — external loop configuration
+# analyst_driver/config.toml — external loop defaults
 #
-# Copied into each run directory at `driver.py init`, so a run keeps the config
+# Copied into each run directory at `analyst-driver init`, so a run keeps the config
 # it started with. Edit the copy in the run directory to change a live run.
 
 [run]
-# Where run directories are created. `driver.py init` makes <root>/<run_id>/.
+# Where run directories are created. `analyst-driver init` makes <root>/<run_id>/.
 root = "~/work/tests/skunkworks/radio-analyst/runs"
 
 # Hard stops enforced by the driver. The model is never told these numbers —
@@ -17,7 +17,7 @@ max_refusals = 2         # invalid decision files per step before the run parks
 # last N steps. Catches a model bouncing between two steps forever.
 cycle_window = 6
 
-# `driver.py run` sleeps this long between ticks while a job is pending. The
+# `analyst-driver run` sleeps this long between ticks while a job is pending. The
 # model is not in memory during the sleep — only a small Python process is.
 poll_seconds = 60
 

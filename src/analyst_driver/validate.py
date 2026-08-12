@@ -180,7 +180,7 @@ def check_preconditions(
 
 
 def check_evidence(d: dict[str, Any], run_dir: Path) -> None:
-    from verifier import _find  # same nested lookup the verifier uses
+    from analyst_driver.verifier import _find  # the same nested lookup
 
     problems: list[str] = []
     for item in d.get("evidence", []) or []:
