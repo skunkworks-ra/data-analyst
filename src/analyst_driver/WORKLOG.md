@@ -1,17 +1,33 @@
 # WORKLOG — analyst_driver (external loop)
 
-## STATUS (2026-08-11)
+## STATUS (2026-08-11) — CHECKPOINT
 
 - **Goal**: run a CASA reduction as a sequence of long jobs, calling a model
   only at the decision points. No model process may sit idle waiting on a job —
   that is what evicts KV caches and times out shared local inference servers.
-- **Next step**: run it for real. `[executor] kind = "local"`,
-  `[backend] kind = "claude"`, against a real MS on corrino. Everything below
-  has only been exercised with `kind = "dry"` and a stub backend.
-- **Then**: the permissions work — designed with the user, not built. Read-only
-  tool flags for the backend, a path-root allowlist extending
-  `ms_modify/pathguard.py`, and an approval gate before submit for the first
-  live runs.
+- **Done**: the loop is built, packaged and green. 895 unit tests pass, ruff
+  clean, and a full dry run completes from an unrelated directory using the
+  installed `analyst-driver` binary. Ten commits on branch `external-loop`,
+  nothing pushed.
+- **Next step**: **the first real run.** On corrino:
+
+      pixi install
+      ln -s <repo>/.pixi/envs/default/bin/analyst-driver ~/bin/
+      # copy config.toml, set executor kind = "local", backend kind = "claude"
+      analyst-driver init --run-id <id> --ms <MS> --goal "..." \
+          --root <work> --config <my-config.toml>
+      analyst-driver run --run <run_dir>
+
+  Do one `kind = "dry"` pass first and read `BRIEF.md` and `decisions/` before
+  spending any CASA time. Nothing has yet run with a real model or a real job.
+- **Then**: the permissions work — designed with the user in conversation, not
+  built. Three pieces, in order of value: (1) tighten the backend command in
+  `config.toml` to read-only tools plus one Write for the decision file;
+  (2) extend `ms_modify/pathguard.py` from "inside workdir" to a declared
+  data-root and run-root allowlist, applied to every path-like parameter;
+  (3) an approval gate — park before submit until a human acks — for the first
+  few live runs. Outside the code: make the raw data read-only, and run under
+  a dedicated account.
 - **Blocked on**: nothing.
 
 ### Open items
