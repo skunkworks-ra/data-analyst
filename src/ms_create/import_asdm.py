@@ -133,6 +133,16 @@ def run(
         "with_pointing_correction": fmt_field(with_pointing_correction),
         "savecmds": fmt_field(True),
         "applyflags": fmt_field(False),
+        # What the generated script WILL create. Both paths are resolved here
+        # even though the script has not run, so a caller that executes it
+        # itself (the external loop does) can record the outputs without
+        # guessing at them afterwards. Verify existence after the run: a
+        # planned output that never appeared is a failed step, not a silent
+        # success.
+        "planned_outputs": [
+            {"role": "raw", "path": str(ms_out), "kind": "ms"},
+            {"role": "online_flags", "path": str(flag_file), "kind": "file"},
+        ],
     }
 
     if not execute:

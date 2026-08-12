@@ -172,6 +172,12 @@ def run(
         "shadow_tolerance_m": shadow_tolerance_m,
         "online_flag_file": online_flag_file or None,
         "cal_ms": fmt_field(None, flag="UNAVAILABLE", note="script not yet executed"),
+        # What the generated script WILL create. The path is known here even
+        # though the script has not run, so a caller that executes the script
+        # itself (the external loop does) can record the output without
+        # guessing at it afterwards. Verify existence after the run: a planned
+        # output that never appeared is a failed step, not a silent success.
+        "planned_outputs": [{"role": "calibrators", "path": cal_ms, "kind": "ms"}],
     }
 
     if not execute:
