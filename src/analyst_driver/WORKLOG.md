@@ -1,15 +1,20 @@
 # WORKLOG — analyst_driver (external loop)
 
-## STATUS (2026-08-11) — CHECKPOINT
+## STATUS (2026-08-12) — CHECKPOINT, mid-design
 
 - **Goal**: run a CASA reduction as a sequence of long jobs, calling a model
   only at the decision points. No model process may sit idle waiting on a job —
   that is what evicts KV caches and times out shared local inference servers.
 - **Done**: the loop is built, packaged and green. 895 unit tests pass, ruff
   clean, and a full dry run completes from an unrelated directory using the
-  installed `analyst-driver` binary. Ten commits on branch `external-loop`,
-  nothing pushed.
-- **Next step**: **the first real run.** On corrino:
+  installed `analyst-driver` binary. Eleven commits on `external-loop`, unpushed.
+- **In flight**: the **input and layout rework**, designed with the user and
+  agreed, not yet written. See the design entry below dated 2026-08-12. Five
+  parts: `processed/` as the single workdir, `--input` accepting an ASDM or an
+  MS, planned-output reporting in two tools, `ms_role` plus an MS registry, and
+  preconditions re-expressed against `ms_workflow_status`. Scope is `main` only
+  — the alma branch comes later.
+- **Next step after that**: **the first real run.** On corrino:
 
       pixi install
       ln -s <repo>/.pixi/envs/default/bin/analyst-driver ~/bin/
@@ -46,6 +51,64 @@
   ALMA actually needs a split into a new MS afterwards, and the driver has no
   concept of the active MS changing except by rescanning for `*.ms`. Revisit
   when ALMA data goes through this.
+
+---
+
+## 2026-08-12 — input and layout rework (DESIGN, agreed with the user)
+
+The driver imposed an MS as the input and gave every step its own workdir. Both
+are wrong. Agreed design, to be built against `main` only:
+
+**1. `processed/` is the single workdir.** Every data product — `calibrators.ms`,
+`*.G`, `*.gc`, images — lands there. `steps/NNN-<tool>/` keeps the script, the
+logs, `rc`, `measurements.json` and `step.json`, which are the provenance trail.
+
+Per-step workdirs were not merely untidy. `ms_apply_preflag` splits calibrators
+to `workdir/calibrators.ms` at step one, and `ms_workflow_status(ms_path,
+workdir)` reads a single flat workdir by name. Per-step directories scatter the
+products and break that tool. The dry executor never caught it because it never
+ran the split.
+
+**2. The input may be an ASDM or an MS.** `init --input PATH`, with `--ms` kept
+as an alias. Kind is detected, not declared: `table.info` saying Measurement Set,
+or an `ASDM.xml`. Anything else is refused at init.
+
+**3. Two tools report their planned outputs.** `preflag.py:150` computes
+`cal_ms` and `import_asdm.py` computes `ms_out` at generation time, but both put
+the path in the response only on the `execute=True` path — which the driver never
+uses. They must report it when `execute=False` too, flagged as planned. The
+driver then verifies each planned path exists at harvest; one that never appeared
+is a failed step, not a silent success. Globbing for `*.ms` was rejected: the
+alma workflow produces several split MSs and a glob cannot tell them apart.
+
+**4. `ms_role` in the whitelist, an MS registry in run.json.** The rule already
+exists in the skills — calibration works on `calibrators.ms`, applycal writes the
+target fields, imaging reads the targets. So it is data, not a decision:
+
+    ms_apply_preflag  raw          ms_gaincal   calibrators
+    ms_applycal       raw          ms_tclean    target
+
+`run.json` holds `{raw, calibrators, target}`, filled as steps produce MSs, and
+the driver resolves the role to a path. The model never names an MS, so this
+opens nothing on the permissions side. An earlier draft had the model choose;
+dropped.
+
+**5. Preconditions come from `ms_workflow_status`, not from bespoke globs.** It
+already computes `calibrators_ms_present`, `corrected_populated`,
+`priorcals_present`, `initial_bandpass_present`, `final_caltables_present`,
+`first_image_present`, and it reports `UNAVAILABLE` rather than `False` when a
+probe fails. One call per tick feeds both the preconditions and section 2.
+
+**Do NOT co-opt its `next_recommended_step`.** `workflow_status.py:98-110` is a
+hardwired VLA ladder: it will not advance past `generate_priorcals` until
+`gain_curves.gc` and `opacities.opac` exist. ALMA's priors are Tsys and WVR, so
+on ALMA those files never appear, the tool answers `generate_priorcals` forever,
+and it does not warn. Interactively that is a bad hint; in an automated loop it
+is an infinite cycle that the cycle detector would turn into a parked run. The
+recipe map remains the driver's answer to "what next".
+
+Recipes get `ms_import_asdm` at the head, marked optional and dropped from the
+rendered map when the input is already an MS.
 
 ---
 
