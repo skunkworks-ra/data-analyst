@@ -568,3 +568,42 @@ reasoning about what the tool outputs mean — when to flag a dataset bad, what
 elevation threshold to use, how to assess calibrator suitability — lives
 exclusively in the skill files under `.claude/skills/radio-interferometry/`.
 Do not merge implementation context into the skill files or vice versa.
+
+---
+
+## `analyst_driver` — the external loop (2026-08-11)
+
+`src/analyst_driver/`, entry point `analyst-driver` (a `[project.scripts]`
+console script, so `pixi install` builds a real binary in
+`.pixi/envs/default/bin/` that runs from any directory).
+
+Runs a reduction as a sequence of long jobs and calls a model only between
+them. The model reads `BRIEF.md`, writes one JSON decision, and exits; the
+driver generates the script from a whitelisted `ms_modify` tool, submits it,
+polls it, harvests the result, and calls the model again. **No model process
+ever waits on a job** — that is the whole point, and it is why an eight-hour
+`tclean` costs two model calls rather than eight hours of held context.
+
+Durable properties:
+
+- **The model emits a tool call, never code.** Four actions only: `run`,
+  `redo`, `done`, `ask`. `validate.py` checks parameters against the real
+  `run()` signature with `inspect.signature`, so `whitelist.yaml` deliberately
+  declares no parameter types and cannot drift from the tools.
+- **Evidence is checked, not trusted.** Every number the model cites must
+  exist in the file it cites, within 2 percent. A rationale in prose cannot be
+  verified, which is why the two are separate fields.
+- **`verifier.yaml` holds the numeric limits** and is their single source of
+  truth; the skill prose quotes those numbers. The verifier reports into the
+  brief as evidence and decides nothing — posterior verification, not gating.
+  It always reports how many checks ran, never a bare verdict.
+- **`init` freezes `config.toml`, `whitelist.yaml`, `recipe.yaml`,
+  `verifier.yaml` and `PROMPT.md` into the run directory.** A later edit to
+  the package cannot change a run already in flight. `--root` and `--config`
+  override the packaged defaults without editing the installed package.
+- **The run directory is its own git repo**, committed every turn by
+  `commit.commit_turn()` — the single function that writes the decision
+  provenance, the `ms_reduction_log` ledger line, the replay script and the
+  commit. Split across call sites, those four drift.
+- **The driver enforces every limit and never tells the model**, because a
+  model that knows it is short of budget trades away science to finish.
