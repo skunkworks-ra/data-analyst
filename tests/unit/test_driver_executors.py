@@ -309,3 +309,55 @@ def test_backend_keeps_the_transcript(run_dir):
     )
     backends.run_model(cfg, run_dir, prompt, decision)
     assert "thinking" in (run_dir / "last_backend_stdout.txt").read_text()
+
+
+# -- dry mode must simulate the products, not just the exit code ---------
+
+
+def test_dry_fabricates_a_planned_ms(run_dir):
+    """Without this every producing tool is harvested as FAILED in dry mode,
+    because the driver checks that each planned output actually arrived."""
+    d = step_dir(run_dir)
+    cal = run_dir / "processed" / "calibrators.ms"
+    executors.DryExecutor().submit(
+        script(d), d, "x", [{"role": "calibrators", "path": str(cal), "kind": "ms"}]
+    )
+    assert cal.is_dir()
+    assert (cal / "table.info").is_file(), "the fabricated MS must look like one"
+
+
+def test_dry_fabricates_a_planned_file(run_dir):
+    d = step_dir(run_dir)
+    flags = run_dir / "processed" / "x.flagonline.txt"
+    executors.DryExecutor().submit(
+        script(d), d, "x", [{"role": "online_flags", "path": str(flags), "kind": "file"}]
+    )
+    assert flags.is_file()
+    assert not flags.is_dir()
+
+
+def test_dry_says_what_it_fabricated(run_dir):
+    """A dry run that silently invented an MS would be indistinguishable from
+    a real one in the logs."""
+    d = step_dir(run_dir)
+    cal = run_dir / "processed" / "calibrators.ms"
+    executors.DryExecutor().submit(
+        script(d), d, "x", [{"role": "calibrators", "path": str(cal), "kind": "ms"}]
+    )
+    out = (d / executors.STDOUT_NAME).read_text()
+    assert "DRY RUN" in out
+    assert "fabricated calibrators" in out
+
+
+def test_dry_with_no_planned_outputs_creates_nothing(run_dir):
+    d = step_dir(run_dir)
+    executors.DryExecutor().submit(script(d), d, "x", [])
+    assert not (run_dir / "processed").exists()
+
+
+def test_every_executor_accepts_planned_outputs(run_dir):
+    """One interface: the driver passes planned to whichever is configured."""
+    import inspect
+
+    for ex in (executors.LocalExecutor(), executors.SlurmExecutor({}), executors.DryExecutor()):
+        assert "planned" in inspect.signature(ex.submit).parameters, ex.kind

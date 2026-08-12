@@ -20,7 +20,7 @@ def make(**kw) -> state_mod.RunState:
         "run_id": "r1",
         "goal": "image it",
         "recipe": "vla_continuum",
-        "active_ms": "/data/x.ms",
+        "input_path": "/data/x.ms",
         "started_utc": "2026-08-11T00:00:00Z",
     }
     return state_mod.RunState(**{**base, **kw})
@@ -124,3 +124,81 @@ def test_decision_path_is_zero_padded(run_dir):
 @pytest.mark.parametrize("step", [1, 42, 999])
 def test_step_and_decision_numbering_agree(run_dir, step):
     assert state_mod.decision_path(run_dir, step).stem == f"{step:03d}"
+
+
+# -- the MS registry -----------------------------------------------------
+
+
+def test_a_new_run_knows_no_ms():
+    assert make().ms_for(state_mod.ROLE_RAW) == ""
+
+
+def test_a_role_resolves_to_its_own_ms():
+    st = make()
+    st.record_ms(state_mod.ROLE_CALIBRATORS, "/w/calibrators.ms")
+    assert st.ms_for(state_mod.ROLE_CALIBRATORS) == "/w/calibrators.ms"
+
+
+def test_calibrators_falls_back_to_raw_before_the_split():
+    """Every solve declares ms_role: calibrators, but preflag has not run yet
+    and the calibrator fields are still in the raw MS."""
+    st = make()
+    st.record_ms(state_mod.ROLE_RAW, "/w/raw.ms")
+    assert st.ms_for(state_mod.ROLE_CALIBRATORS) == "/w/raw.ms"
+
+
+def test_calibrators_stops_falling_back_once_the_split_exists():
+    st = make()
+    st.record_ms(state_mod.ROLE_RAW, "/w/raw.ms")
+    st.record_ms(state_mod.ROLE_CALIBRATORS, "/w/calibrators.ms")
+    assert st.ms_for(state_mod.ROLE_CALIBRATORS) == "/w/calibrators.ms"
+
+
+def test_target_falls_back_to_raw():
+    """Without a target split the target fields live in the raw MS, with their
+    corrected data already applied."""
+    st = make()
+    st.record_ms(state_mod.ROLE_RAW, "/w/raw.ms")
+    assert st.ms_for(state_mod.ROLE_TARGET) == "/w/raw.ms"
+
+
+def test_raw_never_falls_back_to_a_split():
+    """applycal writes the target fields of the raw MS. Handing it
+    calibrators.ms instead would silently calibrate the wrong data."""
+    st = make()
+    st.record_ms(state_mod.ROLE_CALIBRATORS, "/w/calibrators.ms")
+    assert st.ms_for(state_mod.ROLE_RAW) == ""
+
+
+def test_the_registry_survives_a_round_trip(run_dir):
+    st = make()
+    st.record_ms(state_mod.ROLE_RAW, "/w/raw.ms")
+    st.record_ms(state_mod.ROLE_CALIBRATORS, "/w/calibrators.ms")
+    state_mod.save(run_dir, st)
+    assert state_mod.load(run_dir).ms_registry == {
+        "raw": "/w/raw.ms",
+        "calibrators": "/w/calibrators.ms",
+    }
+
+
+def test_planned_outputs_survive_a_round_trip(run_dir):
+    """They are captured at submit and checked at harvest, which are different
+    driver processes."""
+    st = make(
+        pending=state_mod.Pending(
+            job_id="local:1",
+            step=1,
+            tool="ms_apply_preflag",
+            submitted_utc="2026-08-12T00:00:00Z",
+            step_dir="/runs/r1/steps/001",
+            planned_outputs=[{"role": "calibrators", "path": "/w/calibrators.ms", "kind": "ms"}],
+        )
+    )
+    state_mod.save(run_dir, st)
+    back = state_mod.load(run_dir).pending
+    assert back.planned_outputs[0]["path"] == "/w/calibrators.ms"
+
+
+def test_processed_dir_is_one_place_for_every_product(run_dir):
+    assert state_mod.processed_dir(run_dir).name == "processed"
+    assert state_mod.processed_dir(run_dir).parent == run_dir

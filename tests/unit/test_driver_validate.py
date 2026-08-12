@@ -20,6 +20,17 @@ import pytest
 from analyst_driver import validate
 
 
+def ctx(run_dir, ms=None, tools_done=None, **kw):
+    """A precondition context. The driver resolves ms_path from the tool's
+    ms_role before validating; these tests pass it directly."""
+    return validate.Context(
+        run_dir=run_dir,
+        tools_done=list(tools_done or []),
+        ms_path=ms,
+        **kw,
+    )
+
+
 def write(run_dir: Path, decision: dict) -> Path:
     p = run_dir / "decisions" / "001.json"
     p.write_text(json.dumps(decision))
@@ -45,7 +56,7 @@ GOOD_PREFLAG = {
 
 
 def test_accepts_a_valid_decision(run_dir, whitelist, fake_ms):
-    d = validate.validate(write(run_dir, GOOD_PREFLAG), whitelist, run_dir, fake_ms, [])
+    d = validate.validate(write(run_dir, GOOD_PREFLAG), whitelist, ctx(run_dir, fake_ms, []))
     assert d["action"] == "run"
 
 
@@ -53,21 +64,21 @@ def test_rejects_malformed_json(run_dir, whitelist, fake_ms):
     p = run_dir / "decisions" / "001.json"
     p.write_text("{not json")
     with pytest.raises(validate.Refusal, match="not valid JSON"):
-        validate.validate(p, whitelist, run_dir, fake_ms, [])
+        validate.validate(p, whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_rejects_a_json_list(run_dir, whitelist, fake_ms):
     p = run_dir / "decisions" / "001.json"
     p.write_text("[1, 2]")
     with pytest.raises(validate.Refusal, match="must contain a JSON object"):
-        validate.validate(p, whitelist, run_dir, fake_ms, [])
+        validate.validate(p, whitelist, ctx(run_dir, fake_ms, []))
 
 
 @pytest.mark.parametrize("action", ["proceed", "stop", "skip", "", None])
 def test_rejects_an_action_outside_the_four(run_dir, whitelist, fake_ms, action):
     with pytest.raises(validate.Refusal, match="is not one of"):
         validate.validate(
-            write(run_dir, {**GOOD_PREFLAG, "action": action}), whitelist, run_dir, fake_ms, []
+            write(run_dir, {**GOOD_PREFLAG, "action": action}), whitelist, ctx(run_dir, fake_ms, [])
         )
 
 
@@ -79,20 +90,24 @@ def test_accepts_every_documented_action(run_dir, whitelist, fake_ms, action):
         if action in validate.NEEDS_TOOL
         else {"action": action, "rationale": "done or asking"}
     )
-    assert validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+    assert validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_rejects_an_empty_rationale(run_dir, whitelist, fake_ms):
     with pytest.raises(validate.Refusal, match="rationale is empty"):
         validate.validate(
-            write(run_dir, {**GOOD_PREFLAG, "rationale": "   "}), whitelist, run_dir, fake_ms, []
+            write(run_dir, {**GOOD_PREFLAG, "rationale": "   "}),
+            whitelist,
+            ctx(run_dir, fake_ms, []),
         )
 
 
 def test_rejects_run_without_a_tool(run_dir, whitelist, fake_ms):
     with pytest.raises(validate.Refusal, match="needs a tool"):
         validate.validate(
-            write(run_dir, {"action": "run", "rationale": "x"}), whitelist, run_dir, fake_ms, []
+            write(run_dir, {"action": "run", "rationale": "x"}),
+            whitelist,
+            ctx(run_dir, fake_ms, []),
         )
 
 
@@ -101,9 +116,7 @@ def test_rejects_non_object_params(run_dir, whitelist, fake_ms):
         validate.validate(
             write(run_dir, {**GOOD_PREFLAG, "params": ["cal_fields"]}),
             whitelist,
-            run_dir,
-            fake_ms,
-            [],
+            ctx(run_dir, fake_ms, []),
         )
 
 
@@ -113,20 +126,22 @@ def test_rejects_non_object_params(run_dir, whitelist, fake_ms):
 def test_rejects_a_tool_off_the_whitelist(run_dir, whitelist, fake_ms):
     with pytest.raises(validate.Refusal, match="not on the whitelist"):
         validate.validate(
-            write(run_dir, {**GOOD_PREFLAG, "tool": "ms_do_magic"}), whitelist, run_dir, fake_ms, []
+            write(run_dir, {**GOOD_PREFLAG, "tool": "ms_do_magic"}),
+            whitelist,
+            ctx(run_dir, fake_ms, []),
         )
 
 
 def test_rejects_an_unknown_parameter(run_dir, whitelist, fake_ms):
     decision = {**GOOD_PREFLAG, "params": {"cal_fields": "0", "tfcrop": True}}
     with pytest.raises(validate.Refusal, match="has no parameter 'tfcrop'"):
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_rejects_a_missing_required_parameter(run_dir, whitelist, fake_ms):
     with pytest.raises(validate.Refusal, match="requires 'cal_fields'"):
         validate.validate(
-            write(run_dir, {**GOOD_PREFLAG, "params": {}}), whitelist, run_dir, fake_ms, []
+            write(run_dir, {**GOOD_PREFLAG, "params": {}}), whitelist, ctx(run_dir, fake_ms, [])
         )
 
 
@@ -134,14 +149,14 @@ def test_rejects_a_missing_required_parameter(run_dir, whitelist, fake_ms):
 def test_rejects_driver_owned_parameters(run_dir, whitelist, fake_ms, owned):
     decision = {**GOOD_PREFLAG, "params": {"cal_fields": "0", owned: "anything"}}
     with pytest.raises(validate.Refusal, match=f"params.{owned} is set by the driver"):
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_the_error_message_does_not_advertise_driver_owned_parameters(run_dir, whitelist, fake_ms):
     """Otherwise the model copies ms_path and workdir straight back out of it."""
     decision = {**GOOD_PREFLAG, "params": {"cal_fields": "0", "nonsense": 1}}
     with pytest.raises(validate.Refusal) as exc:
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
     offered = str(exc.value).split("It accepts:")[1]
     assert "ms_path" not in offered
     assert "workdir" not in offered
@@ -192,27 +207,24 @@ def test_a_tool_without_ms_path_is_still_callable(whitelist):
 # -- preconditions -------------------------------------------------------
 
 
+FLUXSCALE = {
+    "action": "run",
+    "tool": "ms_fluxscale",
+    "params": {"caltable": "a.G", "fluxtable": "b.F", "reference": "0", "transfer": "1"},
+    "rationale": "x",
+}
+
+
 def test_rejects_when_a_file_glob_precondition_is_unmet(run_dir, whitelist, fake_ms):
-    decision = {
-        "action": "run",
-        "tool": "ms_fluxscale",
-        "params": {"caltable": "a.G", "fluxtable": "b.F", "reference": "0", "transfer": "1"},
-        "rationale": "x",
-    }
-    with pytest.raises(validate.Refusal, match=r"needs a file matching steps/\*/\*\.G"):
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+    with pytest.raises(validate.Refusal, match=r"needs a file matching processed/\*\.G"):
+        validate.validate(write(run_dir, FLUXSCALE), whitelist, ctx(run_dir, fake_ms))
 
 
 def test_accepts_when_the_file_glob_precondition_is_met(run_dir, whitelist, fake_ms):
-    (run_dir / "steps" / "003-ms_gaincal").mkdir(parents=True)
-    (run_dir / "steps" / "003-ms_gaincal" / "phase.G").write_text("")
-    decision = {
-        "action": "run",
-        "tool": "ms_fluxscale",
-        "params": {"caltable": "a.G", "fluxtable": "b.F", "reference": "0", "transfer": "1"},
-        "rationale": "x",
-    }
-    assert validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+    """The glob points at processed/, the single workdir — not at a step directory."""
+    (run_dir / "processed").mkdir(exist_ok=True)
+    (run_dir / "processed" / "phase.G").write_text("")
+    assert validate.validate(write(run_dir, FLUXSCALE), whitelist, ctx(run_dir, fake_ms))
 
 
 def test_step_done_precondition_tracks_completed_tools(run_dir, whitelist, fake_ms):
@@ -222,23 +234,103 @@ def test_step_done_precondition_tracks_completed_tools(run_dir, whitelist, fake_
         "params": {"field": "0"},
         "rationale": "x",
     }
-    with pytest.raises(validate.Refusal, match="ms_initial_bandpass completed OK"):
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+    with pytest.raises(validate.Refusal, match="ms_initial_bandpass to have completed OK"):
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms))
     # ... and passes once that tool has run.
     validate.validate(
-        write(run_dir, decision), whitelist, run_dir, fake_ms, ["ms_initial_bandpass"]
+        write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, ["ms_initial_bandpass"])
     )
 
 
 def test_ms_exists_precondition_fails_on_a_missing_ms(run_dir, whitelist, tmp_path):
-    with pytest.raises(validate.Refusal, match="needs MS exists"):
+    with pytest.raises(validate.Refusal, match="needs gone.ms to exist"):
         validate.validate(
-            write(run_dir, GOOD_PREFLAG), whitelist, run_dir, tmp_path / "gone.ms", []
+            write(run_dir, GOOD_PREFLAG), whitelist, ctx(run_dir, tmp_path / "gone.ms")
         )
 
 
+def test_ms_exists_fails_when_no_ms_has_that_role_yet(run_dir, whitelist):
+    """An ASDM run before the import: there is no MS at all, not a missing file."""
+    with pytest.raises(validate.Refusal, match="an MS for this tool's role to exist yet"):
+        validate.validate(write(run_dir, GOOD_PREFLAG), whitelist, ctx(run_dir, None))
+
+
+# -- the ASDM gate -------------------------------------------------------
+
+
+def test_import_is_refused_when_the_input_is_an_ms(run_dir, whitelist, fake_ms):
+    decision = {"action": "run", "tool": "ms_import_asdm", "params": {}, "rationale": "x"}
+    with pytest.raises(validate.Refusal, match="to have started from an ASDM"):
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms))
+
+
+def test_import_is_allowed_when_the_input_is_an_asdm(run_dir, whitelist):
+    decision = {"action": "run", "tool": "ms_import_asdm", "params": {}, "rationale": "x"}
+    assert validate.validate(
+        write(run_dir, decision), whitelist, ctx(run_dir, None, input_kind="asdm")
+    )
+
+
+# -- workflow-derived preconditions --------------------------------------
+
+
+def test_a_workflow_precondition_refuses_when_the_flag_is_false(run_dir, whitelist, fake_ms):
+    decision = {
+        "action": "run",
+        "tool": "ms_apply_rflag",
+        "params": {"field": "0"},
+        "rationale": "x",
+    }
+    c = ctx(run_dir, fake_ms, workflow={"corrected_populated": {"value": False}})
+    with pytest.raises(validate.Refusal, match="corrected populated"):
+        validate.validate(write(run_dir, decision), whitelist, c)
+
+
+def test_a_workflow_precondition_passes_when_the_flag_is_true(run_dir, whitelist, fake_ms):
+    decision = {
+        "action": "run",
+        "tool": "ms_apply_rflag",
+        "params": {"field": "0"},
+        "rationale": "x",
+    }
+    c = ctx(run_dir, fake_ms, workflow={"corrected_populated": {"value": True}})
+    assert validate.validate(write(run_dir, decision), whitelist, c)
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        {},  # ms_workflow_status could not run at all
+        {"corrected_populated": {"value": None, "flag": "UNAVAILABLE"}},  # its probe failed
+    ],
+)
+def test_an_unmeasurable_workflow_flag_permits_rather_than_parks(
+    run_dir, whitelist, fake_ms, workflow
+):
+    """Preconditions save compute; they do not enforce science.
+
+    Refusing on something we could not measure would park a run over a failed
+    probe, and the tool itself fails loudly if the input really is missing.
+    The label has to say so, or the brief would claim a check that never ran.
+    """
+    met, label = validate.precondition_status(
+        {"workflow": "corrected_populated"}, ctx(run_dir, fake_ms, workflow=workflow)
+    )
+    assert met is True
+    assert "not measurable" in label
+
+
+def test_a_workflow_list_counts_as_true_when_non_empty(run_dir, fake_ms):
+    c = ctx(run_dir, fake_ms, workflow={"priorcals_present": ["gain_curves.gc"]})
+    met, _ = validate.precondition_status({"workflow": "priorcals_present"}, c)
+    assert met is True
+    c = ctx(run_dir, fake_ms, workflow={"priorcals_present": []})
+    met, _ = validate.precondition_status({"workflow": "priorcals_present"}, c)
+    assert met is False
+
+
 def test_unknown_precondition_is_treated_as_met_not_as_a_crash(run_dir, fake_ms):
-    met, label = validate.precondition_status({"nonsense": 1}, run_dir, fake_ms, [])
+    met, label = validate.precondition_status({"nonsense": 1}, ctx(run_dir, fake_ms))
     assert met is True
     assert "unknown precondition" in label
 
@@ -254,7 +346,7 @@ def test_rejects_a_fabricated_number(run_dir, whitelist, fake_ms):
         "evidence": [{"name": "total_flag_fraction", "value": 0.62, "source": src}],
     }
     with pytest.raises(validate.Refusal, match="you cited total_flag_fraction=0.62"):
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_accepts_a_rounded_number(run_dir, whitelist, fake_ms):
@@ -265,7 +357,7 @@ def test_accepts_a_rounded_number(run_dir, whitelist, fake_ms):
         "rationale": "x",
         "evidence": [{"name": "flag_fraction", "value": 0.62, "source": src}],
     }
-    assert validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+    assert validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_rejects_a_number_just_outside_the_tolerance(run_dir, whitelist, fake_ms):
@@ -276,7 +368,7 @@ def test_rejects_a_number_just_outside_the_tolerance(run_dir, whitelist, fake_ms
         "evidence": [{"name": "flag_fraction", "value": 0.52, "source": src}],
     }
     with pytest.raises(validate.Refusal, match="you cited"):
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_finds_a_number_nested_inside_the_envelope(run_dir, whitelist, fake_ms):
@@ -286,7 +378,7 @@ def test_finds_a_number_nested_inside_the_envelope(run_dir, whitelist, fake_ms):
         "rationale": "x",
         "evidence": [{"name": "flag_fraction", "value": 0.31, "source": src}],
     }
-    assert validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+    assert validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_rejects_a_missing_evidence_source(run_dir, whitelist, fake_ms):
@@ -295,8 +387,31 @@ def test_rejects_a_missing_evidence_source(run_dir, whitelist, fake_ms):
         "rationale": "x",
         "evidence": [{"name": "flag_fraction", "value": 0.1, "source": "steps/nope/m.json"}],
     }
-    with pytest.raises(validate.Refusal, match="evidence source does not exist"):
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+    with pytest.raises(validate.Refusal, match="evidence source is not a file"):
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
+
+
+def test_rejects_an_empty_evidence_source(run_dir, whitelist, fake_ms):
+    """Regression: an empty source resolved to the run directory itself, and
+    reading it raised IsADirectoryError out of the validator instead of
+    refusing the decision. Found by the smoke test."""
+    decision = {
+        "action": "done",
+        "rationale": "x",
+        "evidence": [{"name": "flag_fraction", "value": 0.1, "source": ""}],
+    }
+    with pytest.raises(validate.Refusal, match="names no source file"):
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
+
+
+def test_rejects_a_directory_as_an_evidence_source(run_dir, whitelist, fake_ms):
+    decision = {
+        "action": "done",
+        "rationale": "x",
+        "evidence": [{"name": "flag_fraction", "value": 0.1, "source": "steps"}],
+    }
+    with pytest.raises(validate.Refusal, match="evidence source is not a file"):
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_rejects_a_key_absent_from_the_cited_file(run_dir, whitelist, fake_ms):
@@ -307,13 +422,13 @@ def test_rejects_a_key_absent_from_the_cited_file(run_dir, whitelist, fake_ms):
         "evidence": [{"name": "dynamic_range", "value": 400.0, "source": src}],
     }
     with pytest.raises(validate.Refusal, match="does not appear in"):
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_rejects_a_malformed_evidence_item(run_dir, whitelist, fake_ms):
     decision = {"action": "done", "rationale": "x", "evidence": [{"value": 1.0}]}
     with pytest.raises(validate.Refusal, match="evidence item is malformed"):
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_evidence_without_a_value_is_a_citation_not_a_claim(run_dir, whitelist, fake_ms):
@@ -324,7 +439,7 @@ def test_evidence_without_a_value_is_a_citation_not_a_claim(run_dir, whitelist, 
         "rationale": "x",
         "evidence": [{"name": "total_flagged", "source": src}],
     }
-    assert validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+    assert validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
 
 
 def test_reports_every_problem_at_once(run_dir, whitelist, fake_ms):
@@ -334,5 +449,5 @@ def test_reports_every_problem_at_once(run_dir, whitelist, fake_ms):
         "params": {"cal_fields": "0", "bogus1": 1, "bogus2": 2, "execute": True},
     }
     with pytest.raises(validate.Refusal) as exc:
-        validate.validate(write(run_dir, decision), whitelist, run_dir, fake_ms, [])
+        validate.validate(write(run_dir, decision), whitelist, ctx(run_dir, fake_ms, []))
     assert len(str(exc.value).splitlines()) >= 3

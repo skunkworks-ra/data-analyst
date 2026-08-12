@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 
 from analyst_driver import brief as brief_mod
+from analyst_driver import validate
 
 RECIPE = {"description": "VLA continuum.", "order": ["ms_apply_preflag", "ms_gaincal"]}
 
@@ -36,13 +37,19 @@ def render(run_dir, whitelist, fake_ms, **kw):
         goal="Image 3C286.",
         instrument="VLA · 27 antennas",
         ms_rows=[
-            {"path": str(fake_ms), "name": "fake.ms", "fields": "0 3C286", "flag_fraction": 0.081}
+            {
+                "path": str(fake_ms),
+                "name": "fake.ms",
+                "role": "raw",
+                "fields": "0 3C286",
+                "flag_fraction": 0.081,
+            }
         ],
-        active_ms=fake_ms,
+        ctx=validate.Context(run_dir=run_dir, tools_done=[], ms_path=fake_ms),
+        resolve_ms=lambda tool: fake_ms,
         whitelist=whitelist,
         recipe=RECIPE,
         steps=[],
-        tools_done=[],
         last=None,
         last_step_dir=None,
         verdict_text="verifier: PASS — 1 of 1 checks ran",
@@ -92,14 +99,57 @@ def test_an_unknown_flag_fraction_says_unknown_rather_than_zero(run_dir, whiteli
     assert "unknown" in render(run_dir, whitelist, fake_ms, ms_rows=rows)
 
 
-def test_the_active_ms_is_marked(run_dir, whitelist, fake_ms):
+def test_every_ms_shows_its_role(run_dir, whitelist, fake_ms):
+    """The role column is how the model knows a solve reads calibrators.ms
+    without ever naming a path itself."""
     rows = [
-        {"path": str(fake_ms), "name": "cal.ms", "fields": "0", "flag_fraction": 0.1},
-        {"path": "/elsewhere/target.ms", "name": "target.ms", "fields": "1", "flag_fraction": 0.2},
+        {
+            "path": str(fake_ms),
+            "name": "raw.ms",
+            "role": "raw",
+            "fields": "0,1",
+            "flag_fraction": 0.1,
+        },
+        {
+            "path": "/elsewhere/calibrators.ms",
+            "name": "calibrators.ms",
+            "role": "calibrators",
+            "fields": "0",
+            "flag_fraction": 0.2,
+        },
     ]
     text = render(run_dir, whitelist, fake_ms, ms_rows=rows)
-    assert "cal.ms" in text and "target.ms" in text
-    assert text.count("YES") == 1
+    assert "raw.ms" in text and "calibrators.ms" in text
+    assert "calibrators" in text.split("## 3.")[0]
+
+
+def test_an_undeclared_product_is_listed_without_a_role(run_dir, whitelist, fake_ms):
+    """A stray MS nobody declared must be visible, not silently absent."""
+    rows = [{"path": "/x/mystery.ms", "name": "mystery.ms", "role": "", "flag_fraction": None}]
+    text = render(run_dir, whitelist, fake_ms, ms_rows=rows)
+    assert "mystery.ms" in text
+    assert "—" in text.split("## 3.")[0]
+
+
+def test_no_ms_yet_says_so(run_dir, whitelist, fake_ms):
+    """An ASDM run before the import has no MS at all."""
+    text = render(run_dir, whitelist, fake_ms, ms_rows=[])
+    assert "no Measurement Set yet" in text
+
+
+def test_the_workflow_rollup_is_shown(run_dir, whitelist, fake_ms):
+    ctx = validate.Context(
+        run_dir=run_dir,
+        tools_done=[],
+        ms_path=fake_ms,
+        workflow={
+            "calibrators_ms_present": {"value": True},
+            "corrected_populated": {"value": False},
+        },
+    )
+    text = render(run_dir, whitelist, fake_ms, ctx=ctx)
+    assert "already on disk: calibrators ms present" in text
+    assert "corrected populated" not in text.split("## 3.")[0]
 
 
 # -- section 3, preconditions -------------------------------------------
@@ -111,10 +161,17 @@ def test_an_unmet_precondition_is_shown_with_its_reason(run_dir, whitelist, fake
     assert "NOT MET" in text
 
 
+def test_each_tool_shows_the_ms_it_will_read(run_dir, whitelist, fake_ms):
+    text = render(run_dir, whitelist, fake_ms)
+    assert "[calibrators · reads fake.ms]" in text
+    assert "[raw · reads fake.ms]" in text
+
+
 def test_a_precondition_becomes_met_once_its_input_exists(run_dir, whitelist, fake_ms):
+    """The fluxscale glob points at processed/, the single workdir."""
     before = render(run_dir, whitelist, fake_ms)
-    (run_dir / "steps" / "003-ms_gaincal").mkdir(parents=True)
-    (run_dir / "steps" / "003-ms_gaincal" / "phase.G").write_text("")
+    (run_dir / "processed").mkdir(exist_ok=True)
+    (run_dir / "processed" / "phase.G").write_text("")
     after = render(run_dir, whitelist, fake_ms)
     assert before.count("NOT MET") == after.count("NOT MET") + 1
 
