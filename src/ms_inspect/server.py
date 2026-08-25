@@ -559,7 +559,8 @@ async def ms_field_list(params: MSPathInput) -> str:
     Returns:
         JSON array of field records: field_id, name, ra/dec in deg and HMS/DMS,
         intents, observing_frequency, calibrator_match, field_role,
-        catalogue_role, flux_standard, resolved_source.
+        catalogue_role, flux_standard, flux_standard_range_checked,
+        resolved_source.
 
         observing_frequency gives min_ghz/max_ghz/centre_ghz/n_spw across the
         spectral windows THIS field was observed in, so it can differ between
@@ -570,6 +571,14 @@ async def ms_field_list(params: MSPathInput) -> str:
         check. catalogue_role is what the catalogue lists the source as
         suitable for, retained as a cross-check. When the two contradict, the
         intents win and a warning names both sides.
+
+        flux_standard is resolved from THIS field's observing frequency, not
+        echoed from the catalogue. A source observed outside its model's
+        validity range gets NO standard and a warning naming both the range and
+        the observed span. flux_standard_range_checked says whether that
+        frequency check actually ran: it is False for a solar-system body
+        modelled at a constant brightness temperature, which has no range to
+        check, and False when the frequency could not be read.
     """
     return await _run_tool(fields.run, params.ms_path)
 

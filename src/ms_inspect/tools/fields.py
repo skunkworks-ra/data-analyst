@@ -17,6 +17,7 @@ import numpy as np
 from ms_inspect.util.calibrators import (
     CalibratorEntry,
     infer_intents_from_role,
+    resolve_flux_standard,
     role_from_intents,
     roles_disagree,
 )
@@ -165,14 +166,12 @@ def run(ms_path: str) -> dict:
                     "A cross-check against the intents, not the answer."
                 ),
             )
-            cal_standard = field(cal_entry.flux_standard, flag="COMPLETE")
             cal_resolved = field(cal_entry.resolved, flag="COMPLETE")
             if cal_entry.notes:
                 warnings.append(f"[{name}] {cal_entry.notes}")
         else:
             cal_match = field(None, flag="UNAVAILABLE", note="Not in bundled calibrator catalogue")
             catalogue_role = field(None, flag="UNAVAILABLE")
-            cal_standard = field(None, flag="UNAVAILABLE")
             cal_resolved = field(None, flag="UNAVAILABLE")
 
         # --- Role resolution: this field's own intents decide ---
@@ -262,6 +261,37 @@ def run(ms_path: str) -> dict:
                 note="No readable spectral window for this field",
             )
 
+        # --- Flux standard: resolved from THIS field's frequency ---
+        #
+        # Deliberately after the frequency read, and deliberately not a
+        # catalogue echo. The catalogue says which standard describes the
+        # SOURCE; whether it describes this OBSERVATION depends on the band the
+        # field was observed in. Reporting 'Perley-Butler 2017' COMPLETE on a
+        # 230 GHz field was the defect this replaces.
+        #
+        # resolve_flux_standard lives in calibrators.py because ms_setjy calls
+        # the same function. Two copies could disagree, and the tool that acts
+        # would be the one that is wrong.
+        std = resolve_flux_standard(
+            cal_entry,
+            fq["min_ghz"] if fq else None,
+            fq["max_ghz"] if fq else None,
+        )
+        cal_standard = field(std.standard, flag=std.flag, note=std.note)
+
+        # Warn only where the operator must do something: pick a different
+        # standard, or supply a flux by hand. A constant-brightness-temperature
+        # body and an unread frequency carry notes instead — the first is a
+        # CASA modelling choice, not a metadata problem, and warning on either
+        # would fire on every ALMA dataset.
+        if std.needs_manual_flux:
+            warnings.append(
+                f"[{name}] CASA has no flux standard for this source. It needs an "
+                "explicit manual flux density; do not substitute another standard."
+            )
+        elif std.flag == "UNAVAILABLE" and cal_entry is not None:
+            warnings.append(f"[{name}] {std.note}")
+
         record = {
             "field_id": fid,
             "name": name,
@@ -282,6 +312,12 @@ def run(ms_path: str) -> dict:
             "field_role": role_out,
             "catalogue_role": catalogue_role,
             "flux_standard": cal_standard,
+            # Whether the frequency gate actually RAN, not whether it passed.
+            # flux_standard COMPLETE means both "checked and inside the range"
+            # and "constant brightness temperature, no range exists to check".
+            # Those are different amounts of evidence and the flag cannot
+            # separate them.
+            "flux_standard_range_checked": std.range_checked,
             "resolved_source": cal_resolved,
             "vla_cal_match": vla_cal_match_field,
         }

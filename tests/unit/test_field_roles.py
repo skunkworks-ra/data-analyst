@@ -121,6 +121,26 @@ _ALMA_CONTRADICTION = [
 ]
 
 
+# A real VLA L-band setup for the same three fields: 1-2 GHz, no WVR windows.
+# The role tests do not need it, but the flux-standard gate does — without a
+# frequency the gate cannot run, and a regression test that never runs the gate
+# proves nothing about it.
+_VLA_SPWS = {0: [0, 1], 1: [0, 1], 2: [0, 1]}
+_VLA_CHAN_FREQS = {
+    0: [1.0e9, 1.2e9, 1.4e9],
+    1: [1.6e9, 1.8e9, 2.0e9],
+}
+
+
+def _patch_vla(monkeypatch, specs=None):
+    _patch(
+        monkeypatch,
+        specs or _VLA_FULL_INTENTS,
+        spws_for_field=_VLA_SPWS,
+        chan_freqs=_VLA_CHAN_FREQS,
+    )
+
+
 class TestVlaRegression:
     """Behaviour that worked before the change and must still work."""
 
@@ -148,11 +168,21 @@ class TestVlaRegression:
         ]
 
     def test_catalogue_match_and_flux_standard_survive(self, monkeypatch):
-        _patch(monkeypatch, _VLA_FULL_INTENTS)
+        # With frequencies present the gate RUNS and passes: 3C286 at L band is
+        # inside Perley-Butler's 0.05-50 GHz. Asserting the value alone would
+        # not have caught the flag dropping to INFERRED.
+        _patch_vla(monkeypatch)
         rec = _rec(field_list_run("/fake.ms"), "3C286")
         assert _val(rec, "calibrator_match") == "3C286"
         assert _val(rec, "flux_standard") == "Perley-Butler 2017"
+        assert _flag(rec, "flux_standard") == "COMPLETE"
+        assert rec["flux_standard_range_checked"] is True
         assert _val(rec, "resolved_source") is False
+
+    def test_normal_vla_reduction_raises_no_flux_standard_warning(self, monkeypatch):
+        _patch_vla(monkeypatch)
+        text = " ".join(field_list_run("/fake.ms").get("warnings", []))
+        assert "flux standard" not in text.lower()
 
     def test_agreeing_calibrator_keeps_its_role(self, monkeypatch):
         # 3C286 with flux+bandpass intents on a VLA MS: the catalogue said
@@ -389,3 +419,79 @@ class TestObservingFrequency:
         rec = _rec(field_list_run("/fake.ms"), "3C286")
         assert _flag(rec, "observing_frequency") == "COMPLETE"
         assert abs(_val(rec, "observing_frequency")["max_ghz"] - 225.0) < 1e-6
+
+
+class TestFluxStandardIsGatedOnFrequency:
+    """
+    Stage 2: the standard is resolved from the field's own frequency, not
+    echoed from the catalogue.
+
+    The ALMA cases here are the defect that started the change: ms_field_list
+    reported 'Perley-Butler 2017' COMPLETE on a 230 GHz field, where that scale
+    stops at 50 GHz.
+    """
+
+    def _alma(self, monkeypatch):
+        _patch(
+            monkeypatch,
+            _ALMA_CONTRADICTION,
+            spws_for_field=_ALMA_SPWS,
+            chan_freqs=_ALMA_CHAN_FREQS,
+            wvr_spws=[0],
+        )
+
+    def test_3c286_at_band_6_gets_no_standard(self, monkeypatch):
+        self._alma(monkeypatch)
+        rec = _rec(field_list_run("/fake.ms"), "3C286")
+        assert _val(rec, "flux_standard") is None
+        assert _flag(rec, "flux_standard") == "UNAVAILABLE"
+        assert rec["flux_standard_range_checked"] is True
+
+    def test_out_of_range_warns_and_names_both_numbers(self, monkeypatch):
+        # The operator has to pick a different source. A note alone would not
+        # reach them.
+        self._alma(monkeypatch)
+        text = " ".join(field_list_run("/fake.ms").get("warnings", []))
+        assert "0.05-50 GHz" in text
+        assert "224-237 GHz" in text
+
+    def test_ceres_keeps_its_standard_with_no_range_check(self, monkeypatch):
+        self._alma(monkeypatch)
+        rec = _rec(field_list_run("/fake.ms"), "Ceres")
+        assert _val(rec, "flux_standard") == "Butler-JPL-Horizons 2012"
+        assert _flag(rec, "flux_standard") == "COMPLETE"
+        assert rec["flux_standard_range_checked"] is False
+
+    def test_constant_temperature_body_produces_a_note_not_a_warning(self, monkeypatch):
+        # The user's call: no range exists because of a CASA modelling choice,
+        # not because our metadata is short. Warning here would fire on every
+        # ALMA dataset and train the operator to ignore warnings.
+        self._alma(monkeypatch)
+        result = field_list_run("/fake.ms")
+        rec = _rec(result, "Ceres")
+        assert "brightness temperature" in rec["flux_standard"]["note"]
+        # Ceres still carries its pre-existing catalogue note (apparent
+        # diameter), which is a different subject. Nothing about the flux
+        # standard may reach the warning list.
+        ceres_warnings = [w for w in result.get("warnings", []) if w.startswith("[Ceres]")]
+        assert not any("flux standard" in w.lower() for w in ceres_warnings)
+        assert not any("brightness temperature" in w for w in ceres_warnings)
+
+    def test_unreadable_frequency_is_inferred_not_complete(self, monkeypatch):
+        # No frequency accessors at all. The standard is still reported, but as
+        # INFERRED — the gate did not run, and that is not a pass.
+        _patch(monkeypatch, _VLA_FULL_INTENTS)
+        rec = _rec(field_list_run("/fake.ms"), "3C286")
+        assert _val(rec, "flux_standard") == "Perley-Butler 2017"
+        assert _flag(rec, "flux_standard") == "INFERRED"
+        assert rec["flux_standard_range_checked"] is False
+
+    def test_uncatalogued_field_reports_no_standard_and_no_warning(self, monkeypatch):
+        # A science target is not a failure to resolve a flux standard.
+        _patch_vla(monkeypatch)
+        result = field_list_run("/fake.ms")
+        rec = _rec(result, "G55.7+3.4")
+        assert _flag(rec, "flux_standard") == "UNAVAILABLE"
+        assert rec["flux_standard_range_checked"] is False
+        target_warnings = [w for w in result.get("warnings", []) if w.startswith("[G55.7+3.4]")]
+        assert not any("flux standard" in w.lower() for w in target_warnings)
