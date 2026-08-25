@@ -11,6 +11,10 @@ Two invariants this file must keep:
   a hyphen, before the year. `None` means CASA has no standard for the source.
 - `freq_range_ghz` is per SOURCE, not per standard, and `None` means the range
   is unknown to us. It never means unbounded.
+- `constant_brightness_temperature` is the ONE case where a missing
+  `freq_range_ghz` is a known answer rather than a gap: CASA models the body at
+  a single brightness temperature, so it codes no limit because there is
+  nothing to extrapolate. Callers must still report that no range check ran.
 
 Used by:
 - tools/fields.py  — intent inference when MS has no scan intents
@@ -57,6 +61,15 @@ class CalibratorEntry:
     # discriminator, so name lookup and positional cross-match must both skip
     # the coordinate test rather than mismatch on it.
     solar_system: bool = False
+    # CASA models this body as a uniform disk at a SINGLE brightness
+    # temperature, so its flux varies with frequency only through the Planck
+    # function and there is nothing to extrapolate. That is why it has no
+    # freq_range_ghz, and it is NOT the same statement as freq_range_ghz=None,
+    # which means the range is unknown to us. A frequency gate cannot run on
+    # these bodies; it must report that it did not run rather than pass them.
+    # The temperature was still measured somewhere, so using it far from that
+    # point is a real error no gate here can see.
+    constant_brightness_temperature: bool = False
     notes: str | None = None
     safe_uv_range_klambda: dict[str, UVRangeEntry] = field(default_factory=dict)
     casa_model_available: bool = False
@@ -121,12 +134,15 @@ CATALOGUE: list[CalibratorEntry] = [
         telescopes=["MeerKAT"],
         resolved=False,
         flux_standard="Stevens-Reynolds 2016",
-        freq_range_ghz=None,
+        freq_range_ghz=(1.0, 50.0),
         notes=(
             "Primary MeerKAT and ATCA flux and bandpass calibrator. "
             "Unpolarised to <0.2% — unsuitable for polarisation calibration. "
-            "Validity range not recorded here: confirm against the CASA setjy "
-            "documentation before gating on frequency."
+            "THIS RANGE IS OURS, NOT CASA'S. FluxStdsQS2.cc:190-210 codes a "
+            "polynomial break at 11.1496 GHz (Reynolds below, Partridge et al. "
+            "2016 ApJ 821,1 above) and NO bounds at all, so CASA extrapolates "
+            "outside it silently, with no warning. 1-50 GHz is the ATNF users "
+            "guide recommendation; above 50 GHz that guide says use Uranus."
         ),
     ),
     CalibratorEntry(
@@ -366,9 +382,19 @@ CATALOGUE: list[CalibratorEntry] = [
     # position field is not a discriminator, so name lookup and the VLA
     # positional cross-match must both skip the coordinate test.
     #
-    # freq_range_ghz is None for all of them: the CASA documentation gives no
-    # per-object validity range for this standard. None means unknown, so no
-    # caller may gate on it. Do not fill these in with guesses.
+    # Frequency validity was read from CASA's own source, not from the docs,
+    # which state no numbers: FluxCalc_SS_JPL_Butler.cc. Only four bodies have
+    # a frequency-dependent brightness temperature and therefore a range --
+    # Venus, Jupiter, Uranus and Neptune. Every other body falls through to
+    # compute_constant_temperature() -> compute_BB(), a uniform disk at one
+    # brightness temperature, so CASA codes no limit because there is nothing
+    # to extrapolate. Those carry constant_brightness_temperature=True, which
+    # is a different statement from freq_range_ghz=None ("unknown to us").
+    #
+    # CASA knows 19 bodies by name (setObjNum, :100-148). Lutetia is not one of
+    # them -- see its entry. Mercury, Triton, Pluto, Victoria and Davida are
+    # known to CASA but absent here; nobody flux-calibrates on them, so they
+    # are omitted deliberately rather than overlooked.
     #
     # resolved=True for all fifteen. Apparent diameter varies over the synodic
     # cycle and even the smallest body here is resolved on ALMA's long
@@ -382,8 +408,12 @@ CATALOGUE: list[CalibratorEntry] = [
         telescopes=["ALMA", "VLA"],
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
+        freq_range_ghz=(0.303, 350.0),
         solar_system=True,
-        notes="Apparent diameter ~10-60 arcsec. Thick atmosphere; strongly resolved.",
+        notes=(
+            "Apparent diameter ~10-60 arcsec. Thick atmosphere; strongly resolved. "
+            "Outside 0.303-350 GHz CASA warns and EXTRAPOLATES (FluxCalc_SS_JPL_Butler.cc:733,794-806)."
+        ),
     ),
     CalibratorEntry(
         canonical_name="Mars",
@@ -393,6 +423,7 @@ CATALOGUE: list[CalibratorEntry] = [
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
         solar_system=True,
+        constant_brightness_temperature=True,
         notes="Apparent diameter ~4-25 arcsec.",
     ),
     CalibratorEntry(
@@ -402,10 +433,12 @@ CATALOGUE: list[CalibratorEntry] = [
         telescopes=["ALMA", "VLA"],
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
+        freq_range_ghz=(4.84, 299.8),
         solar_system=True,
         notes=(
             "Apparent diameter ~30-50 arcsec. Also emits strong synchrotron "
-            "radiation at low frequency, which the thermal model does not describe."
+            "radiation at low frequency, which the thermal model does not describe. "
+            "Outside 4.84-299.8 GHz CASA warns and CLAMPS to the edge (FluxCalc_SS_JPL_Butler.cc:812-859)."
         ),
     ),
     CalibratorEntry(
@@ -415,8 +448,12 @@ CATALOGUE: list[CalibratorEntry] = [
         telescopes=["ALMA", "VLA"],
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
+        freq_range_ghz=(4.84, 428.3),
         solar_system=True,
-        notes="Apparent diameter ~3.4-3.7 arcsec. A common ALMA flux standard.",
+        notes=(
+            "Apparent diameter ~3.4-3.7 arcsec. A common ALMA flux standard. "
+            "Outside 4.84-428.3 GHz CASA warns and CLAMPS to the edge (FluxCalc_SS_JPL_Butler.cc:861-902)."
+        ),
     ),
     CalibratorEntry(
         canonical_name="Neptune",
@@ -425,8 +462,12 @@ CATALOGUE: list[CalibratorEntry] = [
         telescopes=["ALMA", "VLA"],
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
+        freq_range_ghz=(4.0, 1000.0),
         solar_system=True,
-        notes="Apparent diameter ~2.2-2.4 arcsec. A common ALMA flux standard.",
+        notes=(
+            "Apparent diameter ~2.2-2.4 arcsec. A common ALMA flux standard. "
+            "Outside 4-1000 GHz CASA warns and CLAMPS to the edge (FluxCalc_SS_JPL_Butler.cc:905-956)."
+        ),
     ),
     CalibratorEntry(
         canonical_name="Io",
@@ -436,6 +477,7 @@ CATALOGUE: list[CalibratorEntry] = [
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
         solar_system=True,
+        constant_brightness_temperature=True,
         notes="Jovian moon. Apparent diameter ~1.2 arcsec. Confusion from Jupiter is a hazard.",
     ),
     CalibratorEntry(
@@ -446,6 +488,7 @@ CATALOGUE: list[CalibratorEntry] = [
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
         solar_system=True,
+        constant_brightness_temperature=True,
         notes="Jovian moon. Apparent diameter ~1.0 arcsec. Confusion from Jupiter is a hazard.",
     ),
     CalibratorEntry(
@@ -456,6 +499,7 @@ CATALOGUE: list[CalibratorEntry] = [
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
         solar_system=True,
+        constant_brightness_temperature=True,
         notes="Jovian moon. Apparent diameter ~1.7 arcsec. Confusion from Jupiter is a hazard.",
     ),
     CalibratorEntry(
@@ -466,6 +510,7 @@ CATALOGUE: list[CalibratorEntry] = [
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
         solar_system=True,
+        constant_brightness_temperature=True,
         notes="Jovian moon. Apparent diameter ~1.6 arcsec. Confusion from Jupiter is a hazard.",
     ),
     CalibratorEntry(
@@ -476,6 +521,7 @@ CATALOGUE: list[CalibratorEntry] = [
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
         solar_system=True,
+        constant_brightness_temperature=True,
         notes=(
             "Saturnian moon. Apparent diameter ~0.8 arcsec. Thick atmosphere with "
             "molecular lines — avoid windows containing them for continuum work."
@@ -489,6 +535,7 @@ CATALOGUE: list[CalibratorEntry] = [
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
         solar_system=True,
+        constant_brightness_temperature=True,
         notes="Asteroid. Apparent diameter ~0.3-0.8 arcsec.",
     ),
     CalibratorEntry(
@@ -499,6 +546,7 @@ CATALOGUE: list[CalibratorEntry] = [
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
         solar_system=True,
+        constant_brightness_temperature=True,
         notes="Asteroid. Apparent diameter ~0.3 arcsec.",
     ),
     CalibratorEntry(
@@ -509,6 +557,7 @@ CATALOGUE: list[CalibratorEntry] = [
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
         solar_system=True,
+        constant_brightness_temperature=True,
         notes="Asteroid. Apparent diameter ~0.3-0.6 arcsec.",
     ),
     CalibratorEntry(
@@ -519,6 +568,7 @@ CATALOGUE: list[CalibratorEntry] = [
         resolved=True,
         flux_standard="Butler-JPL-Horizons 2012",
         solar_system=True,
+        constant_brightness_temperature=True,
         notes="Asteroid. Apparent diameter ~0.2 arcsec.",
     ),
     CalibratorEntry(
@@ -527,9 +577,18 @@ CATALOGUE: list[CalibratorEntry] = [
         role=["flux"],
         telescopes=["ALMA"],
         resolved=True,
-        flux_standard="Butler-JPL-Horizons 2012",
+        flux_standard=None,
         solar_system=True,
-        notes="Asteroid. Apparent diameter ~0.05 arcsec — the smallest body in this set.",
+        notes=(
+            "Asteroid. Apparent diameter ~0.05 arcsec — the smallest body in this set. "
+            "CASA has NO model for Lutetia: it is absent from the 19 names "
+            "setObjNum() matches (FluxCalc_SS_JPL_Butler.cc:100-148), so "
+            "setjy(standard='Butler-JPL-Horizons 2012') fails on it with "
+            '"no flux density model ... not even a rudimentary one". It must be '
+            "given an explicit manual flux. Kept in the catalogue so the name still "
+            "resolves to a flux role and routes to the manual path, rather than "
+            "silently missing."
+        ),
     ),
 ]
 
@@ -776,3 +835,4 @@ def resolved_warning_message(
             f"(≤{uv_entry.max_klambda} kλ for {matched_band_key}). "
             f"Proceed with care; verify with a short-baseline image."
         )
+

@@ -272,17 +272,69 @@ class TestSolarSystemEntries:
         bodies = [e for e in CATALOGUE if e.solar_system]
         assert len(bodies) == 15
 
-    def test_all_use_the_horizons_standard(self):
+    def test_all_use_the_horizons_standard_except_lutetia(self):
+        # CASA matches 19 body names in setObjNum (FluxCalc_SS_JPL_Butler.cc:100-148)
+        # and Lutetia is not one of them, so the standard would fail on it.
         for entry in CATALOGUE:
-            if entry.solar_system:
+            if not entry.solar_system:
+                continue
+            if entry.canonical_name == "Lutetia":
+                assert entry.flux_standard is None
+            else:
                 assert entry.flux_standard == "Butler-JPL-Horizons 2012"
 
-    def test_ranges_are_unknown_not_invented(self):
-        # CASA documents no per-object validity range for this standard.
-        # None means unknown; no caller may gate on it.
+    def test_only_the_four_frequency_dependent_bodies_carry_a_range(self):
+        # Read from CASA source, not the docs, which state no numbers. Only
+        # Venus/Jupiter/Uranus/Neptune have a frequency-dependent brightness
+        # temperature; everything else is a constant-Tb uniform disk.
+        with_range = {
+            e.canonical_name: e.freq_range_ghz
+            for e in CATALOGUE
+            if e.solar_system and e.freq_range_ghz is not None
+        }
+        assert with_range == {
+            "Venus": (0.303, 350.0),
+            "Jupiter": (4.84, 299.8),
+            "Uranus": (4.84, 428.3),
+            "Neptune": (4.0, 1000.0),
+        }
+
+    def test_constant_temperature_marker_partitions_the_bodies(self):
+        # The marker and a range are mutually exclusive by construction: a body
+        # either has something to extrapolate or it does not. Lutetia is in
+        # neither set because CASA has no model for it at all.
+        const = {e.canonical_name for e in CATALOGUE if e.constant_brightness_temperature}
+        assert const == {
+            "Mars",
+            "Io",
+            "Europa",
+            "Ganymede",
+            "Callisto",
+            "Titan",
+            "Ceres",
+            "Pallas",
+            "Vesta",
+            "Juno",
+        }
         for entry in CATALOGUE:
-            if entry.solar_system:
-                assert entry.freq_range_ghz is None
+            if entry.constant_brightness_temperature:
+                assert entry.freq_range_ghz is None, entry.canonical_name
+
+    def test_fixed_sources_never_carry_the_constant_temperature_marker(self):
+        # It describes a solar-system thermal model. A quasar must never get it,
+        # or it would be exempted from the frequency gate.
+        for entry in CATALOGUE:
+            if not entry.solar_system:
+                assert entry.constant_brightness_temperature is False, entry.canonical_name
+
+    def test_pks1934_range_is_recorded_as_ours(self):
+        # CASA codes no bounds for this source and extrapolates silently, so a
+        # gate needs a number. The note must say the number is not CASA's.
+        entry = lookup("PKS1934-638")
+        assert entry is not None
+        assert entry.freq_range_ghz == (1.0, 50.0)
+        assert entry.notes is not None
+        assert "OURS, NOT CASA" in entry.notes
 
     def test_all_marked_resolved(self):
         # Apparent diameter is ephemeris-dependent and even Lutetia is
@@ -366,3 +418,4 @@ class TestRolesDisagree:
         assert roles_disagree([], ["flux"]) is False
         assert roles_disagree(["target"], []) is False
         assert roles_disagree([], []) is False
+
