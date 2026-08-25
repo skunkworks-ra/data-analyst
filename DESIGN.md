@@ -243,18 +243,40 @@ A compact, bundled catalogue covers the primary and bandpass calibrators for the
 | `flux_standard` | `str \| None` | CASA's own standard string, or `None` |
 | `freq_range_ghz` | `tuple[float, float] \| None` | this source's validity range under its standard |
 | `solar_system` | `bool` | moving target; position is not a discriminator |
+| `constant_brightness_temperature` | `bool` | CASA models it at one brightness temperature, so no validity range exists |
 | `notes` | `str \| None` | free text surfaced to the caller as a warning |
 | `safe_uv_range_klambda` | `dict[str, UVRangeEntry]` | per-band safe maximum baseline; see below |
 | `casa_model_available` | `bool` | a CASA component model ships for this source |
 | `casa_model_name` | `str \| None` | that model's name, for the `setjy` call |
 
-Three rules constrain the data, each enforced by a test in `tests/unit/test_calibrators.py`:
+Four rules constrain the data, each enforced by a test in `tests/unit/test_calibrators.py`:
 
 1. **`flux_standard` is spelled exactly as `setjy` accepts it** — a space before the year, not a hyphen. `'Perley-Butler 2017'`, not `'Perley-Butler-2017'`. `None` means CASA has no standard for the source, and it must be given an explicit manual flux density. It must never be routed to a standard string. PKS0408-65 is the case that forces this.
 
 2. **`freq_range_ghz` is per source, not per standard.** Perley-Butler 2017 spans 0.05–50 GHz *as a standard*, but Fornax A within it is valid only over 0.2–0.5 GHz. A single per-standard range would pass Fornax A at 50 GHz. `None` means the range is **unknown to us** — callers must not read it as unbounded and must not gate on it.
 
-3. **`solar_system` marks a moving target.** Both the name lookup and the VLA positional cross-match must skip the coordinate test rather than mismatch on it. Every solar-system body carries `resolved=True`: apparent diameter varies over the synodic cycle, and even the smallest is resolved on ALMA's long baselines, so `False` would fail silently in the dangerous direction.
+3. **`constant_brightness_temperature` is the one case where a missing `freq_range_ghz` is a known answer.** CASA models Mars, the four Galilean moons, Titan and the four asteroids as a uniform disk at a single brightness temperature (`FluxCalc_SS_JPL_Butler.cc`, `compute_constant_temperature`), so it codes no frequency limit — there is nothing to extrapolate. Only Venus, Jupiter, Uranus and Neptune have a frequency-dependent temperature and therefore a range. The marker must not be read as "valid everywhere": the temperature was measured over some band, and a caller must report that no range check ran rather than that one passed.
+
+4. **`solar_system` marks a moving target.** Both the name lookup and the VLA positional cross-match must skip the coordinate test rather than mismatch on it. Every solar-system body carries `resolved=True`: apparent diameter varies over the synodic cycle, and even the smallest is resolved on ALMA's long baselines, so `False` would fail silently in the dangerous direction.
+
+#### Resolving a field's flux standard
+
+`resolve_flux_standard(entry, min_ghz, max_ghz)` in `util/calibrators.py` is the single answer, called by both `ms_field_list` (which reports it) and `ms_setjy` (which acts on it). Two copies could disagree, and the tool that acts would be the one that is wrong.
+
+It returns a `StandardResolution` carrying `standard`, `flag`, `note`, `range_checked` and `needs_manual_flux`. The cases, in order:
+
+| condition | standard | flag | `range_checked` |
+|---|---|---|---|
+| no catalogue match | `None` | UNAVAILABLE | false |
+| `flux_standard is None` (CASA has no model) | `None`, `needs_manual_flux` | **COMPLETE** | false |
+| constant brightness temperature | the standard | COMPLETE | false |
+| range known, frequency unreadable | the standard | INFERRED | false |
+| observed span fully inside the range | the standard | COMPLETE | **true** |
+| observed span not fully inside | `None` | UNAVAILABLE | **true** |
+
+Two deliberate choices. A source CASA cannot model is flagged **COMPLETE**, not UNAVAILABLE: we know the answer and the answer is "there is no standard". Flagging it as a gap invites a caller to fill it with a fallback, which is the one thing that must not happen. And a span that **straddles** an edge fails rather than passing on the overlap — half a band is not a usable flux scale.
+
+`range_checked` exists because `flag` cannot carry it. COMPLETE means both "checked and inside the range" and "no range exists to check", and those are different amounts of evidence. Every consumer surfaces it: `ms_field_list` as `flux_standard_range_checked` per field, `ms_setjy` as `n_range_checked`.
 
 Shape of a single entry, for orientation only — the values below are illustrative, not current:
 

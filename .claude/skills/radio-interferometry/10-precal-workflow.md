@@ -154,7 +154,10 @@ the telescope correction database. Do not proceed — escalate.
 
 ## Step 4 — Flux density model (setjy)
 
-`ms_setjy` sets Stokes I flux models for all flux standard calibrators found.
+`ms_setjy` sets Stokes I flux models for the flux calibrators it finds,
+resolving the standard PER FIELD from that field's observing frequency. Do not
+pass `standard` — see "Flux standards" in `07-calibration-execution.md` for why
+it is an override that skips the frequency check.
 
 **Check the warnings field in the response:**
 
@@ -165,9 +168,24 @@ the telescope correction database. Do not proceed — escalate.
 | 3C138 present at K/Ka/Q | Source was in flare in early 2025 — note in summary; flux scale may be affected |
 | 3C48 present below 4 GHz | PA is unstable at these frequencies — viable for Stokes I only |
 
-The returned `flux_fields` list confirms which fields received a model. If a
-flux calibrator is missing from this list, check that its field name matches
-the catalogue (use `ms_field_list` cross-match for disambiguation).
+The returned `flux_fields` list confirms which fields received a model. A flux
+calibrator missing from it is one of two different problems, and the response
+separates them:
+
+- In `skipped_fields` — the name did not match a catalogued flux calibrator.
+  Check the spelling against `ms_field_list`.
+- In `skipped_no_standard` — the source WAS found, but no standard applies at
+  its observing frequency. **This is not a naming problem and re-running will
+  not fix it.** The reason names the model's validity range and the observed
+  span. You need a different flux calibrator for this band. On ALMA that is
+  normally a solar-system body; a 3C source at Band 6 is far outside
+  Perley-Butler 2017's 50 GHz ceiling.
+
+Also read `n_range_checked`. A solar-system body modelled at a constant
+brightness temperature is scaled without any frequency check, because CASA
+codes no range for it. That is expected, not a defect — but it means the model
+is unverified at your band, so treat a surprising flux scale as plausible
+rather than impossible.
 
 **If polarization calibration is in scope for this dataset, call `ms_setjy` with
 `usescratch=True`** (default is `False`). `ms_setjy_polcal` forces `usescratch=True`
