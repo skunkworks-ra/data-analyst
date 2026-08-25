@@ -16,6 +16,10 @@ Two invariants this file must keep:
   a single brightness temperature, so it codes no limit because there is
   nothing to extrapolate. Callers must still report that no range check ran.
 
+Resolution of a field's standard from its observing frequency lives in
+`resolve_flux_standard()` at the foot of this file. Both `ms_field_list` and
+`ms_setjy` call it, so they cannot drift apart.
+
 Used by:
 - tools/fields.py  — intent inference when MS has no scan intents
 - tools/antennas.py — resolved-source UV range warning
@@ -836,3 +840,152 @@ def resolved_warning_message(
             f"Proceed with care; verify with a short-baseline image."
         )
 
+
+# ---------------------------------------------------------------------------
+# Flux standard resolution
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class StandardResolution:
+    """
+    Which flux standard applies to one field, and how well we know it.
+
+    ``range_checked`` is separate from ``flag`` on purpose. A check that never
+    ran is not a check that passed, and the two are indistinguishable from the
+    standard alone: a constant-brightness-temperature body and a source whose
+    frequency we could not read both come back with a standard and no range
+    test. Callers that gate on this must be able to say how much work the gate
+    actually did.
+    """
+
+    standard: str | None
+    flag: str  # COMPLETE | INFERRED | UNAVAILABLE
+    note: str
+    range_checked: bool
+    # True when the source is a catalogued flux calibrator that CASA has no
+    # standard for. It needs an explicit manual flux; it must NEVER be routed
+    # to a standard string as a fallback.
+    needs_manual_flux: bool = False
+
+
+def _fmt_ghz(lo: float, hi: float) -> str:
+    return f"{lo:g}-{hi:g} GHz"
+
+
+def resolve_flux_standard(
+    entry: CalibratorEntry | None,
+    min_ghz: float | None,
+    max_ghz: float | None,
+) -> StandardResolution:
+    """
+    Resolve the flux standard for ONE field from its OWN observing frequency.
+
+    Per FLUX_STANDARD_DESIGN.md §2.2. The frequency span is the range of the
+    spectral windows this field was actually observed in, not the MS-wide span
+    — a calibrator observed in a subset of the windows must be judged on that
+    subset.
+
+    A span that straddles an edge of the validity range FAILS. The model is
+    either valid across the whole band the field was observed in or it is not
+    trustworthy for that field, and half a band is not a usable flux scale.
+
+    Args:
+        entry:   Catalogue match for the field, or None if it did not match.
+        min_ghz: Lowest observed frequency for this field, GHz. None if
+                 unreadable.
+        max_ghz: Highest observed frequency for this field, GHz. None if
+                 unreadable.
+    """
+    # 1. Not a catalogued source. Unchanged behaviour: we have nothing to say.
+    if entry is None:
+        return StandardResolution(
+            standard=None,
+            flag="UNAVAILABLE",
+            note="Not in the bundled calibrator catalogue, so no flux standard was resolved.",
+            range_checked=False,
+        )
+
+    name = entry.canonical_name
+
+    # 2. CASA has no standard for this source. That is a KNOWN answer, not a
+    #    gap, so the flag is COMPLETE even though the value is None.
+    if entry.flux_standard is None:
+        return StandardResolution(
+            standard=None,
+            flag="COMPLETE",
+            note=(
+                f"CASA has no flux standard for {name}. It must be given an explicit "
+                "manual flux density (setjy standard='manual'). Do not substitute "
+                "another standard."
+            ),
+            range_checked=False,
+            needs_manual_flux=True,
+        )
+
+    # 3. Constant brightness temperature: no range exists to check, and that is
+    #    a CASA modelling choice rather than missing metadata. A note, not a
+    #    warning — but the note must say what the gate cannot see.
+    if entry.constant_brightness_temperature:
+        return StandardResolution(
+            standard=entry.flux_standard,
+            flag="COMPLETE",
+            note=(
+                f"{name} is modelled as a uniform disk at a single brightness "
+                "temperature, so CASA codes no frequency limit — there is nothing to "
+                "extrapolate — and no range check is possible. This is not a "
+                "frequency-free model: the temperature was measured over some band, "
+                "and using it far from there is a real error this check cannot see."
+            ),
+            range_checked=False,
+        )
+
+    # 4. We have a range but could not read the frequency. The gate did not run.
+    if entry.freq_range_ghz is None or min_ghz is None or max_ghz is None:
+        if entry.freq_range_ghz is None:
+            why = f"no validity range is recorded for {name}"
+        else:
+            why = "this field's observing frequency could not be read"
+        return StandardResolution(
+            standard=entry.flux_standard,
+            flag="INFERRED",
+            note=(
+                f"Catalogue standard for {name} is '{entry.flux_standard}', but "
+                f"{why}, so it was NOT checked against the observing frequency. "
+                "Verify the standard covers your band before calibrating."
+            ),
+            range_checked=False,
+        )
+
+    lo, hi = entry.freq_range_ghz
+    span = f"{min_ghz:g}-{max_ghz:g} GHz"
+
+    # 5. Fully inside the validity range.
+    if min_ghz >= lo and max_ghz <= hi:
+        return StandardResolution(
+            standard=entry.flux_standard,
+            flag="COMPLETE",
+            note=(
+                f"'{entry.flux_standard}' is valid for {name} over {_fmt_ghz(lo, hi)}; "
+                f"this field was observed over {span}, entirely inside it."
+            ),
+            range_checked=True,
+        )
+
+    # 6. Not fully inside. No standard.
+    overlaps = min_ghz <= hi and max_ghz >= lo
+    how = (
+        "partially overlaps it — part of the band is outside the model"
+        if overlaps
+        else "lies entirely outside it"
+    )
+    return StandardResolution(
+        standard=None,
+        flag="UNAVAILABLE",
+        note=(
+            f"No flux standard resolved for {name}. '{entry.flux_standard}' is valid "
+            f"over {_fmt_ghz(lo, hi)}, but this field was observed over {span}, which "
+            f"{how}. Use a source or standard appropriate to this frequency."
+        ),
+        range_checked=True,
+    )

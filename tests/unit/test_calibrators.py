@@ -15,6 +15,7 @@ from ms_inspect.util.calibrators import (
     infer_intents_from_role,
     is_known_calibrator,
     lookup,
+    resolve_flux_standard,
     resolved_warning_message,
     role_from_intents,
     roles_disagree,
@@ -419,3 +420,94 @@ class TestRolesDisagree:
         assert roles_disagree(["target"], []) is False
         assert roles_disagree([], []) is False
 
+
+# ---------------------------------------------------------------------------
+# Flux standard resolution (FLUX_STANDARD_DESIGN.md 2.2)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveFluxStandard:
+    def test_no_catalogue_entry_is_unavailable(self):
+        res = resolve_flux_standard(None, 1.0, 2.0)
+        assert res.standard is None
+        assert res.flag == "UNAVAILABLE"
+        assert res.range_checked is False
+        assert res.needs_manual_flux is False
+
+    def test_source_with_no_casa_standard_is_complete_not_unavailable(self):
+        # We KNOW the answer and the answer is "there is no standard". That is
+        # not a gap, and a caller must not read it as one and pick a fallback.
+        res = resolve_flux_standard(lookup("PKS0408-65"), 1.0, 2.0)
+        assert res.standard is None
+        assert res.flag == "COMPLETE"
+        assert res.needs_manual_flux is True
+        assert "manual" in res.note.lower()
+
+    def test_lutetia_routes_to_manual_flux(self):
+        res = resolve_flux_standard(lookup("Lutetia"), 215.0, 235.0)
+        assert res.standard is None
+        assert res.needs_manual_flux is True
+
+    def test_constant_temperature_body_keeps_its_standard(self):
+        # Ceres is the ALMA test dataset's flux calibrator. No range exists, so
+        # no gate can run, but the standard is still correct.
+        res = resolve_flux_standard(lookup("Ceres"), 215.0, 235.0)
+        assert res.standard == "Butler-JPL-Horizons 2012"
+        assert res.flag == "COMPLETE"
+        assert res.range_checked is False
+
+    def test_constant_temperature_note_states_what_it_cannot_see(self):
+        # Without this clause the marker is a silent pass -- the same failure
+        # mode as CASA's own silent extrapolation.
+        res = resolve_flux_standard(lookup("Ceres"), 215.0, 235.0)
+        assert "cannot see" in res.note
+
+    def test_unreadable_frequency_is_inferred_not_complete(self):
+        # A check that did not run is not a check that passed.
+        res = resolve_flux_standard(lookup("3C286"), None, None)
+        assert res.standard == "Perley-Butler 2017"
+        assert res.flag == "INFERRED"
+        assert res.range_checked is False
+        assert "NOT checked" in res.note
+
+    def test_inside_the_range_passes_and_says_so(self):
+        res = resolve_flux_standard(lookup("3C286"), 1.0, 2.0)
+        assert res.standard == "Perley-Butler 2017"
+        assert res.flag == "COMPLETE"
+        assert res.range_checked is True
+        assert "0.05-50 GHz" in res.note
+        assert "1-2 GHz" in res.note
+
+    def test_entirely_outside_the_range_yields_no_standard(self):
+        # 3C286 at ALMA Band 6. Perley-Butler stops at 50 GHz; this is the
+        # defect that started the whole change.
+        res = resolve_flux_standard(lookup("3C286"), 215.0, 235.0)
+        assert res.standard is None
+        assert res.flag == "UNAVAILABLE"
+        assert res.range_checked is True
+        assert "entirely outside" in res.note
+
+    def test_a_span_that_straddles_an_edge_fails(self):
+        # Virgo A is valid to 3 GHz. Half a band is not a usable flux scale,
+        # and the note must distinguish this from missing the range entirely.
+        res = resolve_flux_standard(lookup("VirA"), 1.0, 10.0)
+        assert res.standard is None
+        assert res.flag == "UNAVAILABLE"
+        assert res.range_checked is True
+        assert "partially overlaps" in res.note
+
+    def test_solar_system_body_with_a_range_is_gated_like_any_other(self):
+        # Uranus at Band 6 passes; Uranus at L band does not.
+        assert resolve_flux_standard(lookup("Uranus"), 215.0, 235.0).standard is not None
+        low = resolve_flux_standard(lookup("Uranus"), 1.0, 2.0)
+        assert low.standard is None
+        assert low.range_checked is True
+
+    def test_every_catalogue_entry_resolves_without_raising(self):
+        # The resolver is called per field on every MS. A single entry shape it
+        # cannot handle would break ms_field_list on unrelated data.
+        for entry in CATALOGUE:
+            for lo, hi in [(None, None), (1.0, 2.0), (215.0, 235.0)]:
+                res = resolve_flux_standard(entry, lo, hi)
+                assert res.flag in {"COMPLETE", "INFERRED", "UNAVAILABLE"}
+                assert res.note
