@@ -454,8 +454,24 @@ class SetjyInput(BaseModel):
     ms_path: str = Field(..., description="Path to calibrators.ms (or full MS).", min_length=1)
     workdir: str = Field(..., description="Existing directory for setjy.py script.", min_length=1)
     standard: str = Field(
-        default="Perley-Butler 2017",
-        description="Flux standard to use (default 'Perley-Butler 2017').",
+        default="",
+        description=(
+            "Whole-run OVERRIDE. Leave empty (default) to resolve a standard PER "
+            "FIELD from that field's own observing frequency — required when one "
+            "MS needs two standards (e.g. a solar-system body plus a quasar). A "
+            "non-empty value forces one standard on every flux field and SKIPS "
+            "the frequency validity check."
+        ),
+    )
+    manual_flux: dict = Field(
+        default_factory=dict,
+        description=(
+            "Explicit flux for sources CASA has no model for (e.g. PKS0408-65), "
+            "as {field_name: {'fluxdensity': [I, Q, U, V], 'spix': ..., "
+            "'reffreq': ...}}. Only the keys given are emitted; nothing is "
+            "defaulted. Without an entry such a field is SKIPPED with a warning "
+            "— it is never routed to a different standard."
+        ),
     )
     usescratch: bool = Field(
         default=False,
@@ -847,7 +863,9 @@ async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> str:
 @mcp.tool(
     name="ms_setjy",
     description=(
-        "Set Perley-Butler 2017 Stokes I flux model for standard VLA calibrators. "
+        "Set Stokes I flux models for catalogued flux calibrators, resolving the "
+        "standard PER FIELD from its observing frequency. A field observed outside "
+        "its model's validity range is skipped, not mis-scaled. "
         "Warns on 3C84 (resolved), 3C138/3C48 (variable). "
         "Use ms_setjy_polcal for full polarization models."
     ),
@@ -861,34 +879,45 @@ async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> str:
 )
 async def ms_setjy(params: SetjyInput) -> str:
     """
-    Set flux density models for standard VLA calibrators in the MS.
+    Set flux density models for the catalogued flux calibrators in the MS.
 
     Cross-matches observed fields against the bundled calibrator catalogue,
-    then generates (or runs) setjy() for each flux standard found, using the
-    Perley-Butler 2017 standard. Warns if 3C84 (resolved) or 3C138/3C48
-    (variable/partially polarized) are present.
+    reads each field's own observing frequency, and resolves the flux standard
+    per field. One MS can therefore carry two standards at once — a
+    solar-system body on Butler-JPL-Horizons plus a quasar on Perley-Butler.
 
-    Does NOT set polarization angle models (see CALPOL.md tools).
+    A field observed outside its model's validity range gets NO standard and is
+    skipped with a warning naming both the range and the observed span. It is
+    never given a different standard as a fallback.
+
+    Warns if 3C84 (resolved) or 3C138/3C48 (variable/partially polarized) are
+    present. Does NOT set polarization angle models (see CALPOL.md tools).
 
     Args:
         params.ms_path:   Path to calibrators.ms.
         params.workdir:   Existing directory for setjy.py script.
-        params.standard:   Flux standard (default 'Perley-Butler 2017').
+        params.standard:  Whole-run override; empty (default) resolves per field.
+        params.manual_flux: Explicit flux for sources CASA cannot model.
         params.usescratch: Virtual model (False) or fill MODEL_DATA (True). Set
                            True when polarization calibration is in scope.
+        params.exclude_fields: Field names to omit (pol-angle cal overlap).
         params.execute:    Generate script only (False) or run setjy in-process (True).
 
     Returns:
-        JSON with flux_fields, skipped_fields, excluded_fields, warnings, script_path.
+        JSON with flux_fields, skipped_fields, skipped_no_standard,
+        excluded_fields, flux_standard_resolution (per-field standard, flag and
+        whether the frequency check ran), n_range_checked, warnings,
+        script_path.
     """
     return await _run_tool(
         setjy.run,
         params.ms_path,
         params.workdir,
-        params.standard,
-        params.usescratch,
-        params.exclude_fields,
-        params.execute,
+        standard=params.standard,
+        manual_flux=params.manual_flux,
+        usescratch=params.usescratch,
+        exclude_fields=params.exclude_fields,
+        execute=params.execute,
     )
 
 
