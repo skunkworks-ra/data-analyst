@@ -40,12 +40,13 @@ casa = [
 ms-inspect = "ms_inspect.server:main"
 ms-modify = "ms_modify.server:main"
 ms-create = "ms_create.server:main"
+analyst-driver = "analyst_driver.cli:main"
 
 # ---------------------------------------------------------------------------
 # Hatch — source layout
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
-packages = ["src/ms_inspect", "src/ms_modify", "src/ms_create"]
+packages = ["src/ms_inspect", "src/ms_modify", "src/ms_create", "src/analyst_driver"]
 artifacts = ["*.yaml"]
 
 # ---------------------------------------------------------------------------
