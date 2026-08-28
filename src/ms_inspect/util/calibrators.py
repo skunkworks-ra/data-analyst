@@ -60,6 +60,27 @@ class CalibratorEntry:
     # standard, but Fornax A within it is only good over 0.2-0.5 GHz.
     # None means the range is not known to us — callers must NOT read that as
     # unbounded, and must not gate on it.
+    #
+    # PROVENANCE, verified against CASA source and its shipped data tables:
+    #
+    # - Perley-Butler 2017 ranges are CASA'S OWN, not ours. Each source column
+    #   in the PerleyButler2017Coeffs table carries a `ValidFreqRange` keyword,
+    #   read at FluxCalcVQS.cc:179-187. All 20 sources define one, and the
+    #   values here were checked against that table entry by entry.
+    #   FluxCalcLogFreqPolynomial.cc:53-65 compares the requested frequency
+    #   against it and emits LogIO::WARN outside — then computes and returns the
+    #   extrapolated value anyway. So CASA warns but never refuses.
+    # - Scaife-Heald 2012's table defines NO ValidFreqRange on any of its six
+    #   sources, so the keyword check falls to the (0,0) branch and no warning
+    #   is possible. Any range recorded for it is ours.
+    # - Stevens-Reynolds 2016 is not table-driven at all (FluxStdsQS2.cc:190-210
+    #   fills coefficients inline, with a polynomial break at 11.1496 GHz and no
+    #   bounds), so its range is ours too and CASA is silent outside it.
+    # - Butler-JPL-Horizons 2012 codes ranges for its four frequency-dependent
+    #   bodies only; it warns, then clamps or extrapolates.
+    #
+    # _range_provenance() states the relevant one in the note resolve_flux_standard()
+    # returns, so the fact lives here and there rather than in every entry's note.
     freq_range_ghz: tuple[float, float] | None = None
     # Moving target with no fixed sky position. Its position field is not a
     # discriminator, so name lookup and positional cross-match must both skip
@@ -263,7 +284,7 @@ CATALOGUE: list[CalibratorEntry] = [
         telescopes=["VLA"],
         resolved=True,
         flux_standard="Perley-Butler 2017",
-        freq_range_ghz=(0.06, 50.0),
+        freq_range_ghz=(0.05, 50.0),
         notes="Extended ~20 arcsec. Use a component model on long baselines.",
     ),
     CalibratorEntry(
@@ -360,14 +381,19 @@ CATALOGUE: list[CalibratorEntry] = [
         ),
     ),
     CalibratorEntry(
-        canonical_name="J0133-3649",
-        aka=["0131-367", "j0133-3649"],
+        canonical_name="J0133-3629",
+        aka=["0131-367", "j0133-3629", "j0133-3649", "j0133"],
         role=["flux"],
         telescopes=["VLA"],
         resolved=False,
         flux_standard="Perley-Butler 2017",
         freq_range_ghz=(0.2, 4.0),
-        notes="Southern flux calibrator.",
+        notes=(
+            "Southern flux calibrator. Was catalogued here as J0133-3649, a "
+            "digit typo; CASA's PerleyButler2017Coeffs table names the column "
+            "J0133-3629_coeffs. The old spelling is kept as an alias so an MS "
+            "field carrying it still matches."
+        ),
     ),
     CalibratorEntry(
         canonical_name="J0444-2809",
@@ -869,6 +895,35 @@ class StandardResolution:
     needs_manual_flux: bool = False
 
 
+def _range_provenance(entry: CalibratorEntry) -> str:
+    """
+    One sentence saying where this source's range came from and what CASA does
+    outside it.
+
+    It matters because the two are not the same thing. Where the range is OURS
+    CASA enforces nothing, so the only thing standing between a caller and a
+    silently extrapolated flux scale is this check. Said once, here, rather than
+    repeated in twenty catalogue notes.
+    """
+    if entry.flux_standard == "Butler-JPL-Horizons 2012":
+        return (
+            "This range is CASA's own; outside it CASA warns and then clamps or "
+            "extrapolates rather than stopping."
+        )
+    if entry.flux_standard == "Perley-Butler 2017":
+        return (
+            "This range is CASA's own, from the ValidFreqRange keyword on this "
+            "source's column in the PerleyButler2017Coeffs table. Outside it CASA "
+            "logs a warning and then returns the extrapolated value anyway, so a "
+            "run that ignores the warning still produces a number."
+        )
+    return (
+        f"THIS RANGE IS OURS, from the measurements {entry.flux_standard} was "
+        "fitted to. CASA codes no bound for this standard and would extrapolate "
+        "here silently, with no warning at all."
+    )
+
+
 def _fmt_ghz(lo: float, hi: float) -> str:
     return f"{lo:g}-{hi:g} GHz"
 
@@ -985,7 +1040,8 @@ def resolve_flux_standard(
         note=(
             f"No flux standard resolved for {name}. '{entry.flux_standard}' is valid "
             f"over {_fmt_ghz(lo, hi)}, but this field was observed over {span}, which "
-            f"{how}. Use a source or standard appropriate to this frequency."
+            f"{how}. {_range_provenance(entry)} Use a source or standard appropriate "
+            "to this frequency."
         ),
         range_checked=True,
     )

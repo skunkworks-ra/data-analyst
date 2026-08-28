@@ -511,3 +511,96 @@ class TestResolveFluxStandard:
                 res = resolve_flux_standard(entry, lo, hi)
                 assert res.flag in {"COMPLETE", "INFERRED", "UNAVAILABLE"}
                 assert res.note
+
+
+class TestRangeProvenanceIsStated:
+    """
+    A range CASA enforces and a range only we enforce carry different risk. If
+    the note does not say which it is, a reader cannot tell whether ignoring the
+    gate means "CASA will warn me" or "nothing will warn me".
+    """
+
+    def test_perley_butler_range_is_declared_as_casas(self):
+        # These ranges come from the ValidFreqRange keyword in CASA's own
+        # PerleyButler2017Coeffs table, not from us. CASA warns outside them —
+        # and then returns the extrapolated value regardless.
+        res = resolve_flux_standard(lookup("3C286"), 219.0, 235.0)
+        assert "CASA's own" in res.note
+        assert "PerleyButler2017Coeffs" in res.note
+        assert "RANGE IS OURS" not in res.note
+
+    def test_stevens_reynolds_range_is_declared_as_ours(self):
+        res = resolve_flux_standard(lookup("PKS1934-638"), 60.0, 70.0)
+        assert "RANGE IS OURS" in res.note
+
+    def test_horizons_range_is_declared_as_casas(self):
+        res = resolve_flux_standard(lookup("Jupiter"), 1.0, 2.0)
+        assert "CASA's own" in res.note
+        assert "RANGE IS OURS" not in res.note
+
+    def test_every_out_of_range_verdict_states_a_provenance(self):
+        # No entry may produce a bare range with no account of where it came
+        # from. The out-of-range verdict is UNAVAILABLE with range_checked set;
+        # anything else is a different branch and is not this test's business.
+        #
+        # The counter matters: if the flag or the branch structure changes, this
+        # sweep would silently check nothing at all rather than fail.
+        checked = 0
+        for entry in CATALOGUE:
+            if entry.freq_range_ghz is None:
+                continue
+            for lo, hi in [(0.01, 0.02), (900.0, 1100.0)]:
+                res = resolve_flux_standard(entry, lo, hi)
+                if res.flag == "UNAVAILABLE" and res.range_checked:
+                    assert "OURS" in res.note or "CASA's own" in res.note, entry.canonical_name
+                    checked += 1
+        assert checked > 30, f"sweep exercised only {checked} out-of-range verdicts"
+
+
+class TestCatalogueMatchesCasaCoefficientTable:
+    """
+    The Perley-Butler ranges are copies of CASA's ValidFreqRange keywords. A
+    copy can drift from its source, and two entries already had: 3C123 read
+    0.06 where CASA says 0.05, and J0133-3629 was spelled J0133-3649.
+
+    These are pinned as literals rather than read from the live table, because
+    the table needs casatools and a casadata install. The values were taken from
+    the shipped PerleyButler2017Coeffs table.
+    """
+
+    CASA_RANGES = {
+        "3C123": (0.05, 50.0),
+        "3C138": (0.2, 50.0),
+        "3C147": (0.05, 50.0),
+        "3C196": (0.05, 50.0),
+        "3C286": (0.05, 50.0),
+        "3C295": (0.05, 50.0),
+        "3C353": (0.2, 4.0),
+        "3C380": (0.05, 4.0),
+        "3C444": (0.2, 12.0),
+        "3C48": (0.05, 50.0),
+        "CasA": (0.2, 4.0),
+        "CygA": (0.05, 12.0),
+        "ForA": (0.2, 0.5),
+        "HerA": (0.2, 12.0),
+        "HydraA": (0.05, 12.0),
+        "J0133-3629": (0.2, 4.0),
+        "J0444-2809": (0.2, 2.0),
+        "PicA": (0.2, 4.0),
+        "TauA": (0.05, 4.0),
+        "VirA": (0.05, 3.0),
+    }
+
+    def test_every_range_matches_casa(self):
+        for name, expected in self.CASA_RANGES.items():
+            entry = lookup(name)
+            assert entry is not None, f"{name} missing from the catalogue"
+            assert entry.freq_range_ghz == expected, name
+
+    def test_all_twenty_casa_sources_are_present(self):
+        ours = {e.canonical_name for e in CATALOGUE if e.flux_standard == "Perley-Butler 2017"}
+        assert ours == set(self.CASA_RANGES)
+
+    def test_the_old_j0133_spelling_still_matches(self):
+        # An MS written before the fix may carry the typo as its field name.
+        assert lookup("J0133-3649").canonical_name == "J0133-3629"
