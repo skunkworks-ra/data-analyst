@@ -810,7 +810,7 @@ def resolved_warning_message(
     Return a warning message string if the calibrator is resolved at the
     given max baseline and band. Returns None if no warning is needed.
 
-    Logic per DESIGN.md §3.5:
+    Logic per design_docs/DESIGN.md §3.5:
     - If resolved=False: no warning.
     - If resolved=True and band not in safe_uv_range: warn, state unknown limit.
     - If resolved=True and max_baseline > safe max: warn with specifics.
@@ -936,7 +936,8 @@ def resolve_flux_standard(
     """
     Resolve the flux standard for ONE field from its OWN observing frequency.
 
-    Per FLUX_STANDARD_DESIGN.md §2.2. The frequency span is the range of the
+    Per design_docs/FLUX_STANDARD_DESIGN.md §2.2. The frequency span is the
+    range of the
     spectral windows this field was actually observed in, not the MS-wide span
     — a calibrator observed in a subset of the windows must be judged on that
     subset.

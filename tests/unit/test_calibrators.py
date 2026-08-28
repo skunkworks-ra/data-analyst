@@ -422,7 +422,7 @@ class TestRolesDisagree:
 
 
 # ---------------------------------------------------------------------------
-# Flux standard resolution (FLUX_STANDARD_DESIGN.md 2.2)
+# Flux standard resolution (design_docs/FLUX_STANDARD_DESIGN.md §2.2)
 # ---------------------------------------------------------------------------
 
 

@@ -937,7 +937,7 @@ the same functions are also callable programmatically by skills and scripts
 | `ms_set_intents` | Populate STATE subtable + STATE_ID from calibrator-catalogue matching (see below) |
 | `ms_apply_preflag` | Deterministic pre-cal flagging (online + shadow + clip + tfcrop) + calibrator split |
 | `ms_generate_priorcals` | Generate gc/opac/rq/ap prior caltables via `gencal` |
-| `ms_setjy` | Set Perley-Butler 2017 flux models; `exclude_fields` protects an overlapping pol-angle cal |
+| `ms_setjy` | Set flux models; the standard is resolved per field from that field's own frequency (§3.5); `exclude_fields` protects an overlapping pol-angle cal |
 | `ms_setjy_polcal` | Set polarization-angle models for pol calibrators |
 | `ms_initial_bandpass` | gaincal → bandpass → applycal; populates CORRECTED |
 | `ms_apply_initial_rflag` | rflag + tfcrop on CORRECTED − MODEL residuals; requires explicit `field` |

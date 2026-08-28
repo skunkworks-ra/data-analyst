@@ -8,7 +8,7 @@ Transport is selected via RADIO_MCP_TRANSPORT environment variable:
     RADIO_MCP_TRANSPORT=http             — for HPC / remote access
     RADIO_MCP_PORT=8000                  — HTTP port (default 8000)
 
-All tools follow the contract defined in DESIGN.md §7:
+All tools follow the contract defined in design_docs/DESIGN.md §7:
 - Return a standard JSON envelope (status, completeness_summary, data, warnings, provenance)
 - Raise typed exceptions from exceptions.py on hard failures
 - Never interpret, suggest, or chain — that is the Skill's job
@@ -843,7 +843,7 @@ async def ms_parallactic_angle_vs_time(params: MSPathInput) -> str:
     """
     Layer 2, Tool 4: Return parallactic angle range per field (sky-frame and feed-frame).
 
-    CONVENTION (DESIGN.md §6.4):
+    CONVENTION (design_docs/DESIGN.md §6.4):
     - pa_sky_deg:  astropy sky-frame PA, North through East
     - pa_feed_deg: feed-frame PA = pa_sky - 90° for ALT-AZ mounts (CASA convention)
 

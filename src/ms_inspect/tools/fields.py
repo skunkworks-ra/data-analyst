@@ -110,7 +110,7 @@ def run(ms_path: str) -> dict:
 
         # Observing frequency per field. This tool was field-only until now; the
         # read is here because frequency is what decides whether a flux standard
-        # applies to a source (see FLUX_STANDARD_DESIGN.md 2.2), and the answer
+        # applies to a source (see design_docs/FLUX_STANDARD_DESIGN.md §2.2), and
         # is per FIELD — a field is only observed in the SpWs it was observed in.
         field_freqs = field_frequencies(msmd, n_fields)
         casa_calls.append("msmd.spwsforfield(field_id) + msmd.chanfreqs(spw) for each field")

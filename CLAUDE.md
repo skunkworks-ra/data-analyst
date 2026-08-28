@@ -20,7 +20,7 @@ MeerKAT, and uGMRT:
 calibration, and imaging inspection as those phases were implemented. The
 companion `ms-modify` / `ms-create` servers cover the write and ingestion paths.
 
-The design document is at `DESIGN.md` in this directory (§8 has the full,
+The design document is at `design_docs/DESIGN.md` in this directory (§8 has the full,
 per-server tool inventory). Read it before making any non-trivial change.
 
 ---
@@ -87,8 +87,10 @@ it belongs in the Skill.
 ```
 radio-analyst/
 ├── CLAUDE.md                      ← this file
-├── DESIGN.md                      ← architecture, failure modes, conventions
 ├── README.md
+├── design_docs/                   ← design documents
+│   ├── DESIGN.md                  ← architecture, failure modes, conventions
+│   └── FLUX_STANDARD_DESIGN.md    ← per-field flux standard resolution
 ├── pixi.toml                      ← environment (conda-forge + casatools via PyPI)
 ├── pyproject.toml                 ← build metadata and tooling config
 ├── .mcp.json                      ← MCP server definitions (all three servers)
@@ -339,7 +341,7 @@ Functions are also callable directly by skills and scripts.
 | `ms_set_intents` | `ms_modify/intents.py` | Populate STATE subtable and STATE_ID from calibrator catalogue matching, including `CALIBRATE_POL_ANGLE` / `CALIBRATE_POL_LEAKAGE` from pol-catalogue identity. `pol_leakage_fields` nominates a field the catalogue does not know (the tool never nominates one itself); `pol_sources_available` reports what the MS contains |
 | `ms_apply_preflag` | `ms_modify/preflag.py` | Deterministic pre-cal flagging (online + shadow + clip + tfcrop) + calibrator split |
 | `ms_generate_priorcals` | `ms_modify/priorcals.py` | Generate gc/opac/rq/ap prior caltables via gencal |
-| `ms_setjy` | `ms_modify/setjy.py` | Set Perley-Butler 2017 flux models for standard calibrators. `exclude_fields` omits a field from the Stokes-I pass (use for a pol-angle cal that overlaps a flux/BP cal — its polarized model is set by `ms_setjy_polcal`, and a plain setjy would clobber it) |
+| `ms_setjy` | `ms_modify/setjy.py` | Set flux models for standard calibrators. The standard is resolved PER FIELD from that field's own observing frequency — leave `standard` empty (the default); passing it is a whole-run override that skips the frequency validity check. `manual_flux` supplies a literature flux for a source CASA cannot model. `exclude_fields` omits a field from the Stokes-I pass (use for a pol-angle cal that overlaps a flux/BP cal — its polarized model is set by `ms_setjy_polcal`, and a plain setjy would clobber it) |
 | `ms_setjy_polcal` | `ms_modify/setjy_polcal.py` | Set polarisation angle models for pol calibrators |
 | `ms_initial_bandpass` | `ms_modify/initial_bandpass.py` | gaincal → bandpass → applycal; populates CORRECTED |
 | `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass; **requires** explicit `field` (only the field with valid CORRECTED) |
@@ -495,7 +497,7 @@ code.
 6. Add unit tests that exercise the logic without CASA (mock or pure-logic paths).
 7. Add an integration test stub in `tests/integration/test_tools.py` with the
    `@_SKIP` decorator.
-8. Update the tool inventory table in this file and in `DESIGN.md`.
+8. Update the tool inventory table in this file and in `design_docs/DESIGN.md`.
 
 ---
 

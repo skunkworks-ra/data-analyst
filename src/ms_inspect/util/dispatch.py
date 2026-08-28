@@ -11,7 +11,7 @@ the read, write, and ingest servers:
 2. **Per-path serialization.** CASA table access is not thread-safe for
    concurrent opens of the same MS within one process.
 3. **A uniform error envelope.** RadioMSError becomes the documented error
-   dict (DESIGN.md §7.2); anything else propagates to FastMCP.
+   dict (design_docs/DESIGN.md §7.2); anything else propagates to FastMCP.
 
 No CASA dependency.
 """

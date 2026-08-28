@@ -6,7 +6,7 @@ Layer 2, Tool 6.
 Computes per-antenna pre-existing flag fractions from the FLAG column.
 Uses multiprocessing for parallel chunked reads on large MSs.
 
-Parallel read strategy (DESIGN.md §6.6):
+Parallel read strategy (design_docs/DESIGN.md §6.6):
 - Partition MAIN table rows into N chunks (default 4 workers, max 8)
 - Each worker opens the table independently and reads its row range
 - Workers return per-antenna (flagged_count, total_count) arrays

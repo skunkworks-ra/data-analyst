@@ -37,7 +37,7 @@ mcp = FastMCP(
 # NOTE: this replaces a local wrapper that also caught bare Exception and
 # returned an UNEXPECTED_ERROR envelope. The shared helper re-raises anything
 # that is not a RadioMSError, matching the other two servers and the contract
-# in DESIGN.md §7.2; FastMCP surfaces it as a tool error.
+# in design_docs/DESIGN.md §7.2; FastMCP surfaces it as a tool error.
 _run_tool = run_tool
 
 

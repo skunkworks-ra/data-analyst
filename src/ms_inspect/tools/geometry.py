@@ -5,7 +5,7 @@ Layer 2, Tools 3 & 4.
 
 Uses astropy for all coordinate computations (not CASA measures daemon).
 
-PA convention (DESIGN.md §6.4):
+PA convention (design_docs/DESIGN.md §6.4):
   pa_sky_deg  = astropy sky-frame PA (North through East)
   pa_feed_deg = feed-frame PA = pa_sky - 90° for ALT-AZ mounts (CASA convention)
 
@@ -334,7 +334,7 @@ def run_parallactic_angle_vs_time(ms_path: str) -> dict:
     """
     Return per-field parallactic angle range — sky-frame and feed-frame.
 
-    Both pa_sky and pa_feed are returned (see DESIGN.md §6.4 for convention).
+    Both pa_sky and pa_feed are returned (see design_docs/DESIGN.md §6.4 for convention).
     pa_feed = pa_sky - 90° for ALT-AZ mounts.
 
     validation_status: PENDING — cross-check against CASA measures required

@@ -2,7 +2,7 @@
 util/formatting.py — Response envelope construction and output formatting.
 
 Defines the completeness flag schema and the standard JSON response envelope
-described in DESIGN.md §4 and §7.1.
+described in design_docs/DESIGN.md §4 and §7.1.
 
 No CASA dependency.
 """
@@ -34,7 +34,7 @@ def field(
     """
     Wrap a value with its completeness flag.
 
-    Used to construct every data field in a tool response per DESIGN.md §4.
+    Used to construct every data field in a tool response per design_docs/DESIGN.md §4.
 
     Example:
         field(1.4e9, "COMPLETE")
@@ -73,7 +73,7 @@ def response_envelope(
     extra_flags: list[CompletionFlag] | None = None,
 ) -> dict:
     """
-    Wrap tool output in the standard response envelope (DESIGN.md §7.1).
+    Wrap tool output in the standard response envelope (design_docs/DESIGN.md §7.1).
 
     Computes completeness_summary as the worst flag found anywhere in `data`
     (recursively) combined with any flags in `extra_flags`.
@@ -114,7 +114,7 @@ def error_envelope(
     message: str,
 ) -> dict:
     """
-    Construct a standard error response envelope (DESIGN.md §7.1).
+    Construct a standard error response envelope (design_docs/DESIGN.md §7.1).
     """
     return {
         "tool": tool_name,

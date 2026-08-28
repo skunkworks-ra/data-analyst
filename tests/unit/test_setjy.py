@@ -241,7 +241,7 @@ class TestSetjyRun:
 
 
 # ---------------------------------------------------------------------------
-# Per-field flux standard resolution (FLUX_STANDARD_DESIGN.md 2.2 / 2.4)
+# Per-field flux standard resolution (design_docs/FLUX_STANDARD_DESIGN.md §2.2 / §2.4)
 # ---------------------------------------------------------------------------
 
 

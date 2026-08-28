@@ -82,7 +82,7 @@ calibrators.
 `action='calculate'` makes it read-only.
 `[READ]` Five documents still describe `msmd.shadowedAntennas()`:
 - `CLAUDE.md:209` (inventory table)
-- `DESIGN.md:673`, `:674`, `:694`, `:837`
+- `design_docs/DESIGN.md:673`, `:674`, `:694`, `:837`
 - `.claude/skills/radio-interferometry/01b-workflow-phase2.md:84`
 - `.claude/skills/radio-interferometry/06-failure-modes.md:111`
 - `docs/session_context.md:115` records the tool as non-functional
@@ -142,10 +142,10 @@ All `[READ]` against this base:
 
 | Location | Wrong | Correct |
 |---|---|---|
-| `CLAUDE.md:201`, `DESIGN.md:829` | "Layer 2 — Instrument Sanity (6 tools)" | 7. `CLAUDE.md`'s table already has 7 rows including `ms_flag_preflight` |
+| `CLAUDE.md:201`, `design_docs/DESIGN.md:829` | "Layer 2 — Instrument Sanity (6 tools)" | 7. `CLAUDE.md`'s table already has 7 rows including `ms_flag_preflight` |
 | `CLAUDE.md` repo tree | Missing 8 `tools/` modules, 7 `util/` modules, 3 `ms_modify/` modules, `ms_create/reduction_log.py`; ends at a `skill/SKILL.md` that does not exist | Rebuild from `ls`; skills live in `.claude/skills/` |
 | `CLAUDE.md` env table | `RADIO_MCP_TEST_CALTABLE` absent | Used by integration tests in `tests/integration/test_tools.py` |
-| `DESIGN.md` (search `ms_uv_coverage_stats`) | Cited as a Layer 3 tool | Does not exist. Mark not implemented |
+| `design_docs/DESIGN.md` (search `ms_uv_coverage_stats`) | Cited as a Layer 3 tool | Does not exist. Mark not implemented |
 
 ### 5. Three registered tools no skill file names
 
@@ -256,7 +256,7 @@ Action: `command -v pixi` guard printing an actionable message naming
 `ms-create`). **stderr only** — these are stdio JSON-RPC servers and anything on
 stdout corrupts the stream.
 
-### 9. Contract rewrite in `DESIGN.md` and `CLAUDE.md`
+### 9. Contract rewrite in `design_docs/DESIGN.md` and `CLAUDE.md`
 
 Preshanth's explicit decision, in his words: *"Tools may return derived values,
 rankings, and descriptive labels, with their inputs included. Tools may not
@@ -321,7 +321,7 @@ is, not which poltype applies. Derive it from source knowledge only, and ship a
 
 Callers to update: `server.py`, `.claude/commands/polcal.md` (which branches on
 the four verdicts), `SKILL.md` allowed-tools, `util/pol_calibrators.py`
-docstring, `CLAUDE.md`, `DESIGN.md`, and the integration tests. New tests should
+docstring, `CLAUDE.md`, `design_docs/DESIGN.md`, and the integration tests. New tests should
 assert the **absence** of the gate fields.
 
 ### 12. Bound the `ms_spw_amp_severity` per-channel payload
