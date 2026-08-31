@@ -8,8 +8,10 @@ The verbs (user decision, 2026-08-31):
 - ``init``  scaffolds ``config.toml`` and nothing else. It registers no run.
             Nothing else needs scaffolding: ``DriverDB.__init__`` creates the
             run root and the database on first open.
-- ``run``   registers a run for an MS when none is open, then drives it. Bare
-            ``run`` drives every active run, which is the fan-out mode.
+- ``run``   registers a run for an ASDM or an MS when none is open on it, then
+            drives it. Bare ``run`` drives every active run, which is the
+            fan-out mode. The dataset stays on the command line, not in
+            ``config.toml``, so one config can serve many runs.
 - ``step``  one turn of one run, for debugging.
 
 ``run`` and ``step`` both take the run's ownership record before they work and
@@ -195,11 +197,11 @@ def _resolve_run(
     if args.run:
         return [args.run], 0, ""
 
-    if args.ms or args.workdir:
-        if not (args.ms and args.workdir):
-            return [], 1, "--ms and --workdir must be given together"
-        ms_path = str(Path(args.ms).absolute())
-        open_runs = db.find_runs_by_ms(ms_path)
+    if args.input or args.workdir:
+        if not (args.input and args.workdir):
+            return [], 1, "--input and --workdir must be given together"
+        input_path = str(Path(args.input).absolute())
+        open_runs = db.find_runs_by_ms(input_path)
         if len(open_runs) > 1:
             keys = ", ".join(r["run_key"] for r in open_runs)
             return (
@@ -212,10 +214,16 @@ def _resolve_run(
             )
         if open_runs:
             return [open_runs[0]["run_key"]], 0, ""
-        run_key = make_run_key(ms_path)
+        # An ASDM is a legitimate starting point: ms_path stays empty until an
+        # import turn writes an MS, and the loop learns it from that turn's
+        # "ms" output. Registering against a path that is not yet an MS is the
+        # whole point of keeping input_path separate.
+        is_ms = (Path(input_path) / "table.info").exists()
+        run_key = make_run_key(input_path)
         db.create_run(
             run_key,
-            ms_path=ms_path,
+            input_path=input_path,
+            ms_path=input_path if is_ms else "",
             workdir=str(Path(args.workdir).absolute()),
             telescope=args.telescope,
             backend=(cfg.get("backend") or {}).get("kind", "claude"),
@@ -318,8 +326,14 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_step)
 
     p = sub.add_parser("run", help="register a run if needed, then drive it")
-    p.add_argument("--ms", default=None, help="MS to drive; registers a run if none is open")
-    p.add_argument("--workdir", default=None, help="work directory; required with --ms")
+    p.add_argument(
+        "--input",
+        "--ms",
+        dest="input",
+        default=None,
+        help="ASDM or MS to drive; registers a run if none is open on it",
+    )
+    p.add_argument("--workdir", default=None, help="work directory; required with --input")
     p.add_argument("--telescope", default=None)
     p.add_argument("--run", default=None, help="one run_key; default all active runs")
     p.add_argument("--resume", action="store_true", help="take over an interrupted run")

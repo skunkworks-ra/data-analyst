@@ -26,6 +26,54 @@ machine) — verify its event schema before first use.
 
 ---
 
+## 2026-08-31 — ASDM support: the driver stops requiring an MS
+
+The tool layer was never broken. `ms_import_asdm` takes `asdm_path`, does its
+own `Path.exists()` check and raises `ASDMNotFoundError`; it never touches
+`validate_ms_path`. Only the DRIVER could not reach it, because `Loop.sense`
+is hardwired to `ms_workflow_status`, and that tool called `validate_ms_path`
+at its first line — which raises for exactly the case its own
+`next_step = "import_asdm"` label exists to report. The label was dead code
+from the day it was written.
+
+Three changes:
+
+1. **`ms_workflow_status` probes, it does not validate.** `workflow_status.py`
+   replaces `validate_ms_path` with a plain `Path(...).resolve()` plus the
+   `table.info` check it already did, and warns which of the two reasons
+   applies (path absent / no table.info). The MAIN-table read is now guarded
+   by `ms_valid`, since there is nothing to open before import. Every tool
+   that operates ON an MS still validates; this one reports a stage.
+2. **The brief names all three servers.** It said "call exactly ONE ms_modify
+   tool", which excluded `ms-create` — and therefore the import stage — from
+   the driver entirely. It now names ms_create for import_asdm, carries the
+   raw `Input:` path beside `MS:`, and requires the import turn to name the MS
+   it will write as an `outputs` entry with kind `ms`.
+3. **The run carries `input_path` beside `ms_path`.** `input_path` is what the
+   user handed us (ASDM or MS) and is the run's stable identity;  `ms_path` is
+   empty until an MS exists. `Loop._adopt_ms` fills it in after a turn, from
+   an `outputs` entry of kind `ms` that measured as PRESENT — a claimed path
+   that produced nothing leaves `ms_path` empty, so the next turn senses the
+   import stage again rather than chasing a bad path. An existing `ms_path` is
+   never overwritten, so a later split naming an `ms` output cannot repoint
+   the run.
+
+`runs` gains an `input_path` column with a `_migrate()` ALTER for databases
+created before it (backfilled from `ms_path`), and `dump()` covers it so the
+rebuild round-trip tests it. `find_runs_by_ms` matches either path. CLI flag
+is now `--input`, with `--ms` kept as an alias.
+
+Config shape settled by the user: the dataset stays on the command line, NOT
+in `config.toml`, so one config can serve the fan-out mode. `PLAN.md:317`
+listed ms_path and workdir as config contents and the code never read them;
+that is now resolved in the code's favour by the user's decision, not mine.
+
+850 unit tests pass; lint and format clean. Verified end to end with a fake
+ASDM through the installed console script: registers, senses `import_asdm`,
+no traceback.
+
+---
+
 ## 2026-08-31 — run lifecycle: config scaffolding, ownership, completion
 
 Three changes, driven by "what does active mean" (user, this date).

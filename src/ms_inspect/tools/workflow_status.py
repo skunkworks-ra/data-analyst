@@ -10,21 +10,34 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ms_inspect.util.casa_context import open_table, validate_ms_path
+from ms_inspect.util.casa_context import open_table
 from ms_inspect.util.formatting import field, response_envelope
 
 TOOL_NAME = "ms_workflow_status"
 
 
 def run(ms_path: str, workdir: str) -> dict:
-    p = validate_ms_path(ms_path)
+    # 1. MS valid.
+    #
+    # An absent or not-yet-imported path is a STAGE, not an error: it is what
+    # next_recommended_step = "import_asdm" exists to report. This tool used to
+    # call validate_ms_path here, which raises for exactly that case, so the
+    # import_asdm branch below could never be produced and a caller could not
+    # ask "where am I" before importing. The path is therefore probed, not
+    # validated. Every tool that operates ON an MS still validates.
+    p = Path(ms_path).expanduser().resolve()
     ms_str = str(p)
     wd = Path(workdir)
     casa_calls: list[str] = []
     warnings: list[str] = []
 
-    # 1. MS valid
     ms_valid = (p / "table.info").exists()
+    if not ms_valid:
+        warnings.append(
+            f"'{p}' is not a Measurement Set"
+            f" ({'path does not exist' if not p.exists() else 'no table.info'});"
+            " reporting the import stage rather than the MS state."
+        )
 
     # 2. Intents populated (check STATE subtable)
     #
@@ -65,16 +78,19 @@ def run(ms_path: str, workdir: str) -> dict:
     #
     # The MAIN table always exists when ms_valid, so there is no "has not
     # happened yet" case here: any exception is a genuine read failure and
-    # is reported as such rather than as an absent column.
+    # is reported as such rather than as an absent column. With no MS there is
+    # nothing to open, and the probe is skipped rather than reported as a
+    # failure — next_step stops at import_asdm well above this.
     corrected_populated: bool | None = False
     corrected_error: str | None = None
-    try:
-        with open_table(ms_str) as tb:
-            casa_calls.append("tb.open(MAIN) for colnames")
-            corrected_populated = "CORRECTED_DATA" in set(tb.colnames())
-    except Exception as exc:
-        corrected_populated = None
-        corrected_error = f"{type(exc).__name__}: {exc}"
+    if ms_valid:
+        try:
+            with open_table(ms_str) as tb:
+                casa_calls.append("tb.open(MAIN) for colnames")
+                corrected_populated = "CORRECTED_DATA" in set(tb.colnames())
+        except Exception as exc:
+            corrected_populated = None
+            corrected_error = f"{type(exc).__name__}: {exc}"
 
     # 8. Final caltables present
     final_tables = ["delay.K", "bandpass.B", "gain.G", "gain.fluxscaled"]

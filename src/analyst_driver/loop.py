@@ -180,6 +180,7 @@ _BRIEF_TEMPLATE = """\
 You are one decision point in a CASA reduction driven by an external loop.
 You decide the single next stage; the loop executes it while you are gone.
 
+Input: {input_path}
 MS: {ms_path}
 Work directory: {workdir}
 Telescope: {telescope}
@@ -192,16 +193,21 @@ Previous turn: {previous}
 Do this, in order:
 1. Consult the radio-interferometry skill for the stage the status names.
 2. Inspect with read-only ms_inspect tools as needed.
-3. Call exactly ONE ms_modify tool with execute=False so it writes a script
-   into the work directory. Do not execute anything yourself.
+3. Call exactly ONE writing tool with execute=False so it writes a script
+   into the work directory. Do not execute anything yourself. The writing
+   tools are the ms_modify server AND the ms_create server — at the
+   import_asdm stage the tool you need is ms_import_asdm, from ms_create,
+   and it takes the raw input path above, not an MS.
 4. End your reply with one JSON object, nothing after it:
    {{"script": "<path to the generated script>",
-     "tool": "<the ms_modify tool you called>",
+     "tool": "<the tool you called>",
      "stage": "<the stage this advances>",
      "cited": [{{"name": "...", "value": ..., "source": "<file you read it from>"}}],
      "outputs": [{{"path": "<product the script will write>", "kind": "caltable|image|plot|ms"}}],
      "notes": "<one sentence>"}}
-   Only "script" is required.
+   Only "script" is required. At the import stage name the MS the script will
+   write as an output with kind "ms": that is how the loop learns where the
+   MS is, and the run cannot continue without it.
 5. If the reduction is finished and no stage remains, reply instead with
    {{"done": true, "notes": "<why it is finished>"}} and name no script.
    Only you can say this: ms_workflow_status reports "selfcal_or_done" and
@@ -222,7 +228,8 @@ def render_brief(run: dict, status_payload: dict, previous_turn: dict | None) ->
             f" logs={last_job.get('log_paths')}"
         )
     return _BRIEF_TEMPLATE.format(
-        ms_path=run["ms_path"],
+        input_path=run.get("input_path") or run["ms_path"],
+        ms_path=run["ms_path"] or "not imported yet",
         workdir=run["workdir"],
         telescope=run.get("telescope") or "unknown",
         status_json=json.dumps(status_payload, indent=1, sort_keys=True, default=str),
@@ -265,7 +272,26 @@ class Loop:
     def sense(self, run: dict) -> dict:
         from ms_inspect.tools import workflow_status
 
-        return workflow_status.run(run["ms_path"], run["workdir"])
+        # Before import there is no MS, so the raw input is what gets probed.
+        # ms_workflow_status reports next_recommended_step = "import_asdm" for
+        # a path that is not a Measurement Set; it does not raise.
+        return workflow_status.run(run["ms_path"] or run.get("input_path") or "", run["workdir"])
+
+    def _adopt_ms(self, run_key: str, artifacts: list[dict]) -> None:
+        """Learn where the MS is once an import turn has written one.
+
+        The path is the model's claim, so it is taken only when something is
+        really there: ``measure_artifact`` records size None for an absent
+        path. A claim that produced nothing leaves ms_path empty, and the next
+        turn senses the import stage again rather than chasing a bad path.
+        """
+        run = self.db._read_json(self.db._run_json(run_key))
+        if run.get("ms_path"):
+            return
+        for a in artifacts:
+            if a.get("kind") == "ms" and a.get("size") is not None:
+                self.db.set_run_ms_path(run_key, a["path"])
+                return
 
     def _last_turn(self, run_key: str) -> dict | None:
         ordinal = self.db.next_ordinal(run_key) - 1
@@ -404,6 +430,7 @@ class Loop:
             metrics=turn.get("harvested_metrics") or [],
             wall_time_s=_wall_time(job.get("submitted_at"), job.get("finished_at")),
         )
+        self._adopt_ms(run_key, artifacts)
         set_owner_job(self.db._run_dir(run_key), None)
         return {
             "action": "completed",

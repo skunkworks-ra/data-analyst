@@ -66,13 +66,107 @@ def test_run_key_distinguishes_directories():
 # ---------------------------------------------------------------- live path
 
 
+#: dump()["runs"] column order, so the positional asserts below survive a
+#: column being added in the middle of the SELECT.
+RUN_COLS = (
+    "run_key",
+    "started_at",
+    "input_path",
+    "ms_path",
+    "workdir",
+    "telescope",
+    "backend",
+    "executor",
+    "status",
+)
+
+
 def test_create_run_writes_journal_and_row(db):
     key = _make_run(db)
     assert (db.run_root / key / "run.json").exists()
     rows = db.dump()["runs"]
     assert len(rows) == 1
-    assert rows[0][0] == key
-    assert rows[0][7] == "active"
+    row = dict(zip(RUN_COLS, rows[0], strict=True))
+    assert row["run_key"] == key
+    assert row["status"] == "active"
+
+
+def test_create_run_defaults_input_path_to_the_ms(db):
+    """A run started from an MS has no separate input; the two agree."""
+    key = _make_run(db)
+    row = dict(zip(RUN_COLS, db.dump()["runs"][0], strict=True))
+    assert row["input_path"] == row["ms_path"] == "/data/test.ms"
+    assert key
+
+
+def test_run_can_start_from_an_asdm_with_no_ms_yet(db):
+    db.create_run(
+        "k1",
+        input_path="/data/uid___A002_X1",
+        ms_path="",
+        workdir="/w",
+        started_at="2026-08-31T10:00:00Z",
+    )
+    row = dict(zip(RUN_COLS, db.dump()["runs"][0], strict=True))
+    assert row["input_path"] == "/data/uid___A002_X1"
+    assert row["ms_path"] == ""
+
+
+def test_set_run_ms_path_records_the_imported_ms(db):
+    db.create_run(
+        "k1",
+        input_path="/data/uid___A002_X1",
+        ms_path="",
+        workdir="/w",
+        started_at="2026-08-31T10:00:00Z",
+    )
+    db.set_run_ms_path("k1", "/w/uid___A002_X1.ms")
+    assert db._read_json(db._run_json("k1"))["ms_path"] == "/w/uid___A002_X1.ms"
+    row = dict(zip(RUN_COLS, db.dump()["runs"][0], strict=True))
+    assert row["ms_path"] == "/w/uid___A002_X1.ms"
+    assert row["input_path"] == "/data/uid___A002_X1"
+
+
+def test_find_runs_by_ms_matches_the_asdm_before_import(db, tmp_path):
+    asdm = tmp_path / "uid___A002_X1"
+    db.create_run(
+        "k1",
+        input_path=str(asdm.absolute()),
+        ms_path="",
+        workdir="/w",
+        started_at="2026-08-31T10:00:00Z",
+    )
+    assert [r["run_key"] for r in db.find_runs_by_ms(asdm)] == ["k1"]
+
+
+def test_migration_adds_input_path_to_an_old_database(tmp_path):
+    """A database created before the column must not need deleting."""
+    import sqlite3
+
+    root = tmp_path / "runs"
+    root.mkdir()
+    conn = sqlite3.connect(root / "driver.sqlite3")
+    conn.executescript(
+        "CREATE TABLE runs (id INTEGER PRIMARY KEY, run_key TEXT NOT NULL UNIQUE,"
+        " started_at TEXT NOT NULL, ms_path TEXT NOT NULL, workdir TEXT NOT NULL,"
+        " telescope TEXT, backend TEXT, executor TEXT, status TEXT NOT NULL);"
+        "INSERT INTO runs (run_key, started_at, ms_path, workdir, status)"
+        " VALUES ('old', '2026-01-01T00:00:00Z', '/data/old.ms', '/w', 'active');"
+    )
+    conn.commit()
+    conn.close()
+
+    d = DriverDB(root)
+    try:
+        cols = {r[1] for r in d.conn.execute("PRAGMA table_info(runs)")}
+        assert "input_path" in cols
+        # backfilled from ms_path, so an old run keeps a usable identity
+        assert (
+            d.conn.execute("SELECT input_path FROM runs WHERE run_key = 'old'").fetchone()[0]
+            == "/data/old.ms"
+        )
+    finally:
+        d.close()
 
 
 def test_record_turn_written_at_submission(db):

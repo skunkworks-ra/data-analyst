@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY,      -- PORTABILITY: SQLite rowid alias
     run_key TEXT NOT NULL UNIQUE,
     started_at TEXT NOT NULL,
+    -- What the user handed us: an ASDM before import, an MS after it, and the
+    -- stable identity of the run either way. ms_path is empty until an MS
+    -- exists, so it cannot serve as that identity.
+    input_path TEXT NOT NULL DEFAULT '',
     ms_path TEXT NOT NULL,
     workdir TEXT NOT NULL,
     telescope TEXT,
@@ -198,7 +202,20 @@ class DriverDB:
         self.conn = sqlite3.connect(self.db_path, timeout=30.0)
         self.conn.execute("PRAGMA journal_mode=WAL")  # PORTABILITY: SQLite pragma
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns a database predating them cannot get from CREATE TABLE.
+
+        ``CREATE TABLE IF NOT EXISTS`` is a no-op on an existing table, so a
+        new column needs an explicit ALTER. Every column added here must have
+        a default, because the rows already there carry no value for it.
+        """
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(runs)")}
+        if "input_path" not in have:
+            self.conn.execute("ALTER TABLE runs ADD COLUMN input_path TEXT NOT NULL DEFAULT ''")
+            self.conn.execute("UPDATE runs SET input_path = ms_path WHERE input_path = ''")
 
     def close(self) -> None:
         self.conn.close()
@@ -236,6 +253,7 @@ class DriverDB:
         *,
         ms_path: str,
         workdir: str,
+        input_path: str | None = None,
         telescope: str | None = None,
         backend: str | None = None,
         executor: str | None = None,
@@ -245,6 +263,7 @@ class DriverDB:
         record = {
             "run_key": run_key,
             "started_at": started_at or utcnow_iso(),
+            "input_path": input_path if input_path is not None else ms_path,
             "ms_path": ms_path,
             "workdir": workdir,
             "telescope": telescope,
@@ -262,6 +281,13 @@ class DriverDB:
             raise ValueError(f"status must be one of {sorted(RUN_STATUSES)}, got {status!r}")
         record = self._read_json(self._run_json(run_key))
         record["status"] = status
+        self._write_json(self._run_json(run_key), record)
+        self._sync_run(record)
+
+    def set_run_ms_path(self, run_key: str, ms_path: str) -> None:
+        """Record the MS once it exists — after an import turn, typically."""
+        record = self._read_json(self._run_json(run_key))
+        record["ms_path"] = ms_path
         self._write_json(self._run_json(run_key), record)
         self._sync_run(record)
 
@@ -290,11 +316,13 @@ class DriverDB:
         """
         target = str(Path(ms_path).absolute())
         placeholders = ",".join("?" for _ in statuses)
+        # Either path matches: before import the caller knows only the ASDM,
+        # after it they may well name the MS instead.
         rows = self.conn.execute(
             "SELECT run_key, status, started_at, workdir, executor FROM runs"
-            f" WHERE ms_path = ? AND status IN ({placeholders})"  # noqa: S608 - placeholders only
+            f" WHERE (input_path = ? OR ms_path = ?) AND status IN ({placeholders})"  # noqa: S608
             " ORDER BY started_at, run_key",
-            (target, *statuses),
+            (target, target, *statuses),
         ).fetchall()
         return [
             {"run_key": r[0], "status": r[1], "started_at": r[2], "workdir": r[3], "executor": r[4]}
@@ -431,10 +459,11 @@ class DriverDB:
         if row:
             run_id = row[0]
             cur.execute(
-                "UPDATE runs SET started_at=?, ms_path=?, workdir=?, telescope=?,"
-                " backend=?, executor=?, status=? WHERE id=?",
+                "UPDATE runs SET started_at=?, input_path=?, ms_path=?, workdir=?,"
+                " telescope=?, backend=?, executor=?, status=? WHERE id=?",
                 (
                     record["started_at"],
+                    record.get("input_path") or record["ms_path"],
                     record["ms_path"],
                     record["workdir"],
                     record["telescope"],
@@ -446,11 +475,12 @@ class DriverDB:
             )
         else:
             cur.execute(
-                "INSERT INTO runs (run_key, started_at, ms_path, workdir, telescope,"
-                " backend, executor, status) VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO runs (run_key, started_at, input_path, ms_path, workdir,"
+                " telescope, backend, executor, status) VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     record["run_key"],
                     record["started_at"],
+                    record.get("input_path") or record["ms_path"],
                     record["ms_path"],
                     record["workdir"],
                     record["telescope"],
@@ -579,8 +609,8 @@ class DriverDB:
         q = self.conn.execute
         return {
             "runs": q(
-                "SELECT run_key, started_at, ms_path, workdir, telescope, backend,"
-                " executor, status FROM runs ORDER BY run_key"
+                "SELECT run_key, started_at, input_path, ms_path, workdir, telescope,"
+                " backend, executor, status FROM runs ORDER BY run_key"
             ).fetchall(),
             "turns": q(
                 "SELECT r.run_key, t.ordinal, t.stage, t.attempt, t.state, t.outcome,"

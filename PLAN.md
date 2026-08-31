@@ -319,8 +319,9 @@ config file, executor kind, and when the executor is SLURM the `SlurmConfig`
 fields already defined in `src/ms_modify/slurm.py` (account, partition, mem,
 time, modules). `analyst-driver init` writes a commented default to edit.
 
-The MS path and work directory are NOT in it: they are per dataset, while this
-file is per machine and per user. They are flags on `analyst-driver run`.
+The MS or ASDM path and the work directory are NOT in it: they are per dataset,
+while one config serves many runs (the fan-out mode). They are flags on
+`analyst-driver run` — `--input` (an ASDM or an MS) and `--workdir`.
 
 This does not overlap the skills. The skills answer "what solint should this
 gaincal use"; `config.toml` answers "which queue, as which user, driven by which

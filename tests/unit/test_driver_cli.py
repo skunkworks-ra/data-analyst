@@ -300,3 +300,62 @@ def test_run_with_no_active_runs(project, capsys):
     write_config(project)
     assert _cli(project, "run") == 1
     assert "no active runs" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------ ASDM as input
+
+
+def test_run_registers_an_asdm_with_no_ms_yet(project, capsys):
+    asdm = project / "uid___A002_X1"
+    asdm.mkdir()
+    (asdm / "ASDM.xml").write_text("<x/>")
+    write_config(project, [DONE])
+    assert _cli(project, "run", "--input", str(asdm), "--workdir", str(project / "work")) == 0
+    run_key = capsys.readouterr().out.splitlines()[0].strip()
+
+    db = DriverDB(project / "runs")
+    row = db.conn.execute(
+        "SELECT input_path, ms_path FROM runs WHERE run_key = ?", (run_key,)
+    ).fetchone()
+    db.close()
+    assert row[0] == str(asdm.absolute())
+    assert row[1] == ""
+
+
+def test_ms_flag_still_works_as_an_alias(project, capsys):
+    ms = project / "a.ms"
+    ms.mkdir()
+    (ms / "table.info").write_text("x")
+    write_config(project, [DONE])
+    assert _cli(project, "run", "--ms", str(ms), "--workdir", str(project / "work")) == 0
+    run_key = capsys.readouterr().out.splitlines()[0].strip()
+    db = DriverDB(project / "runs")
+    row = db.conn.execute(
+        "SELECT input_path, ms_path FROM runs WHERE run_key = ?", (run_key,)
+    ).fetchone()
+    db.close()
+    assert row[0] == row[1] == str(ms.absolute())
+
+
+def test_second_run_on_the_same_asdm_resumes(project, capsys):
+    asdm = project / "uid___A002_X1"
+    asdm.mkdir()
+    write_config(project, [DONE, DONE])
+    _cli(project, "run", "--input", str(asdm), "--workdir", str(project / "work"))
+    first = capsys.readouterr().out.splitlines()[0].strip()
+
+    db = DriverDB(project / "runs")
+    db.set_run_status(first, "active")
+    db.close()
+
+    assert _cli(project, "run", "--input", str(asdm), "--workdir", str(project / "work")) == 0
+    assert first in capsys.readouterr().out
+    db = DriverDB(project / "runs")
+    assert db.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
+    db.close()
+
+
+def test_input_without_workdir_is_refused(project, capsys):
+    write_config(project)
+    assert _cli(project, "run", "--input", str(project / "x")) == 1
+    assert "must be given together" in capsys.readouterr().err

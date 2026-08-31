@@ -519,3 +519,123 @@ def test_submitted_job_id_is_written_to_the_owner_file(tmp_path):
     # cleared once the turn settles, so a later probe does not chase a dead job
     assert read_owner(db._run_dir("k1"))["job_id"] is None
     db.close()
+
+
+# ------------------------------------------------------- starting from an ASDM
+
+
+def test_sense_probes_the_input_when_no_ms_exists_yet(tmp_path):
+    """The whole ASDM path rests on this: no MS, no raise."""
+    from ms_inspect.tools import workflow_status
+
+    asdm = tmp_path / "uid___A002_X1"
+    asdm.mkdir()
+    (asdm / "ASDM.xml").write_text("<x/>")
+    payload = workflow_status.run(str(asdm), str(tmp_path))
+    assert payload["data"]["next_recommended_step"] == "import_asdm"
+    assert payload["data"]["ms_valid"]["value"] is False
+    assert any("not a Measurement Set" in w for w in payload["warnings"])
+
+
+def test_workflow_status_on_a_missing_path_is_the_import_stage(tmp_path):
+    from ms_inspect.tools import workflow_status
+
+    payload = workflow_status.run(str(tmp_path / "nothing"), str(tmp_path))
+    assert payload["data"]["next_recommended_step"] == "import_asdm"
+    assert any("does not exist" in w for w in payload["warnings"])
+
+
+def test_loop_senses_an_asdm_run_through_input_path(tmp_path):
+    asdm = tmp_path / "uid___A002_X1"
+    asdm.mkdir()
+    db = DriverDB(tmp_path / "runs")
+    db.create_run("k1", input_path=str(asdm), ms_path="", workdir=str(tmp_path))
+    loop = Loop(db, StubBackend([]), LocalExecutor(), poll_interval=0.01)
+    payload = loop.sense(db._read_json(db._run_json("k1")))
+    assert payload["data"]["next_recommended_step"] == "import_asdm"
+    db.close()
+
+
+def test_brief_names_the_input_and_the_create_server(tmp_path):
+    run = {"input_path": "/data/uid___A002_X1", "ms_path": "", "workdir": "/w", "telescope": "ALMA"}
+    brief = render_brief(run, {"data": {"next_recommended_step": "import_asdm"}}, None)
+    assert "/data/uid___A002_X1" in brief
+    assert "ms_import_asdm" in brief and "ms_create" in brief
+    assert "not imported yet" in brief
+
+
+def test_import_turn_teaches_the_run_where_the_ms_is(tmp_path):
+    """After the import job, ms_path comes from the turn's "ms" output."""
+    asdm = tmp_path / "uid___A002_X1"
+    asdm.mkdir()
+    ms = tmp_path / "out.ms"
+    script = tmp_path / "import.sh"
+    # the "job" is what creates the MS, exactly as importasdm would
+    script.write_text(f"#!/bin/sh\nmkdir -p {ms}\ntouch {ms}/table.info\n")
+
+    db = DriverDB(tmp_path / "runs")
+    db.create_run("k1", input_path=str(asdm), ms_path="", workdir=str(tmp_path), executor="local")
+    decision = json.dumps(
+        {
+            "script": str(script),
+            "tool": "ms_import_asdm",
+            "stage": "import_asdm",
+            "outputs": [{"path": str(ms), "kind": "ms"}],
+        }
+    )
+    loop = Loop(db, StubBackend([decision]), LocalExecutor(runner="/bin/sh"), poll_interval=0.01)
+    loop.sense = lambda run: {"data": {"next_recommended_step": "import_asdm"}}
+    assert loop.step("k1")["outcome"] == "accepted"
+    assert db._read_json(db._run_json("k1"))["ms_path"] == str(ms)
+    db.close()
+
+
+def test_ms_is_not_adopted_when_the_script_wrote_nothing(tmp_path):
+    """A claimed output that does not exist must not become the run's MS."""
+    script = tmp_path / "import.sh"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    db = DriverDB(tmp_path / "runs")
+    db.create_run(
+        "k1", input_path=str(tmp_path / "asdm"), ms_path="", workdir=str(tmp_path), executor="local"
+    )
+    decision = json.dumps(
+        {
+            "script": str(script),
+            "tool": "ms_import_asdm",
+            "stage": "import_asdm",
+            "outputs": [{"path": str(tmp_path / "never_written.ms"), "kind": "ms"}],
+        }
+    )
+    loop = Loop(db, StubBackend([decision]), LocalExecutor(runner="/bin/sh"), poll_interval=0.01)
+    loop.sense = lambda run: {"data": {"next_recommended_step": "import_asdm"}}
+    loop.step("k1")
+    assert db._read_json(db._run_json("k1"))["ms_path"] == ""
+    db.close()
+
+
+def test_an_existing_ms_path_is_never_overwritten(tmp_path):
+    """A later stage naming an "ms" output must not repoint the run."""
+    ms = tmp_path / "real.ms"
+    ms.mkdir()
+    (ms / "table.info").write_text("x")
+    other = tmp_path / "split.ms"
+    other.mkdir()
+    script = tmp_path / "s.sh"
+    script.write_text("#!/bin/sh\nexit 0\n")
+
+    db = DriverDB(tmp_path / "runs")
+    db.create_run(
+        "k1", input_path=str(ms), ms_path=str(ms), workdir=str(tmp_path), executor="local"
+    )
+    decision = json.dumps(
+        {
+            "script": str(script),
+            "stage": "apply_preflag",
+            "outputs": [{"path": str(other), "kind": "ms"}],
+        }
+    )
+    loop = Loop(db, StubBackend([decision]), LocalExecutor(runner="/bin/sh"), poll_interval=0.01)
+    loop.sense = lambda run: {"data": {"next_recommended_step": "apply_preflag"}}
+    loop.step("k1")
+    assert db._read_json(db._run_json("k1"))["ms_path"] == str(ms)
+    db.close()
