@@ -1,6 +1,6 @@
 # WORKLOG — analyst_driver
 
-## STATUS (2026-08-27)
+## STATUS (2026-08-31)
 
 **Goal**: an external loop that runs a CASA reduction as a sequence of long
 jobs, calling a model only at the decision points between them. The model
@@ -12,16 +12,50 @@ and the three MCP servers.
 Design: `PLAN.md` at the repo root. It is scaffolding for branch `driver-v2` and
 **must be deleted before any merge to main**.
 
-**Next step**: step 3 of the plan — `db.py`, from scratch. The 2026-08-27
-version was deleted on 2026-08-31 (see below); its five findings are
-requirements on the replacement and are listed under Status in `PLAN.md`. Then
-step 4 — `executors.py` with the `local` executor
-only, plus brief rendering in `loop.py`. Prove one turn end to end against a
-stub backend that returns a fixed decision. **Read `PLAN.md` "What the driver
-does" first**; it was rewritten on 2026-08-31 and it decides what the loop may
-and may not do.
+**Next step**: step 4 — `executors.py` with the `local` executor only, plus
+brief rendering in `loop.py`. Prove one turn end to end against a stub backend
+that returns a fixed decision. **Read `PLAN.md` "What the driver does" first**;
+it decides what the loop may and may not do. Step 3 (`db.py`) is done — see the
+2026-08-31 entry below.
 
 **Blocked on**: nothing.
+
+---
+
+## 2026-08-31 — step 3 rewritten: `db.py` v2
+
+Rewritten from `PLAN.md` alone (user direction: do not reuse the deleted
+draft's decisions; re-derive). 21 unit tests in `tests/unit/test_driver_db.py`;
+full suite 755 pass, ruff clean. `pyproject.toml` adds `src/analyst_driver` to
+the hatch packages only — no console script until step 8.
+
+How the five findings are satisfied:
+
+1. One row-insert path — `_sync_run` / `_sync_turn`. Every live write
+   (`create_run`, `record_turn`, `complete_turn`, `record_run_metric`,
+   demotion) writes its journal file first, then calls the sync; `rebuild`
+   replays the same files through the same sync. `_sync_turn` is
+   delete-then-insert per (run, ordinal), so live history and rebuild converge
+   on identical rows. `dump()` compares on natural keys (run_key, ordinal) and
+   excludes surrogate ids, which delete-then-insert inflates.
+2. `record_turn` writes `turns/NNNN.json` with `state="submitted"` at
+   submission; `complete_turn` rewrites it with `state="complete"` + outcome.
+   Test: db file deleted after submission only, rebuild recovers the job
+   handle.
+3. `metrics` has a `flag` column and a nullable `turn_id`; run-level metrics
+   live in `run.json` (`record_run_metric`), so rebuild cannot drop them.
+4. User decision: hash everything except kind `ms` (size+mtime only for the
+   MS). `_hash_tree` walks a CASA product directory and hashes relative paths
+   as well as bytes, so content and layout are distinguishable. An absent path
+   measures as absent — a failed job legitimately produces nothing.
+5. The journal `jobs` field is a list; multiple jobs per turn round-trip.
+
+Other properties: journal writes are atomic (temp + `os.replace`); accepting a
+turn demotes the prior accepted turn for that (run, stage) to `retried` and
+rewrites the demoted turn's *journal file*, not just its row, so the demotion
+survives rebuild; `attempt` counts prior same-stage turns; outcomes validated
+against accepted/retried/failed. WAL + 30 s busy timeout; ANSI-portable DDL
+except rowid aliases, `?` placeholders and the WAL pragma, marked PORTABILITY.
 
 ---
 

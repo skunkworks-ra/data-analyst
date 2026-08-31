@@ -45,7 +45,7 @@ ms-create = "ms_create.server:main"
 # Hatch — source layout
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
-packages = ["src/ms_inspect", "src/ms_modify", "src/ms_create"]
+packages = ["src/ms_inspect", "src/ms_modify", "src/ms_create", "src/analyst_driver"]
 artifacts = ["*.yaml"]
 
 # ---------------------------------------------------------------------------
