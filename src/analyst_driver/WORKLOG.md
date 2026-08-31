@@ -44,10 +44,13 @@ How the five findings are satisfied:
    handle.
 3. `metrics` has a `flag` column and a nullable `turn_id`; run-level metrics
    live in `run.json` (`record_run_metric`), so rebuild cannot drop them.
-4. User decision: hash everything except kind `ms` (size+mtime only for the
-   MS). `_hash_tree` walks a CASA product directory and hashes relative paths
-   as well as bytes, so content and layout are distinguishable. An absent path
-   measures as absent — a failed job legitimately produces nothing.
+4. User decision (revised same day): kinds `ms` and `image` get a metadata
+   digest, `meta:` over name+size+mtime — identifies the producing attempt
+   without reading gigabytes; a rewrite changes mtime. It cannot prove bytes
+   unchanged. Small kinds (caltable/script/plot) keep the content hash,
+   `sha256:`; `_hash_tree` walks a CASA product directory and hashes relative
+   paths as well as bytes. An absent path measures as absent — a failed job
+   legitimately produces nothing.
 5. The journal `jobs` field is a list; multiple jobs per turn round-trip.
 
 Other properties: journal writes are atomic (temp + `os.replace`); accepting a

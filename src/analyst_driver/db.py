@@ -16,10 +16,12 @@ Exactly one code path turns a journal record into rows: ``_sync_run`` and
 cannot drift apart. ``rebuild`` replays the journal; it never re-measures the
 products, because a retried stage overwrites the previous attempt's output.
 
-Artifact identity: every kind gets size and mtime; every kind except ``ms``
-also gets a content hash (a science MS is gigabytes). CASA products are
-directories, so the hash walks the tree and includes each file's relative
-path, making content and layout distinguishable.
+Artifact identity: every kind gets size and mtime. Small kinds (caltable,
+script, plot) get a content hash, ``sha256:`` over the bytes — for a CASA
+product directory the walk includes each file's relative path, so content
+and layout are distinguishable. Large kinds (``ms``, ``image``) get a
+metadata digest instead, ``meta:`` over name + size + mtime: it identifies
+the producing attempt without reading gigabytes, but cannot prove content.
 
 SQLite via stdlib sqlite3, WAL mode, 30 s busy timeout. Keep the run root on
 local disk, not NFS. DDL is ANSI-portable except where marked PORTABILITY.
@@ -34,8 +36,10 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-#: Artifact kinds that never get a content hash (size and mtime only).
-UNHASHED_KINDS = frozenset({"ms"})
+#: Kinds too large to read for a content hash. They get a metadata digest
+#: ("meta:" over name, size, mtime) — enough to say which attempt produced
+#: the file, since a rewrite changes mtime; it cannot prove bytes unchanged.
+META_HASH_KINDS = frozenset({"ms", "image"})
 
 #: Valid turn outcomes. ``None`` means the turn is submitted, not finished.
 OUTCOMES = frozenset({"accepted", "retried", "failed"})
@@ -155,8 +159,11 @@ def measure_artifact(path: str | os.PathLike, kind: str) -> dict:
     else:
         rec["size"] = p.stat().st_size
     rec["mtime"] = p.stat().st_mtime
-    if kind not in UNHASHED_KINDS:
-        rec["checksum"] = _hash_tree(p)
+    if kind in META_HASH_KINDS:
+        h = hashlib.sha256(f"{p.name}\x00{rec['size']}\x00{rec['mtime']}".encode())
+        rec["checksum"] = "meta:" + h.hexdigest()
+    else:
+        rec["checksum"] = "sha256:" + _hash_tree(p)
     return rec
 
 

@@ -186,15 +186,30 @@ def test_run_level_metric_has_null_turn(db):
 # ---------------------------------------------------------------- artifacts
 
 
-def test_ms_kind_not_hashed(tmp_path):
-    """Finding 4: a science MS is gigabytes — size and mtime only."""
+def test_ms_kind_gets_metadata_digest(tmp_path):
+    """Finding 4: a science MS is gigabytes — never read its bytes."""
     ms = tmp_path / "test.ms"
     ms.mkdir()
     (ms / "table.dat").write_bytes(b"x" * 100)
     rec = measure_artifact(ms, "ms")
-    assert rec["checksum"] is None
+    assert rec["checksum"].startswith("meta:")
     assert rec["size"] == 100
     assert rec["mtime"] is not None
+
+
+def test_metadata_digest_changes_when_rewritten(tmp_path):
+    import os as _os
+
+    img = tmp_path / "target.image"
+    img.mkdir()
+    f = img / "table.dat"
+    f.write_bytes(b"x" * 100)
+    _os.utime(img, (1000.0, 1000.0))
+    first = measure_artifact(img, "image")["checksum"]
+    _os.utime(img, (2000.0, 2000.0))
+    second = measure_artifact(img, "image")["checksum"]
+    assert first.startswith("meta:")
+    assert first != second
 
 
 def test_caltable_hashed(tmp_path):
@@ -202,7 +217,7 @@ def test_caltable_hashed(tmp_path):
     cal.mkdir()
     (cal / "table.dat").write_bytes(b"solutions")
     rec = measure_artifact(cal, "caltable")
-    assert rec["checksum"] is not None
+    assert rec["checksum"].startswith("sha256:")
 
 
 def test_checksum_distinguishes_layout(tmp_path):
