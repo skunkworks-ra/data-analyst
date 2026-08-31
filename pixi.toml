@@ -66,6 +66,7 @@ test-int    = { cmd = "pytest tests/integration/ -v" }
 
 # Lint / format
 lint        = { cmd = "ruff check src/ tests/" }
+driver      = { cmd = "analyst-driver" }
 fmt         = { cmd = "ruff format src/ tests/" }
 fmt-check   = { cmd = "ruff format --check src/ tests/" }
 

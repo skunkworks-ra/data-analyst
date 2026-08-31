@@ -276,11 +276,13 @@ class DriverDB:
         tokens_in: int | None = None,
         tokens_out: int | None = None,
         jobs: list[dict] | None = None,
+        extras: dict | None = None,
     ) -> dict:
         """Write the turn record at job submission (state ``submitted``).
 
         Written before the rows are inserted, so a crash between the two
-        loses nothing.
+        loses nothing. ``extras`` holds journal-only keys (citations, tool
+        transcript, stop reason) — kept in the file, never in a column.
         """
         attempt = 1 + self.conn.execute(
             "SELECT COUNT(*) FROM turns t JOIN runs r ON t.run_id = r.id"
@@ -304,6 +306,8 @@ class DriverDB:
             "artifacts": [],
             "metrics": [],
         }
+        if extras:
+            record.update(extras)
         self._write_json(self._turn_json(run_key, ordinal), record)
         self._sync_turn(record)
         return record
@@ -318,6 +322,7 @@ class DriverDB:
         artifacts: list[dict] | None = None,
         metrics: list[dict] | None = None,
         wall_time_s: float | None = None,
+        extras: dict | None = None,
     ) -> dict:
         """Rewrite the turn record at completion (state ``complete``)."""
         if outcome not in OUTCOMES:
@@ -332,6 +337,8 @@ class DriverDB:
         if metrics is not None:
             record["metrics"] = metrics
         record["wall_time_s"] = wall_time_s
+        if extras:
+            record.update(extras)
         self._write_json(self._turn_json(run_key, ordinal), record)
         self._sync_turn(record)
         if outcome == "accepted":

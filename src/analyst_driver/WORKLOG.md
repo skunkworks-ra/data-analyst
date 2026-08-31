@@ -12,13 +12,60 @@ and the three MCP servers.
 Design: `PLAN.md` at the repo root. It is scaffolding for branch `driver-v2` and
 **must be deleted before any merge to main**.
 
-**Next step**: step 4 — `executors.py` with the `local` executor only, plus
-brief rendering in `loop.py`. Prove one turn end to end against a stub backend
-that returns a fixed decision. **Read `PLAN.md` "What the driver does" first**;
-it decides what the loop may and may not do. Step 3 (`db.py`) is done — see the
-2026-08-31 entry below.
+**Next step**: real-world verification, in order (PLAN.md "Verification"):
+(1) local live run — simulated MS via the ms-simulator skill, backend=claude,
+executor=local, import to first image; compare the recorded stage sequence
+against `ms_reduction_log(action='list')`; (2) multi-run fan-out with `run`
+(two runs, one driver); (3) cluster run on corrino with executor=slurm, one
+stage. The codex adapter is unverified (codex not installed on the dev
+machine) — verify its event schema before first use.
 
 **Blocked on**: nothing.
+
+---
+
+## 2026-08-31 — steps 4-8: executors, loop, backends, cli
+
+All five modules now exist; 786 unit tests pass (52 driver tests), ruff clean.
+Console script `analyst-driver` wired in pyproject.toml; pixi task `driver`.
+
+**Operating-mode decision (user, this date): the driver stays alive and waits
+for its jobs.** A dead driver is the exception, not the normal state. This
+supersedes the plan's exit-between-turns wording. Consequences:
+
+- `LocalExecutor.submit` is synchronous — subprocess.run to completion, exit
+  code straight from the kernel, no pid/exit-file business. A local job
+  cannot outlive the driver; a crashed local turn polls as `failed`.
+- `SlurmExecutor` submits sbatch (reusing ms_modify.slurm.build_sbatch) and
+  the loop waits by polling `sacct -n -P -X`. A restarted driver adopts a
+  submitted job from the recorded job ID.
+- `Loop.step(run_key)` does one whole turn including the wait;
+  `step(block=False)` returns "waiting" instead, and `Loop.run_all`
+  interleaves several runs with it (`analyst-driver run [--all]`).
+- HTCondor is a stub raising NotImplementedError (needs a real submit node).
+
+Other decisions carried into code:
+
+- Decision JSON: only `script` is required; `tool`, `stage`, `cited`,
+  `outputs`, `notes` recorded. `parse_decision` takes the last well-formed
+  JSON object in stdout; a parse failure or a missing script is a *retryable
+  failed turn*, never a run failure (run stays active).
+- `check_citations` records cited vs found for every citation and refuses
+  nothing (found by last dotted segment, recursive; n_matches recorded).
+- Metric harvest (`harvest_metrics`) walks any tool-response envelope, one
+  row per numeric leaf, name = tool + dotted key path, flag carried;
+  booleans excluded; `{"value": None, "flag": UNAVAILABLE}` kept.
+- Journal-only keys via `record_turn/complete_turn(extras=...)`: citations,
+  tool_calls, transcript, harvested_metrics, stop_reason. Never a column.
+- Backends: claude uses `-p --output-format stream-json --verbose` (tool
+  calls, model, usage extracted); opencode `run --format json` (events,
+  best-effort tool extraction); codex `exec --json` written defensively and
+  UNVERIFIED — codex is not installed here. All parsers degrade to raw
+  stdout as text. StubBackend for tests/dry runs (config kind="stub").
+- Brief template ends with the decision-JSON instruction; sense() calls
+  ms_inspect.tools.workflow_status.run directly (lazy import, no MCP hop).
+- max_turns reached → run status `needs_human`, step returns and later
+  steps skip the run.
 
 ---
 
