@@ -12,7 +12,10 @@ and the three MCP servers.
 Design: `PLAN.md` at the repo root. It is scaffolding for branch `driver-v2` and
 **must be deleted before any merge to main**.
 
-**Next step**: step 4 of the plan — `executors.py` with the `local` executor
+**Next step**: step 3 of the plan — `db.py`, from scratch. The 2026-08-27
+version was deleted on 2026-08-31 (see below); its five findings are
+requirements on the replacement and are listed under Status in `PLAN.md`. Then
+step 4 — `executors.py` with the `local` executor
 only, plus brief rendering in `loop.py`. Prove one turn end to end against a
 stub backend that returns a fixed decision. **Read `PLAN.md` "What the driver
 does" first**; it was rewritten on 2026-08-31 and it decides what the loop may
@@ -22,9 +25,17 @@ and may not do.
 
 ---
 
+## 2026-08-31 — the branch reset to the plan alone
+
+`db.py`, `__init__.py` and `tests/unit/test_driver_db.py` deleted, and
+`pyproject.toml` reverted to `main`. The implementation restarts in a fresh
+context and must not inherit a first draft written before the design below was
+settled. The five findings against that draft are kept in `PLAN.md` as
+requirements on its replacement.
+
 ## 2026-08-31 — the driver's role, settled
 
-`PLAN.md` rewritten. No code changed. The session removed things rather than
+`PLAN.md` rewritten. The session removed things rather than
 adding them; the reasons are in the plan and are not repeated here.
 
 - The driver renders a brief, runs the harness, submits the job, waits, and

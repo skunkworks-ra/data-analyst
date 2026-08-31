@@ -32,28 +32,33 @@ Code repository: `/Users/ssekhar/src/skunkworks-ra/radio-analyst`.
 
 ### Status (2026-08-31)
 
-Work-order steps 0-3 are done; steps 4-8 are not started. The whole of "What
-the driver does" was rewritten on this date, after a session that removed three
-things the first draft had: the threshold file, the stage-to-tool table, and any
-form of refusal beyond "there is no script to submit". **Read that section
-before writing any code — the design question it settles is the one that keeps
-coming back, and re-deriving it wastes a session.**
+**The branch holds this plan and nothing else.** `src/analyst_driver/` contains
+only its `WORKLOG.md`; `db.py`, `__init__.py` and `tests/unit/test_driver_db.py`
+were written on 2026-08-27 and then deleted, and `pyproject.toml` is back to its
+`main` state. Work-order steps 0-2 are done. **Step 3 starts from nothing.**
 
-`src/analyst_driver/db.py` exists from step 3 and is expected to be rewritten
-rather than extended. Five findings against it, so they are not re-derived:
+The whole of "What the driver does" was rewritten on this date, after a session
+that removed three things the first draft had: the threshold file, the
+stage-to-tool table, and any form of refusal beyond "there is no script to
+submit". **Read that section before writing any code** — it settles the question
+that keeps coming back, and re-deriving it wastes a session.
+
+Five findings against the deleted `db.py`, kept because they are requirements on
+whatever replaces it, not history:
 
 1. The pairing that must not drift — write the journal record, then insert the
-   rows — lives in a *test helper*, not in `db.py`. The loop would write it a
-   second time, and the round-trip test cannot see the divergence. `db.py` must
-   own one `record_turn()` that both the loop and the tests call.
-2. The turn record is written when a turn *ends*, so a job submitted before a
-   crash has no file and `rebuild` cannot see it. Write the record at
+   rows — lived in a *test helper* rather than in `db.py`. The loop would have
+   written it a second time, and the round-trip test could not see the
+   divergence. One `record_turn()` must own it, and the loop and the tests must
+   both call that.
+2. The turn record was written when a turn *ended*, so a job submitted before a
+   crash had no file and `rebuild` could not see it. Write the record at
    submission and update it at completion.
-3. `metrics` has no `flag` column, and a run-level metric (`turn_id` NULL) has
-   nowhere to live in the journal, so `rebuild` drops it silently.
-4. `checksum_path` reads every byte of every artifact. A science MS is
-   gigabytes. Decide which artifact kinds get a content hash.
-5. The journal holds one job per turn; the schema allows many.
+3. `metrics` needs a `flag` column, and a run-level metric (`turn_id` NULL)
+   needs somewhere to live in the journal, or `rebuild` drops it silently.
+4. Checksumming an artifact read every byte. A science MS is gigabytes. Decide
+   which artifact kinds get a content hash.
+5. The journal held one job per turn while the schema allowed many.
 
 ---
 
@@ -351,8 +356,8 @@ servers, never a second place where reduction logic lives.
    first `gain.G`. The correct fix is in the `ms_modify` tools and the skills, not
    the driver. Until then the driver records checksum and mtime per artifact so
    the database still knows which attempt produced the file on disk.
-3. `db.py` — schema, writes, tests. No model, no executor. **DONE, and due for
-   a rewrite** — see the five findings under Status.
+3. `db.py` — schema, writes, tests. No model, no executor. A first version was
+   written and deleted; start again, and satisfy the five findings under Status.
 4. `executors.py` with `local` only, plus brief rendering in `loop.py`. Prove one
    turn end to end with a stub backend returning a fixed decision.
 5. Decision schema, the claim-against-artifact record, and the metric harvest
