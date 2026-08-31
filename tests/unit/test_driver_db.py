@@ -78,8 +78,9 @@ def test_create_run_writes_journal_and_row(db):
 def test_record_turn_written_at_submission(db):
     """Finding 2: the record exists while the job is still running."""
     key = _make_run(db)
-    db.record_turn(key, 1, stage="apply_preflag", brief="b", decision={"script": "s.py"},
-                   jobs=[_job()])
+    db.record_turn(
+        key, 1, stage="apply_preflag", brief="b", decision={"script": "s.py"}, jobs=[_job()]
+    )
     assert (db.run_root / key / "turns" / "0001.json").exists()
     (turn,) = db.dump()["turns"]
     assert turn[4] == "submitted"
@@ -151,8 +152,7 @@ def test_accepted_query_returns_one_row(db):
         db.record_turn(key, i, stage="delay_bandpass_gain")
         db.complete_turn(key, i, outcome="accepted")
     rows = db.conn.execute(
-        "SELECT ordinal FROM turns WHERE stage='delay_bandpass_gain'"
-        " AND outcome='accepted'"
+        "SELECT ordinal FROM turns WHERE stage='delay_bandpass_gain' AND outcome='accepted'"
     ).fetchall()
     assert rows == [(3,)]
 
@@ -165,9 +165,17 @@ def test_metric_flag_stored(db):
     key = _make_run(db)
     db.record_turn(key, 1, stage="apply_preflag")
     db.complete_turn(
-        key, 1, outcome="accepted",
-        metrics=[{"name": "ms_apply_preflag.flag_fraction", "value": None,
-                  "unit": None, "flag": "UNAVAILABLE"}],
+        key,
+        1,
+        outcome="accepted",
+        metrics=[
+            {
+                "name": "ms_apply_preflag.flag_fraction",
+                "value": None,
+                "unit": None,
+                "flag": "UNAVAILABLE",
+            }
+        ],
     )
     (m,) = db.dump()["metrics"]
     assert m[3] is None
@@ -227,14 +235,20 @@ def test_checksum_distinguishes_layout(tmp_path):
     b.mkdir()
     (a / "one.dat").write_bytes(b"same")
     (b / "two.dat").write_bytes(b"same")
-    assert measure_artifact(a, "caltable")["checksum"] != \
-        measure_artifact(b, "caltable")["checksum"]
+    assert (
+        measure_artifact(a, "caltable")["checksum"] != measure_artifact(b, "caltable")["checksum"]
+    )
 
 
 def test_absent_artifact_measures_absent(tmp_path):
     rec = measure_artifact(tmp_path / "never_written.G", "caltable")
-    assert rec == {"path": str(tmp_path / "never_written.G"), "kind": "caltable",
-                   "size": None, "mtime": None, "checksum": None}
+    assert rec == {
+        "path": str(tmp_path / "never_written.G"),
+        "kind": "caltable",
+        "size": None,
+        "mtime": None,
+        "checksum": None,
+    }
 
 
 # ----------------------------------------------------------------- rebuild
@@ -242,16 +256,34 @@ def test_absent_artifact_measures_absent(tmp_path):
 
 def _full_history(db):
     key = _make_run(db)
-    db.record_turn(key, 1, stage="apply_preflag", brief="brief 1",
-                   decision={"script": "preflag.py", "tool": "ms_apply_preflag"},
-                   model="claude", tokens_in=1000, tokens_out=200, jobs=[_job()])
+    db.record_turn(
+        key,
+        1,
+        stage="apply_preflag",
+        brief="brief 1",
+        decision={"script": "preflag.py", "tool": "ms_apply_preflag"},
+        model="claude",
+        tokens_in=1000,
+        tokens_out=200,
+        jobs=[_job()],
+    )
     db.complete_turn(
-        key, 1, outcome="accepted",
+        key,
+        1,
+        outcome="accepted",
         jobs=[dict(_job(), finished_at="2026-08-31T13:00:00Z", exit_code=0)],
-        artifacts=[{"path": "/work/test/preflag.py", "kind": "script",
-                    "size": 512, "checksum": "ab" * 32, "mtime": 1756645200.0}],
-        metrics=[{"name": "ms_apply_preflag.flag_fraction", "value": 0.12,
-                  "unit": None, "flag": "OK"}],
+        artifacts=[
+            {
+                "path": "/work/test/preflag.py",
+                "kind": "script",
+                "size": 512,
+                "checksum": "ab" * 32,
+                "mtime": 1756645200.0,
+            }
+        ],
+        metrics=[
+            {"name": "ms_apply_preflag.flag_fraction", "value": 0.12, "unit": None, "flag": "OK"}
+        ],
         wall_time_s=120.0,
     )
     db.record_turn(key, 2, stage="apply_preflag")
@@ -304,3 +336,51 @@ def test_no_temp_files_left(db):
     key = _full_history(db)
     leftovers = list((db.run_root / key).rglob("*.tmp"))
     assert leftovers == []
+
+
+# ------------------------------------------------- run status and MS lookup
+
+
+def test_set_run_status_accepts_the_vocabulary(db):
+    key = _make_run(db)
+    for status in ("completed", "needs_human", "failed", "active"):
+        db.set_run_status(key, status)
+        assert db._read_json(db._run_json(key))["status"] == status
+
+
+def test_set_run_status_rejects_anything_else(db):
+    key = _make_run(db)
+    with pytest.raises(ValueError, match="status must be one of"):
+        db.set_run_status(key, "done")
+
+
+def test_find_runs_by_ms_matches_the_absolute_path(db, tmp_path):
+    ms = tmp_path / "x.ms"
+    db.create_run("k1", ms_path=str(ms.absolute()), workdir="/w", started_at="2026-08-31T10:00:00Z")
+    found = db.find_runs_by_ms(ms)
+    assert [r["run_key"] for r in found] == ["k1"]
+
+
+def test_find_runs_by_ms_excludes_terminal_runs(db, tmp_path):
+    ms = tmp_path / "x.ms"
+    db.create_run("k1", ms_path=str(ms.absolute()), workdir="/w", started_at="2026-08-31T10:00:00Z")
+    db.set_run_status("k1", "completed")
+    assert db.find_runs_by_ms(ms) == []
+    assert len(db.find_runs_by_ms(ms, statuses=("completed",))) == 1
+
+
+def test_find_runs_by_ms_orders_oldest_first(db, tmp_path):
+    ms = tmp_path / "x.ms"
+    db.create_run("k2", ms_path=str(ms.absolute()), workdir="/w", started_at="2026-08-31T11:00:00Z")
+    db.create_run("k1", ms_path=str(ms.absolute()), workdir="/w", started_at="2026-08-31T10:00:00Z")
+    assert [r["run_key"] for r in db.find_runs_by_ms(ms)] == ["k1", "k2"]
+
+
+def test_find_runs_by_ms_does_not_match_another_ms(db, tmp_path):
+    db.create_run(
+        "k1",
+        ms_path=str((tmp_path / "a.ms").absolute()),
+        workdir="/w",
+        started_at="2026-08-31T10:00:00Z",
+    )
+    assert db.find_runs_by_ms(tmp_path / "b.ms") == []

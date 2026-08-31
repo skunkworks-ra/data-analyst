@@ -12,7 +12,9 @@ and the three MCP servers.
 Design: `PLAN.md` at the repo root. It is scaffolding for branch `driver-v2` and
 **must be deleted before any merge to main**.
 
-**Next step**: real-world verification, in order (PLAN.md "Verification"):
+**Next step**: real-world verification, in order (PLAN.md "Verification").
+Setup is now `analyst-driver init` (writes config.toml), edit it, then
+`analyst-driver run --ms <ms> --workdir <wd>`. Then:
 (1) local live run — simulated MS via the ms-simulator skill, backend=claude,
 executor=local, import to first image; compare the recorded stage sequence
 against `ms_reduction_log(action='list')`; (2) multi-run fan-out with `run`
@@ -21,6 +23,68 @@ stage. The codex adapter is unverified (codex not installed on the dev
 machine) — verify its event schema before first use.
 
 **Blocked on**: nothing.
+
+---
+
+## 2026-08-31 — run lifecycle: config scaffolding, ownership, completion
+
+Three changes, driven by "what does active mean" (user, this date).
+
+**1. `status` now has a vocabulary.** `RUN_STATUSES = active | completed |
+needs_human | failed` in `db.py`; `set_run_status` rejects anything else.
+Before this the loop wrote `needs_human` at max_turns and nothing else ever,
+so a finished reduction still read `active`, bare `run` re-drove it, and
+`run_all` could only terminate by exhausting max_turns.
+
+`completed` is written when the MODEL declares it, never by the driver: the
+terminal answer from `ms_workflow_status` is `selfcal_or_done`, and choosing
+between those two is science. The brief now documents
+`{"done": true, "notes": ...}` as the way to say so; the declaration is
+journalled as a real turn (jobs=[], outcome accepted, stop_reason) so
+`rebuild` keeps it.
+
+**2. `owner.json`, not a lock file.** `fcntl.flock` self-releases on death,
+which is the property we want, but it is unreliable over NFS and the run root
+must work on both local and NFS storage. So `<run_root>/<key>/owner.json`
+records host + pid + pid_start + executor + job_id, and readers probe it:
+
+- same host, pid live, start time matches -> `alive`. Proof; the refusal is
+  NOT overridable by `--resume`, because two drivers on one MS corrupt the MS.
+- same host, pid gone or start time differs -> `dead`. The start time is what
+  defeats pid reuse; without it a recycled pid makes a crashed run
+  unresumable forever.
+- another host -> `unknown`, never `dead`. A pid elsewhere is unverifiable.
+
+The job is reported SEPARATELY from the driver, because a SLURM job outliving
+its driver is normal. `sacct` answers for the job from any submit node;
+`executor = "local"` is not asked at all, since a local job cannot outlive the
+driver that ran it synchronously.
+
+**3. The verbs changed (user decision).** `init` scaffolds `config.toml` and
+registers nothing; `run --ms X --workdir Y` registers a run if none is open on
+that MS and then drives it; bare `run` still drives all active runs. `init`
+never overwrites. A missing config is now a hard stop rather than a silent
+fall-through to code defaults — a mistyped `--config` used to run a whole
+reduction under settings nobody chose.
+
+Ambiguity rule: two active runs on one MS makes `run --ms` refuse and name
+both keys, rather than guessing. Reachable because `make_run_key` stamps whole
+seconds and takes no lock.
+
+New file `owner.py`; `cli.py` rewritten; `db.py` gains `RUN_STATUSES`,
+`TERMINAL_STATUSES` and `find_runs_by_ms`. 834 unit tests pass (100 driver).
+`pixi run check` (lint AND format) is now clean repo-wide: the eight
+unformatted files were all in `analyst_driver/` and its tests, so the branch
+was the only thing holding the format gate red.
+
+`db.py`'s module docstring no longer says "keep the run root on local disk,
+not NFS". It states the real position instead: the run root may be on either,
+WAL over NFS makes a stale index foreseeable, and that is survivable only
+because the journal is the truth and `rebuild` shares the sync path.
+
+Known, not fixed: `make_run_key` has one-second resolution, so two
+registrations in the same second collide on the UNIQUE run_key. The new
+resume-by-MS path makes that hard to reach, and tests pass explicit times.
 
 ---
 

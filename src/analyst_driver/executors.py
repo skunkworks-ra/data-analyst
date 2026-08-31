@@ -49,8 +49,10 @@ class LocalExecutor:
         with open(log, "w") as fh:
             proc = subprocess.run(
                 [*shlex.split(self.runner), str(script)],
-                stdout=fh, stderr=subprocess.STDOUT,
-                cwd=script.parent, timeout=self.timeout,
+                stdout=fh,
+                stderr=subprocess.STDOUT,
+                cwd=script.parent,
+                timeout=self.timeout,
             )
         return {
             "executor": self.kind,
@@ -103,7 +105,10 @@ class SlurmExecutor:
         sbatch_path = build_sbatch(script, job_dir, self.config)
         out = subprocess.run(
             ["sbatch", "--parsable", sbatch_path],
-            capture_output=True, text=True, check=True, cwd=job_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=job_dir,
         )
         job_id = out.stdout.strip().split(";")[0]
         job_name = Path(script).stem
@@ -122,7 +127,8 @@ class SlurmExecutor:
     def _sacct(self, job_id: str) -> tuple[str, str] | None:
         out = subprocess.run(
             ["sacct", "-j", str(job_id), "-n", "-P", "-X", "--format=State,ExitCode"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if out.returncode != 0:
             return None

@@ -31,6 +31,7 @@ from analyst_driver.loop import (
     parse_decision,
     render_brief,
 )
+from analyst_driver.owner import read_owner, write_owner
 
 # ------------------------------------------------------------ parse_decision
 
@@ -89,8 +90,7 @@ def test_harvest_ignores_booleans():
 
 def test_harvest_from_tool_calls_parses_text_blocks():
     calls = [
-        {"tool": "ms_image_stats",
-         "result": [{"type": "text", "text": json.dumps({"rms": 1.5})}]},
+        {"tool": "ms_image_stats", "result": [{"type": "text", "text": json.dumps({"rms": 1.5})}]},
         {"tool": "broken", "result": "not json"},
     ]
     rows = harvest_from_tool_calls(calls)
@@ -112,9 +112,7 @@ def test_citation_mismatch_recorded_not_refused(tmp_path):
 
 
 def test_citation_missing_source_recorded(tmp_path):
-    out = check_citations(
-        [{"name": "x", "value": 1, "source": "absent.json"}], tmp_path
-    )
+    out = check_citations([{"name": "x", "value": 1, "source": "absent.json"}], tmp_path)
     assert out[0]["found_value"] is None
     assert out[0]["error"] is not None
 
@@ -129,8 +127,11 @@ def test_render_brief_from_synthetic_status():
     assert "/d/a.ms" in brief
     assert "apply_preflag" in brief
     assert "first turn" in brief
-    prev = {"stage": "import_asdm", "outcome": "accepted",
-            "jobs": [{"exit_code": 0, "log_paths": ["/w/j.log"]}]}
+    prev = {
+        "stage": "import_asdm",
+        "outcome": "accepted",
+        "jobs": [{"exit_code": 0, "log_paths": ["/w/j.log"]}],
+    }
     brief2 = render_brief(run, payload, prev)
     assert "import_asdm" in brief2
 
@@ -208,16 +209,42 @@ def test_slurm_executor_state_mapping(monkeypatch, tmp_path):
 
 
 def test_claude_parse_stream_json():
-    raw = "\n".join([
-        json.dumps({"type": "system", "subtype": "init", "model": "claude-sonnet-5"}),
-        json.dumps({"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "id": "t1", "name": "ms_image_stats", "input": {}}]}}),
-        json.dumps({"type": "user", "message": {"content": [
-            {"type": "tool_result", "tool_use_id": "t1",
-             "content": [{"type": "text", "text": json.dumps({"rms": 2.0})}]}]}}),
-        json.dumps({"type": "result", "result": '{"script": "s.py"}',
-                    "usage": {"input_tokens": 100, "output_tokens": 20}}),
-    ])
+    raw = "\n".join(
+        [
+            json.dumps({"type": "system", "subtype": "init", "model": "claude-sonnet-5"}),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "tool_use", "id": "t1", "name": "ms_image_stats", "input": {}}
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "t1",
+                                "content": [{"type": "text", "text": json.dumps({"rms": 2.0})}],
+                            }
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": '{"script": "s.py"}',
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                }
+            ),
+        ]
+    )
     res = ClaudeBackend.parse(raw)
     assert res.text == '{"script": "s.py"}'
     assert res.model == "claude-sonnet-5"
@@ -232,22 +259,33 @@ def test_claude_parse_degrades_to_raw():
 
 
 def test_opencode_parse_events():
-    raw = "\n".join([
-        json.dumps({"part": {"type": "text", "text": "thinking..."}}),
-        json.dumps({"part": {"type": "tool", "tool": "ms_scan_list",
-                             "state": {"output": json.dumps({"n_scans": 12})}}}),
-        json.dumps({"part": {"type": "text", "text": '{"script": "s.py"}'}}),
-    ])
+    raw = "\n".join(
+        [
+            json.dumps({"part": {"type": "text", "text": "thinking..."}}),
+            json.dumps(
+                {
+                    "part": {
+                        "type": "tool",
+                        "tool": "ms_scan_list",
+                        "state": {"output": json.dumps({"n_scans": 12})},
+                    }
+                }
+            ),
+            json.dumps({"part": {"type": "text", "text": '{"script": "s.py"}'}}),
+        ]
+    )
     res = OpencodeBackend.parse(raw)
     assert '{"script": "s.py"}' in res.text
     assert res.tool_calls[0]["tool"] == "ms_scan_list"
 
 
 def test_codex_parse_last_message():
-    raw = "\n".join([
-        json.dumps({"item": {"type": "agent_message", "text": "working"}}),
-        json.dumps({"item": {"type": "agent_message", "text": '{"script": "s.py"}'}}),
-    ])
+    raw = "\n".join(
+        [
+            json.dumps({"item": {"type": "agent_message", "text": "working"}}),
+            json.dumps({"item": {"type": "agent_message", "text": '{"script": "s.py"}'}}),
+        ]
+    )
     res = CodexBackend.parse(raw)
     assert res.text == '{"script": "s.py"}'
 
@@ -261,8 +299,14 @@ def env(tmp_path, monkeypatch):
     workdir = tmp_path / "work"
     workdir.mkdir()
     key = "20260831T120000Z-sim-abcd"
-    db.create_run(key, ms_path=str(tmp_path / "sim.ms"), workdir=str(workdir),
-                  telescope="VLA", backend="stub", executor="local")
+    db.create_run(
+        key,
+        ms_path=str(tmp_path / "sim.ms"),
+        workdir=str(workdir),
+        telescope="VLA",
+        backend="stub",
+        executor="local",
+    )
     payload = {"data": {"next_recommended_step": "apply_preflag"}}
     monkeypatch.setattr(Loop, "sense", lambda self, run: payload)
     yield db, key, workdir
@@ -270,20 +314,21 @@ def env(tmp_path, monkeypatch):
 
 
 def _loop(db, backend):
-    return Loop(db, backend, LocalExecutor(runner="/bin/sh"),
-                max_turns=5, poll_interval=0.01)
+    return Loop(db, backend, LocalExecutor(runner="/bin/sh"), max_turns=5, poll_interval=0.01)
 
 
 def test_one_turn_end_to_end(env, tmp_path):
     db, key, workdir = env
     script = _script(workdir, "echo done; exit 0")
-    decision = {"script": str(script), "tool": "ms_apply_preflag",
-                "stage": "apply_preflag",
-                "outputs": [{"path": str(workdir / "nothing.G"), "kind": "caltable"}]}
+    decision = {
+        "script": str(script),
+        "tool": "ms_apply_preflag",
+        "stage": "apply_preflag",
+        "outputs": [{"path": str(workdir / "nothing.G"), "kind": "caltable"}],
+    }
     backend = StubBackend([f"reasoning...\n{json.dumps(decision)}"])
     res = _loop(db, backend).step(key)
-    assert res == {"action": "completed", "ordinal": 1, "outcome": "accepted",
-                   "exit_code": 0}
+    assert res == {"action": "completed", "ordinal": 1, "outcome": "accepted", "exit_code": 0}
     record = db._read_json(db._turn_json(key, 1))
     assert record["state"] == "complete"
     assert record["stage"] == "apply_preflag"
@@ -314,8 +359,10 @@ def test_citations_recorded_both_sides(env):
     db, key, workdir = env
     (workdir / "m.json").write_text(json.dumps({"flag_fraction": 0.92}))
     script = _script(workdir)
-    decision = {"script": str(script),
-                "cited": [{"name": "flag_fraction", "value": 0.12, "source": "m.json"}]}
+    decision = {
+        "script": str(script),
+        "cited": [{"name": "flag_fraction", "value": 0.12, "source": "m.json"}],
+    }
     backend = StubBackend([json.dumps(decision)])
     _loop(db, backend).step(key)
     record = db._read_json(db._turn_json(key, 1))
@@ -350,15 +397,125 @@ def test_resume_adopts_submitted_turn(env):
     db, key, workdir = env
     script = _script(workdir)
     # simulate a crash: a turn recorded as submitted, never completed
-    db.record_turn(key, 1, stage="apply_preflag",
-                   decision={"script": str(script)},
-                   jobs=[{"executor": "local", "handle": "local:sync",
-                          "exit_code": 0, "submitted_at": "2026-08-31T12:00:00Z",
-                          "finished_at": "2026-08-31T12:10:00Z",
-                          "log_paths": []}])
+    db.record_turn(
+        key,
+        1,
+        stage="apply_preflag",
+        decision={"script": str(script)},
+        jobs=[
+            {
+                "executor": "local",
+                "handle": "local:sync",
+                "exit_code": 0,
+                "submitted_at": "2026-08-31T12:00:00Z",
+                "finished_at": "2026-08-31T12:10:00Z",
+                "log_paths": [],
+            }
+        ],
+    )
     backend = StubBackend([])  # a fresh decision would exhaust the stub
     res = _loop(db, backend).step(key)
-    assert res == {"action": "completed", "ordinal": 1, "outcome": "accepted",
-                   "exit_code": 0}
+    assert res == {"action": "completed", "ordinal": 1, "outcome": "accepted", "exit_code": 0}
     record = db._read_json(db._turn_json(key, 1))
     assert record["wall_time_s"] == 600.0
+
+
+# ------------------------------------------------ the model declares it done
+
+
+def _done_loop(tmp_path, response):
+    db = DriverDB(tmp_path / "runs")
+    db.create_run("k1", ms_path=str(tmp_path / "a.ms"), workdir=str(tmp_path), executor="local")
+    loop = Loop(db, StubBackend([response]), LocalExecutor(runner="/bin/sh"), poll_interval=0.01)
+    loop.sense = lambda run: {"data": {"next_recommended_step": "selfcal_or_done"}}
+    return db, loop
+
+
+def test_done_decision_completes_the_run(tmp_path):
+    db, loop = _done_loop(tmp_path, json.dumps({"done": True, "notes": "finished"}))
+    result = loop.step("k1")
+    assert result["action"] == "run_completed"
+    assert db._read_json(db._run_json("k1"))["status"] == "completed"
+    db.close()
+
+
+def test_done_decision_is_journalled_as_a_turn(tmp_path):
+    """The declaration is a recorded fact, so rebuild keeps it."""
+    db, loop = _done_loop(tmp_path, json.dumps({"done": True, "notes": "finished"}))
+    loop.step("k1")
+    turn = db._read_json(db._turn_json("k1", 1))
+    assert turn["outcome"] == "accepted"
+    assert turn["jobs"] == []
+    assert "declared the run complete" in turn["stop_reason"]
+    db.close()
+
+
+def test_done_false_is_not_a_completion(tmp_path):
+    """Only an explicit true ends a run; a script must still be named."""
+    db, loop = _done_loop(tmp_path, json.dumps({"done": False}))
+    result = loop.step("k1")
+    assert result["action"] == "turn_failed"
+    assert db._read_json(db._run_json("k1"))["status"] == "active"
+    db.close()
+
+
+def test_completed_run_is_skipped_on_the_next_step(tmp_path):
+    db, loop = _done_loop(tmp_path, json.dumps({"done": True}))
+    loop.step("k1")
+    assert loop.step("k1") == {"action": "skipped", "status": "completed"}
+    db.close()
+
+
+def test_run_all_stops_once_the_run_completes(tmp_path):
+    db, loop = _done_loop(tmp_path, json.dumps({"done": True}))
+    results = loop.run_all(["k1"])
+    assert results["k1"]["action"] == "run_completed"
+    db.close()
+
+
+def test_brief_tells_the_model_how_to_declare_completion(tmp_path):
+    run = {"ms_path": "/d/a.ms", "workdir": "/w", "telescope": "VLA"}
+    brief = render_brief(run, {"data": {"next_recommended_step": "selfcal_or_done"}}, None)
+    assert '"done": true' in brief
+    assert "selfcal_or_done" in brief
+
+
+def test_submitted_job_id_is_written_to_the_owner_file(tmp_path):
+    """A SLURM job id on the owner file is what lets a later run adopt it."""
+    db = DriverDB(tmp_path / "runs")
+    db.create_run("k1", ms_path=str(tmp_path / "a.ms"), workdir=str(tmp_path), executor="slurm")
+    write_owner(db._run_dir("k1"), executor="slurm")
+
+    script = tmp_path / "s.sh"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    seen = {}
+
+    class FakeSlurm:
+        kind = "slurm"
+
+        def submit(self, script, job_dir):
+            return {
+                "executor": "slurm",
+                "handle": "slurm:99",
+                "job_id": "99",
+                "submitted_at": "2026-08-31T12:00:00Z",
+                "log_paths": [],
+            }
+
+        def poll(self, handle):
+            seen["owner_mid_flight"] = read_owner(db._run_dir("k1"))
+            return "done"
+
+        def exit_code(self, handle):
+            return 0
+
+    loop = Loop(
+        db, StubBackend([json.dumps({"script": str(script)})]), FakeSlurm(), poll_interval=0.01
+    )
+    loop.sense = lambda run: {"data": {"next_recommended_step": "apply_preflag"}}
+    loop.step("k1")
+
+    assert seen["owner_mid_flight"]["job_id"] == "99"
+    # cleared once the turn settles, so a later probe does not chase a dead job
+    assert read_owner(db._run_dir("k1"))["job_id"] is None
+    db.close()

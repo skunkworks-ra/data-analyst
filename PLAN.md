@@ -306,7 +306,7 @@ backend, the executor and the store are swappable; everything else is one loop.
 
 | file | responsibility |
 |---|---|
-| `cli.py` | `analyst-driver init/step/status/rebuild`; parses `config.toml`; console script in `pyproject.toml` |
+| `cli.py` | `analyst-driver init/run/step/status/rebuild`; parses `config.toml`; console script in `pyproject.toml`. `init` scaffolds `config.toml` only; `run` registers a run for an MS and drives it |
 | `loop.py` | the five stages, brief rendering, decision schema, the metric harvest |
 | `backends.py` | backend protocol + `claude`, `opencode`, `codex` adapters |
 | `executors.py` | executor protocol + `local`, `slurm`, `htcondor` adapters |
@@ -314,10 +314,13 @@ backend, the executor and the store are swappable; everything else is one loop.
 | `WORKLOG.md` | per the repo WORKLOG convention |
 
 **`config.toml`** lives in the run root and is data, not code — no module for it.
-It carries only operational settings, never science: ms_path, workdir, backend
-command and its MCP config file, executor kind, and when the executor is SLURM
-the `SlurmConfig` fields already defined in `src/ms_modify/slurm.py` (account,
-partition, mem, time, modules).
+It carries only operational settings, never science: backend command and its MCP
+config file, executor kind, and when the executor is SLURM the `SlurmConfig`
+fields already defined in `src/ms_modify/slurm.py` (account, partition, mem,
+time, modules). `analyst-driver init` writes a commented default to edit.
+
+The MS path and work directory are NOT in it: they are per dataset, while this
+file is per machine and per user. They are flags on `analyst-driver run`.
 
 This does not overlap the skills. The skills answer "what solint should this
 gaincal use"; `config.toml` answers "which queue, as which user, driven by which
@@ -388,8 +391,9 @@ servers, never a second place where reduction logic lives.
   stage sequence against `ms_reduction_log(action='list')`.
 - **Multi-run fan-out** — two simulated MSs, one driver, `step --all`. Confirm
   turns interleave and no row lands under the wrong `run_id`.
-- **Resumability** — kill the driver mid-job, re-invoke, confirm it adopts the
-  running job rather than resubmitting it.
+- **Resumability** — kill the driver mid-job, re-invoke, confirm it refuses
+  without `--resume` and adopts the running job with it. The ownership record
+  is `runs/<key>/owner.json`; see `owner.py` for the alive/dead/unknown probe.
 - **Cluster run** — corrino with `executor=slurm`, one stage only, checking
   `sacct` polling and the exit-code path before a full chain.
 - `pixi run lint` clean.

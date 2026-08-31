@@ -98,8 +98,11 @@ class ClaudeBackend:
 
     def run(self, prompt: str, workdir: str | Path) -> BackendResult:
         out = subprocess.run(
-            self._args(prompt), capture_output=True, text=True,
-            cwd=str(workdir), timeout=self.timeout,
+            self._args(prompt),
+            capture_output=True,
+            text=True,
+            cwd=str(workdir),
+            timeout=self.timeout,
         )
         return self.parse(out.stdout)
 
@@ -125,10 +128,12 @@ class ClaudeBackend:
             elif etype == "user":
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "tool_result":
-                        res.tool_calls.append({
-                            "tool": tool_names.get(block.get("tool_use_id", ""), ""),
-                            "result": block.get("content"),
-                        })
+                        res.tool_calls.append(
+                            {
+                                "tool": tool_names.get(block.get("tool_use_id", ""), ""),
+                                "result": block.get("content"),
+                            }
+                        )
             elif etype == "result":
                 if isinstance(ev.get("result"), str):
                     res.text = ev["result"]
@@ -164,8 +169,11 @@ class OpencodeBackend:
 
     def run(self, prompt: str, workdir: str | Path) -> BackendResult:
         out = subprocess.run(
-            self._args(prompt), capture_output=True, text=True,
-            cwd=str(workdir), timeout=self.timeout,
+            self._args(prompt),
+            capture_output=True,
+            text=True,
+            cwd=str(workdir),
+            timeout=self.timeout,
         )
         return self.parse(out.stdout)
 
@@ -183,10 +191,12 @@ class OpencodeBackend:
                 texts.append(part["text"])
             elif ptype == "tool":
                 state = part.get("state") or {}
-                res.tool_calls.append({
-                    "tool": part.get("tool", ""),
-                    "result": state.get("output"),
-                })
+                res.tool_calls.append(
+                    {
+                        "tool": part.get("tool", ""),
+                        "result": state.get("output"),
+                    }
+                )
         if texts:
             res.text = "\n".join(texts)
         return res
@@ -221,8 +231,11 @@ class CodexBackend:
             )
             prompt = f"{preamble}\n\n{prompt}"
         out = subprocess.run(
-            self._args(prompt), capture_output=True, text=True,
-            cwd=str(workdir), timeout=self.timeout,
+            self._args(prompt),
+            capture_output=True,
+            text=True,
+            cwd=str(workdir),
+            timeout=self.timeout,
         )
         return self.parse(out.stdout)
 
@@ -234,9 +247,10 @@ class CodexBackend:
             if not isinstance(ev, dict):
                 continue
             item = ev.get("item") if isinstance(ev.get("item"), dict) else ev
-            if isinstance(item.get("text"), str) and item.get(
-                "type", "agent_message"
-            ) in ("agent_message", "message"):
+            if isinstance(item.get("text"), str) and item.get("type", "agent_message") in (
+                "agent_message",
+                "message",
+            ):
                 res.text = item["text"]
         return res
 

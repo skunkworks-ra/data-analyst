@@ -23,6 +23,7 @@ from typing import Any
 from analyst_driver.backends import Backend, BackendResult
 from analyst_driver.db import DriverDB, measure_artifact, utcnow_iso
 from analyst_driver.executors import Executor
+from analyst_driver.owner import set_owner_job
 
 # --------------------------------------------------------------- pure pieces
 
@@ -74,12 +75,14 @@ def harvest_metrics(payload: Any, prefix: str) -> list[dict]:
             if "value" in node and ("flag" in node or _as_number(node["value"]) is not None):
                 num = _as_number(node["value"])
                 if num is not None or node.get("flag") is not None:
-                    rows.append({
-                        "name": path,
-                        "value": num,
-                        "unit": node.get("unit"),
-                        "flag": node.get("flag"),
-                    })
+                    rows.append(
+                        {
+                            "name": path,
+                            "value": num,
+                            "unit": node.get("unit"),
+                            "flag": node.get("flag"),
+                        }
+                    )
                 return
             for k, v in node.items():
                 walk(v, f"{path}.{k}")
@@ -103,9 +106,7 @@ def _tool_payload(result: Any) -> Any:
         except json.JSONDecodeError:
             return None
     if isinstance(result, list):  # content blocks [{"type": "text", "text": ...}]
-        text = "".join(
-            b.get("text", "") for b in result if isinstance(b, dict)
-        )
+        text = "".join(b.get("text", "") for b in result if isinstance(b, dict))
         try:
             return json.loads(text)
         except json.JSONDecodeError:
@@ -201,6 +202,10 @@ Do this, in order:
      "outputs": [{{"path": "<product the script will write>", "kind": "caltable|image|plot|ms"}}],
      "notes": "<one sentence>"}}
    Only "script" is required.
+5. If the reduction is finished and no stage remains, reply instead with
+   {{"done": true, "notes": "<why it is finished>"}} and name no script.
+   Only you can say this: ms_workflow_status reports "selfcal_or_done" and
+   cannot tell the two apart.
 """
 
 
@@ -294,9 +299,11 @@ class Loop:
         ordinal = self.db.next_ordinal(run_key)
 
         data = status_payload.get("data") if isinstance(status_payload, dict) else {}
-        stage = (decision or {}).get("stage") or (
-            data.get("next_recommended_step") if isinstance(data, dict) else None
-        ) or "unknown"
+        stage = (
+            (decision or {}).get("stage")
+            or (data.get("next_recommended_step") if isinstance(data, dict) else None)
+            or "unknown"
+        )
 
         cited = (decision or {}).get("cited") or []
         extras = {
@@ -306,9 +313,31 @@ class Loop:
             "harvested_metrics": harvest_from_tool_calls(result.tool_calls),
         }
         common = dict(
-            stage=stage, brief=brief, decision=decision, model=result.model,
-            tokens_in=result.tokens_in, tokens_out=result.tokens_out,
+            stage=stage,
+            brief=brief,
+            decision=decision,
+            model=result.model,
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
         )
+
+        if (decision or {}).get("done") is True:
+            # The model declares the reduction finished; the driver records it
+            # and stops. The driver never decides this itself — the terminal
+            # answer from ms_workflow_status is "selfcal_or_done", and choosing
+            # between those two is science.
+            self.db.record_turn(
+                run_key,
+                ordinal,
+                jobs=[],
+                extras={**extras, "stop_reason": "model declared the run complete"},
+                **common,
+            )
+            self.db.complete_turn(
+                run_key, ordinal, outcome="accepted", metrics=extras["harvested_metrics"]
+            )
+            self.db.set_run_status(run_key, "completed")
+            return {"action": "run_completed", "ordinal": ordinal}
 
         script = (decision or {}).get("script")
         script_path = None
@@ -319,19 +348,25 @@ class Loop:
         if script_path is None or not script_path.exists():
             # The one refusal that is not a judgement: nothing to submit.
             reason = (
-                "decision did not parse" if decision is None
+                "decision did not parse"
+                if decision is None
                 else f"decision names no script that exists: {script!r}"
             )
-            self.db.record_turn(run_key, ordinal, jobs=[],
-                                extras={**extras, "stop_reason": reason}, **common)
-            self.db.complete_turn(run_key, ordinal, outcome="failed",
-                                  metrics=extras["harvested_metrics"])
+            self.db.record_turn(
+                run_key, ordinal, jobs=[], extras={**extras, "stop_reason": reason}, **common
+            )
+            self.db.complete_turn(
+                run_key, ordinal, outcome="failed", metrics=extras["harvested_metrics"]
+            )
             return {"action": "turn_failed", "ordinal": ordinal, "reason": reason}
 
         job_dir = self.db._run_dir(run_key) / "jobs" / f"{ordinal:04d}"
         handle = self.executor.submit(script_path, job_dir)
-        record = self.db.record_turn(run_key, ordinal, jobs=[handle],
-                                     extras=extras, **common)
+        # The owner file carries the job separately from the driver: a SLURM
+        # job outliving its driver is normal, and only the job id lets a later
+        # invocation adopt it instead of resubmitting.
+        set_owner_job(self.db._run_dir(run_key), handle.get("job_id"))
+        record = self.db.record_turn(run_key, ordinal, jobs=[handle], extras=extras, **common)
         return self._settle(run_key, record, block=block)
 
     def _settle(self, run_key: str, turn: dict, *, block: bool) -> dict:
@@ -357,18 +392,25 @@ class Loop:
             artifacts.append(measure_artifact(script, "script"))
         for out in decision.get("outputs") or []:
             if isinstance(out, dict) and out.get("path"):
-                artifacts.append(
-                    measure_artifact(out["path"], out.get("kind") or "product")
-                )
+                artifacts.append(measure_artifact(out["path"], out.get("kind") or "product"))
 
         outcome = "accepted" if state == "done" else "failed"
         self.db.complete_turn(
-            run_key, turn["ordinal"], outcome=outcome, jobs=[job],
-            artifacts=artifacts, metrics=turn.get("harvested_metrics") or [],
+            run_key,
+            turn["ordinal"],
+            outcome=outcome,
+            jobs=[job],
+            artifacts=artifacts,
+            metrics=turn.get("harvested_metrics") or [],
             wall_time_s=_wall_time(job.get("submitted_at"), job.get("finished_at")),
         )
-        return {"action": "completed", "ordinal": turn["ordinal"],
-                "outcome": outcome, "exit_code": code}
+        set_owner_job(self.db._run_dir(run_key), None)
+        return {
+            "action": "completed",
+            "ordinal": turn["ordinal"],
+            "outcome": outcome,
+            "exit_code": code,
+        }
 
     def run_all(self, run_keys: list[str]) -> dict:
         """Advance every run until each is blocked, done, or needs a human.

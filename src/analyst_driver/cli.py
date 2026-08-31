@@ -2,6 +2,19 @@
 
 ``config.toml`` lives in the run root and is data, not code — operational
 settings only, never science. See PLAN.md "Files".
+
+The verbs (user decision, 2026-08-31):
+
+- ``init``  scaffolds ``config.toml`` and nothing else. It registers no run.
+            Nothing else needs scaffolding: ``DriverDB.__init__`` creates the
+            run root and the database on first open.
+- ``run``   registers a run for an MS when none is open, then drives it. Bare
+            ``run`` drives every active run, which is the fan-out mode.
+- ``step``  one turn of one run, for debugging.
+
+``run`` and ``step`` both take the run's ownership record before they work and
+release it afterwards. See ``owner.py`` for what "alive", "dead" and "unknown"
+mean there, and for why a lock file is not used.
 """
 
 from __future__ import annotations
@@ -17,6 +30,51 @@ from analyst_driver.backends import StubBackend, make_backend
 from analyst_driver.db import DriverDB, make_run_key
 from analyst_driver.executors import make_executor
 from analyst_driver.loop import Loop
+from analyst_driver.owner import clear_owner, probe_owner, read_owner, write_owner
+
+#: Written verbatim by ``init``. Every live value equals the code default, so
+#: an unedited template behaves exactly as no file did. Commented keys are
+#: examples: uncommenting one the chosen backend or executor does not accept
+#: is a hard error, because the table is expanded into a constructor
+#: (``make_backend(kind, **cfg)``, ``SlurmConfig(**cfg)``).
+DEFAULT_CONFIG = """# analyst-driver configuration.
+#
+# Operational settings only — which queue, as which user, driven by which
+# binary. Never science: solint, thresholds and reference antennas come from
+# the radio-interferometry skill, and a second copy here would drift.
+
+[driver]
+# Where runs, their journals and driver.sqlite3 live. A relative path resolves
+# against this file's directory.
+run_root = "runs"
+# Turns before the run stops and asks for a human.
+max_turns = 100
+# Seconds between polls while waiting for a job.
+poll_interval = 60
+
+[backend]
+# claude | opencode | codex | stub
+kind = "claude"
+# cmd = "claude"
+# model = "claude-opus-5"
+# mcp_config = "/path/to/.mcp.json"
+# timeout = 1800
+
+[executor]
+# local | slurm | htcondor
+kind = "local"
+# runner = "python3"
+
+# SLURM: replace the [executor] block above with this one.
+# [executor]
+# kind = "slurm"
+# account = ""
+# partition = ""
+# cpus_per_task = 8
+# mem = "60G"
+# time = "08:00:00"
+# modules = []
+"""
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -43,7 +101,9 @@ def build_loop(cfg: dict[str, Any], db: DriverDB) -> Loop:
 
     driver_cfg = cfg.get("driver") or {}
     return Loop(
-        db, backend, executor,
+        db,
+        backend,
+        executor,
         max_turns=int(driver_cfg.get("max_turns", 100)),
         poll_interval=float(driver_cfg.get("poll_interval", 60)),
     )
@@ -65,36 +125,148 @@ def _active_run_keys(db: DriverDB) -> list[str]:
     ]
 
 
-def cmd_init(args: argparse.Namespace, cfg: dict[str, Any], db: DriverDB) -> int:
-    ms_path = str(Path(args.ms).absolute())
-    workdir = str(Path(args.workdir).absolute())
-    run_key = make_run_key(ms_path)
-    db.create_run(
-        run_key,
-        ms_path=ms_path,
-        workdir=workdir,
-        telescope=args.telescope,
-        backend=(cfg.get("backend") or {}).get("kind", "claude"),
-        executor=(cfg.get("executor") or {}).get("kind", "local"),
-    )
-    print(run_key)
+# ------------------------------------------------------------------ ownership
+
+
+def _job_state(loop: Loop, owner: dict) -> str | None:
+    """The executor's answer for the recorded job, or None if we cannot ask.
+
+    Only SLURM is asked. A local job cannot outlive its driver, so under
+    ``executor = "local"`` the driver's own liveness is the whole answer.
+    """
+    job_id = owner.get("job_id")
+    if not job_id or owner.get("executor") != "slurm":
+        return None
+    try:
+        return loop.executor.poll({"job_id": job_id, "executor": "slurm"})
+    except Exception:  # sacct absent or cluster unreachable — unknown, not dead
+        return None
+
+
+def _claim(loop: Loop, db: DriverDB, run_key: str, *, resume: bool) -> tuple[int, str]:
+    """Take ownership of a run, or say why not. ``(0, "")`` means taken."""
+    run_dir = db._run_dir(run_key)
+    owner = read_owner(run_dir)
+    probe = probe_owner(owner, job_state=_job_state(loop, owner or {}))
+
+    if probe["driver"] == "alive":
+        # Proof that another driver holds it. Two drivers on one MS corrupt
+        # the data, so this refusal is not overridable.
+        return 2, (
+            f"{run_key}: a driver is already running this run — {probe['detail']}."
+            " Stop it first. --resume does not override this."
+        )
+
+    if probe["driver"] in ("dead", "unknown") and not resume:
+        hint = ""
+        if probe["job"] == "alive":
+            hint = (
+                f" Its {owner.get('executor')} job {owner.get('job_id')} is still"
+                f" {probe['job_state']}; --resume adopts it instead of resubmitting."
+            )
+        return 3, (
+            f"{run_key}: interrupted run — {probe['detail']}.{hint} Pass --resume to take it over."
+        )
+
+    row = db.conn.execute("SELECT executor FROM runs WHERE run_key = ?", (run_key,)).fetchone()
+    write_owner(run_dir, executor=(row[0] if row else None) or "local")
+    return 0, ""
+
+
+# -------------------------------------------------------------------- commands
+
+
+def cmd_init(args: argparse.Namespace, cfg: dict[str, Any], config_path: Path) -> int:
+    if config_path.exists():
+        print(f"{config_path} already exists; nothing to do", file=sys.stderr)
+        return 0
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(DEFAULT_CONFIG)
+    print(f"wrote {config_path}")
+    print("Edit it, then start a run with:", file=sys.stderr)
+    print("  analyst-driver run --ms <path.ms> --workdir <path>", file=sys.stderr)
     return 0
+
+
+def _resolve_run(
+    args: argparse.Namespace, cfg: dict[str, Any], db: DriverDB
+) -> tuple[list[str], int, str]:
+    """Which runs to drive: an explicit key, an MS, or every active run."""
+    if args.run:
+        return [args.run], 0, ""
+
+    if args.ms or args.workdir:
+        if not (args.ms and args.workdir):
+            return [], 1, "--ms and --workdir must be given together"
+        ms_path = str(Path(args.ms).absolute())
+        open_runs = db.find_runs_by_ms(ms_path)
+        if len(open_runs) > 1:
+            keys = ", ".join(r["run_key"] for r in open_runs)
+            return (
+                [],
+                1,
+                (
+                    f"{len(open_runs)} active runs already exist on this MS: {keys}."
+                    " Name one with --run, or close the others."
+                ),
+            )
+        if open_runs:
+            return [open_runs[0]["run_key"]], 0, ""
+        run_key = make_run_key(ms_path)
+        db.create_run(
+            run_key,
+            ms_path=ms_path,
+            workdir=str(Path(args.workdir).absolute()),
+            telescope=args.telescope,
+            backend=(cfg.get("backend") or {}).get("kind", "claude"),
+            executor=(cfg.get("executor") or {}).get("kind", "local"),
+        )
+        print(run_key)
+        return [run_key], 0, ""
+
+    keys = _active_run_keys(db)
+    if not keys:
+        return [], 1, "no active runs"
+    return keys, 0, ""
 
 
 def cmd_step(args: argparse.Namespace, cfg: dict[str, Any], db: DriverDB) -> int:
     loop = build_loop(cfg, db)
-    result = loop.step(args.run)
+    code, msg = _claim(loop, db, args.run, resume=args.resume)
+    if code:
+        print(msg, file=sys.stderr)
+        return code
+    try:
+        result = loop.step(args.run)
+    finally:
+        clear_owner(db._run_dir(args.run))
     print(json.dumps(result, sort_keys=True))
-    return 0 if result["action"] in ("completed", "waiting", "skipped") else 1
+    terminal_ok = ("completed", "waiting", "skipped", "run_completed")
+    return 0 if result["action"] in terminal_ok else 1
 
 
 def cmd_run(args: argparse.Namespace, cfg: dict[str, Any], db: DriverDB) -> int:
     loop = build_loop(cfg, db)
-    keys = [args.run] if args.run else _active_run_keys(db)
-    if not keys:
-        print("no active runs", file=sys.stderr)
-        return 1
-    results = loop.run_all(keys)
+    keys, code, msg = _resolve_run(args, cfg, db)
+    if code:
+        print(msg, file=sys.stderr)
+        return code
+
+    claimed: list[str] = []
+    for key in keys:
+        code, msg = _claim(loop, db, key, resume=args.resume)
+        if code:
+            print(msg, file=sys.stderr)
+            for done in claimed:
+                clear_owner(db._run_dir(done))
+            return code
+        claimed.append(key)
+
+    try:
+        results = loop.run_all(keys)
+    finally:
+        for key in claimed:
+            clear_owner(db._run_dir(key))
     print(json.dumps(results, sort_keys=True))
     return 0
 
@@ -116,6 +288,10 @@ def cmd_status(args: argparse.Namespace, cfg: dict[str, Any], db: DriverDB) -> i
                 (run_key, last_ordinal),
             ).fetchone()
             line += f"  last: {stage} ({state}, outcome={outcome})"
+        owner = read_owner(db._run_dir(run_key))
+        if owner is not None:
+            probe = probe_owner(owner)
+            line += f"  owner: {probe['driver']} ({probe['detail']})"
         print(line)
     if not rows:
         print("no runs")
@@ -133,21 +309,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default="config.toml", help="path to config.toml")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("init", help="register a new run")
-    p.add_argument("--ms", required=True)
-    p.add_argument("--workdir", required=True)
-    p.add_argument("--telescope", default=None)
+    p = sub.add_parser("init", help="write a default config.toml to edit")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("step", help="advance one run by one turn (waits for the job)")
     p.add_argument("--run", required=True, help="run_key")
+    p.add_argument("--resume", action="store_true", help="take over an interrupted run")
     p.set_defaults(func=cmd_step)
 
-    p = sub.add_parser("run", help="advance runs until done or needs_human")
+    p = sub.add_parser("run", help="register a run if needed, then drive it")
+    p.add_argument("--ms", default=None, help="MS to drive; registers a run if none is open")
+    p.add_argument("--workdir", default=None, help="work directory; required with --ms")
+    p.add_argument("--telescope", default=None)
     p.add_argument("--run", default=None, help="one run_key; default all active runs")
+    p.add_argument("--resume", action="store_true", help="take over an interrupted run")
     p.set_defaults(func=cmd_run)
 
-    p = sub.add_parser("status", help="list runs and their latest turn")
+    p = sub.add_parser("status", help="list runs, their latest turn and their owner")
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("rebuild", help="reconstruct the database from the journal")
@@ -155,7 +333,21 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     config_path = Path(args.config)
-    cfg = load_config(config_path) if config_path.exists() else {}
+
+    if args.func is cmd_init:
+        return cmd_init(args, {}, config_path)
+
+    if not config_path.exists():
+        # A missing config used to fall through to code defaults in silence,
+        # so a mistyped --config ran a full reduction under settings nobody
+        # chose. It is now a stop.
+        print(
+            f"no config at {config_path}. Run 'analyst-driver init' to write one.",
+            file=sys.stderr,
+        )
+        return 1
+
+    cfg = load_config(config_path)
     db = _open_db(cfg, config_path.absolute())
     try:
         return args.func(args, cfg, db)

@@ -23,8 +23,19 @@ and layout are distinguishable. Large kinds (``ms``, ``image``) get a
 metadata digest instead, ``meta:`` over name + size + mtime: it identifies
 the producing attempt without reading gigabytes, but cannot prove content.
 
-SQLite via stdlib sqlite3, WAL mode, 30 s busy timeout. Keep the run root on
-local disk, not NFS. DDL is ANSI-portable except where marked PORTABILITY.
+SQLite via stdlib sqlite3, WAL mode, 30 s busy timeout. DDL is ANSI-portable
+except where marked PORTABILITY.
+
+The run root may sit on local disk or on NFS, so nothing here may assume the
+database is reliable. WAL mode relies on shared memory and on POSIX locks that
+NFS does not provide dependably, which makes a stale or damaged index a
+foreseeable state rather than a bug. It is survivable only because the journal
+files are the truth: ``rebuild`` reconstructs every row from them, and the live
+write path and ``rebuild`` share ``_sync_run``/``_sync_turn``, so the two
+cannot drift. The queries the CLI runs over the index — which runs are active,
+which run holds a given MS — are therefore repairable by ``rebuild`` and never
+by hand. Run ownership avoids a file lock for the same NFS reason; see
+``owner.py``.
 """
 
 from __future__ import annotations
@@ -43,6 +54,16 @@ META_HASH_KINDS = frozenset({"ms", "image"})
 
 #: Valid turn outcomes. ``None`` means the turn is submitted, not finished.
 OUTCOMES = frozenset({"accepted", "retried", "failed"})
+
+#: Valid run statuses. ``active`` is the only one that means work remains;
+#: every other value is terminal and the driver skips it.
+#:
+#: ``completed`` exists because a reduction that has finished must be
+#: distinguishable from one that was interrupted. Without it both read
+#: ``active``, a bare ``run`` re-drives finished reductions, and a resume
+#: gate has nothing to read.
+RUN_STATUSES = frozenset({"active", "completed", "needs_human", "failed"})
+TERMINAL_STATUSES = frozenset({"completed", "needs_human", "failed"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -237,6 +258,8 @@ class DriverDB:
         return record
 
     def set_run_status(self, run_key: str, status: str) -> None:
+        if status not in RUN_STATUSES:
+            raise ValueError(f"status must be one of {sorted(RUN_STATUSES)}, got {status!r}")
         record = self._read_json(self._run_json(run_key))
         record["status"] = status
         self._write_json(self._run_json(run_key), record)
@@ -255,6 +278,28 @@ class DriverDB:
         record["metrics"].append({"name": name, "value": value, "unit": unit, "flag": flag})
         self._write_json(self._run_json(run_key), record)
         self._sync_run(record)
+
+    def find_runs_by_ms(
+        self, ms_path: str | os.PathLike, *, statuses: tuple[str, ...] = ("active",)
+    ) -> list[dict]:
+        """Runs on this MS with one of these statuses, oldest first.
+
+        Matched on the absolute path, because ``make_run_key`` embeds a
+        timestamp: two registrations of the same MS get different keys, so the
+        path is the only stable identity a caller can present.
+        """
+        target = str(Path(ms_path).absolute())
+        placeholders = ",".join("?" for _ in statuses)
+        rows = self.conn.execute(
+            "SELECT run_key, status, started_at, workdir, executor FROM runs"
+            f" WHERE ms_path = ? AND status IN ({placeholders})"  # noqa: S608 - placeholders only
+            " ORDER BY started_at, run_key",
+            (target, *statuses),
+        ).fetchall()
+        return [
+            {"run_key": r[0], "status": r[1], "started_at": r[2], "workdir": r[3], "executor": r[4]}
+            for r in rows
+        ]
 
     def next_ordinal(self, run_key: str) -> int:
         row = self.conn.execute(
@@ -284,11 +329,14 @@ class DriverDB:
         loses nothing. ``extras`` holds journal-only keys (citations, tool
         transcript, stop reason) — kept in the file, never in a column.
         """
-        attempt = 1 + self.conn.execute(
-            "SELECT COUNT(*) FROM turns t JOIN runs r ON t.run_id = r.id"
-            " WHERE r.run_key = ? AND t.stage = ? AND t.ordinal < ?",
-            (run_key, stage, ordinal),
-        ).fetchone()[0]
+        attempt = (
+            1
+            + self.conn.execute(
+                "SELECT COUNT(*) FROM turns t JOIN runs r ON t.run_id = r.id"
+                " WHERE r.run_key = ? AND t.stage = ? AND t.ordinal < ?",
+                (run_key, stage, ordinal),
+            ).fetchone()[0]
+        )
         record = {
             "run_key": run_key,
             "ordinal": ordinal,
@@ -379,18 +427,21 @@ class DriverDB:
     def _sync_run(self, record: dict) -> None:
         """Make the runs row and run-level metric rows match one run.json."""
         cur = self.conn.cursor()
-        row = cur.execute(
-            "SELECT id FROM runs WHERE run_key = ?", (record["run_key"],)
-        ).fetchone()
+        row = cur.execute("SELECT id FROM runs WHERE run_key = ?", (record["run_key"],)).fetchone()
         if row:
             run_id = row[0]
             cur.execute(
                 "UPDATE runs SET started_at=?, ms_path=?, workdir=?, telescope=?,"
                 " backend=?, executor=?, status=? WHERE id=?",
                 (
-                    record["started_at"], record["ms_path"], record["workdir"],
-                    record["telescope"], record["backend"], record["executor"],
-                    record["status"], run_id,
+                    record["started_at"],
+                    record["ms_path"],
+                    record["workdir"],
+                    record["telescope"],
+                    record["backend"],
+                    record["executor"],
+                    record["status"],
+                    run_id,
                 ),
             )
         else:
@@ -398,9 +449,14 @@ class DriverDB:
                 "INSERT INTO runs (run_key, started_at, ms_path, workdir, telescope,"
                 " backend, executor, status) VALUES (?,?,?,?,?,?,?,?)",
                 (
-                    record["run_key"], record["started_at"], record["ms_path"],
-                    record["workdir"], record["telescope"], record["backend"],
-                    record["executor"], record["status"],
+                    record["run_key"],
+                    record["started_at"],
+                    record["ms_path"],
+                    record["workdir"],
+                    record["telescope"],
+                    record["backend"],
+                    record["executor"],
+                    record["status"],
                 ),
             )
             run_id = cur.lastrowid
@@ -420,9 +476,7 @@ class DriverDB:
         identical rows from the same file.
         """
         cur = self.conn.cursor()
-        row = cur.execute(
-            "SELECT id FROM runs WHERE run_key = ?", (record["run_key"],)
-        ).fetchone()
+        row = cur.execute("SELECT id FROM runs WHERE run_key = ?", (record["run_key"],)).fetchone()
         if not row:
             raise ValueError(f"no run.json synced for run_key {record['run_key']!r}")
         run_id = row[0]
@@ -442,10 +496,17 @@ class DriverDB:
             " decision, model, tokens_in, tokens_out, wall_time_s)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
-                run_id, record["ordinal"], record["stage"], record["attempt"],
-                record["state"], record["outcome"], record["brief"],
+                run_id,
+                record["ordinal"],
+                record["stage"],
+                record["attempt"],
+                record["state"],
+                record["outcome"],
+                record["brief"],
                 json.dumps(decision, sort_keys=True) if decision is not None else None,
-                record["model"], record["tokens_in"], record["tokens_out"],
+                record["model"],
+                record["tokens_in"],
+                record["tokens_out"],
                 record["wall_time_s"],
             ),
         )
@@ -456,8 +517,12 @@ class DriverDB:
                 "INSERT INTO jobs (turn_id, executor, handle, submitted_at, finished_at,"
                 " exit_code, log_paths) VALUES (?,?,?,?,?,?,?)",
                 (
-                    turn_id, j["executor"], j.get("handle"), j.get("submitted_at"),
-                    j.get("finished_at"), j.get("exit_code"),
+                    turn_id,
+                    j["executor"],
+                    j.get("handle"),
+                    j.get("submitted_at"),
+                    j.get("finished_at"),
+                    j.get("exit_code"),
                     json.dumps(log_paths, sort_keys=True) if log_paths is not None else None,
                 ),
             )
@@ -466,8 +531,12 @@ class DriverDB:
                 "INSERT INTO artifacts (turn_id, path, kind, size, checksum, mtime)"
                 " VALUES (?,?,?,?,?,?)",
                 (
-                    turn_id, a["path"], a["kind"], a.get("size"),
-                    a.get("checksum"), a.get("mtime"),
+                    turn_id,
+                    a["path"],
+                    a["kind"],
+                    a.get("size"),
+                    a.get("checksum"),
+                    a.get("mtime"),
                 ),
             )
         for m in record["metrics"]:
