@@ -14,9 +14,34 @@ Design: `PLAN.md` at the repo root. It is scaffolding for branch `driver-v2` and
 
 **Next step**: step 4 of the plan — `executors.py` with the `local` executor
 only, plus brief rendering in `loop.py`. Prove one turn end to end against a
-stub backend that returns a fixed decision.
+stub backend that returns a fixed decision. **Read `PLAN.md` "What the driver
+does" first**; it was rewritten on 2026-08-31 and it decides what the loop may
+and may not do.
 
 **Blocked on**: nothing.
+
+---
+
+## 2026-08-31 — the driver's role, settled
+
+`PLAN.md` rewritten. No code changed. The session removed things rather than
+adding them; the reasons are in the plan and are not repeated here.
+
+- The driver renders a brief, runs the harness, submits the job, waits, and
+  records. **It may report a number. It may never name a verdict.**
+- Dropped: the threshold file (`verifier.yaml`), product checks that duplicate
+  `ms_workflow_status`, and the stage-to-tool table. The only refusal left is
+  "the decision names no script, so there is nothing to submit".
+- The driver holds no tool list and no parameter schema. The MCP servers
+  validate parameters at call time, and they die with the harness anyway.
+- Metric harvest names no keys: walk the response envelope, one row per numeric
+  leaf, name from the tool and key path, completeness flag stored with it.
+- `max_turns = 100`, in `config.toml`. Refine after real runs.
+- Recorded in the plan, not solved here: the stage vocabulary in
+  `00-playbook.md` and the labels `ms_workflow_status` emits do not correspond.
+  Reconcile it with the ALMA ladder work, not before.
+- `db.py` is expected to be rewritten. Five findings are listed under Status in
+  `PLAN.md` so they are not re-derived.
 
 ---
 
