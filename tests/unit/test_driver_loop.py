@@ -7,11 +7,13 @@ a synthetic ms_workflow_status payload.
 
 import json
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from analyst_driver.backends import (
+    BackendResult,
     ClaudeBackend,
     CodexBackend,
     OpencodeBackend,
@@ -638,4 +640,108 @@ def test_an_existing_ms_path_is_never_overwritten(tmp_path):
     loop.sense = lambda run: {"data": {"next_recommended_step": "apply_preflag"}}
     loop.step("k1")
     assert db._read_json(db._run_json("k1"))["ms_path"] == str(ms)
+    db.close()
+
+
+# ------------------------------------------------------ backend permissions
+
+
+def test_claude_backend_passes_allowed_tools():
+    args = ClaudeBackend(allowed_tools=["mcp__ms-create", "Read"])._args()
+    assert "--allowedTools" in args
+    assert args[args.index("--allowedTools") + 1] == "mcp__ms-create,Read"
+
+
+def test_claude_backend_omits_the_flag_when_unset():
+    assert "--allowedTools" not in ClaudeBackend()._args()
+
+
+def test_claude_backend_empty_list_omits_the_flag():
+    assert "--allowedTools" not in ClaudeBackend(allowed_tools=[])._args()
+
+
+def test_claude_backend_never_puts_the_prompt_in_argv():
+    """--allowedTools is variadic: a trailing positional is eaten as a tool.
+
+    The earlier version of this test asserted the prompt was the LAST argument,
+    which is exactly the arrangement that broke. The prompt goes on stdin.
+    """
+    args = ClaudeBackend(allowed_tools=["Read"])._args()
+    assert not any("prompt" in a for a in args)
+    assert args[-1] == "Read" or args[-1].endswith("Read")
+
+
+def test_claude_backend_sends_the_prompt_on_stdin(tmp_path, monkeypatch):
+    """The launch test: the prompt must actually reach the process."""
+    seen = {}
+
+    def fake_run(args, **kw):
+        seen["args"] = args
+        seen["input"] = kw.get("input")
+        return subprocess.CompletedProcess(args, 0, stdout='{"type":"result"}', stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ClaudeBackend(allowed_tools=["Read"]).run("THE BRIEF", tmp_path)
+    assert seen["input"] == "THE BRIEF"
+    assert "THE BRIEF" not in seen["args"]
+
+
+def test_backend_failure_is_recorded_not_swallowed(tmp_path, monkeypatch):
+    """A harness that exits non-zero must not read as an empty answer."""
+
+    def fake_run(args, **kw):
+        return subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="Error: Input must be provided"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    res = ClaudeBackend().run("brief", tmp_path)
+    assert res.exit_code == 1
+    assert "Input must be provided" in res.error
+
+
+def test_zero_exit_with_no_output_is_still_a_failure(tmp_path, monkeypatch):
+    def fake_run(args, **kw):
+        return subprocess.CompletedProcess(args, 0, stdout="   \n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    res = ClaudeBackend().run("brief", tmp_path)
+    assert res.error == "exited 0 with no output"
+
+
+def test_successful_run_records_no_error(tmp_path, monkeypatch):
+    def fake_run(args, **kw):
+        return subprocess.CompletedProcess(
+            args, 0, stdout='{"type":"result","result":"{\\"done\\": true}"}', stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    res = ClaudeBackend().run("brief", tmp_path)
+    assert res.error is None and res.exit_code == 0
+
+
+def test_turn_reports_the_backend_failure_reason(tmp_path):
+    """The stop_reason must name the harness, not blame the decision."""
+
+    class BrokenBackend:
+        kind = "claude"
+
+        def run(self, prompt, workdir):
+            return BackendResult(text="", error="Error: Input must be provided", exit_code=1)
+
+    db = DriverDB(tmp_path / "runs")
+    db.create_run(
+        "k1", input_path=str(tmp_path / "a.ms"), ms_path="", workdir=str(tmp_path), executor="local"
+    )
+    loop = Loop(db, BrokenBackend(), LocalExecutor(), poll_interval=0.01)
+    loop.sense = lambda run: {"data": {"next_recommended_step": "import_asdm"}}
+    result = loop.step("k1")
+
+    assert result["action"] == "turn_failed"
+    assert "backend claude failed (exit 1)" in result["reason"]
+    assert "Input must be provided" in result["reason"]
+
+    turn = db._read_json(db._turn_json("k1", 1))
+    assert turn["backend_exit_code"] == 1
+    assert "Input must be provided" in turn["backend_error"]
     db.close()

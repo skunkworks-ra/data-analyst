@@ -12,17 +12,75 @@ and the three MCP servers.
 Design: `PLAN.md` at the repo root. It is scaffolding for branch `driver-v2` and
 **must be deleted before any merge to main**.
 
-**Next step**: real-world verification, in order (PLAN.md "Verification").
-Setup is now `analyst-driver init` (writes config.toml), edit it, then
-`analyst-driver run --ms <ms> --workdir <wd>`. Then:
-(1) local live run — simulated MS via the ms-simulator skill, backend=claude,
-executor=local, import to first image; compare the recorded stage sequence
-against `ms_reduction_log(action='list')`; (2) multi-run fan-out with `run`
-(two runs, one driver); (3) cluster run on corrino with executor=slurm, one
-stage. The codex adapter is unverified (codex not installed on the dev
-machine) — verify its event schema before first use.
+**Next step**: re-run the G55 live test. In
+`/export/home/corrino/krishna/work/tests/skunkworks/radio-analyst/G55_processing/G55_test`,
+delete `runs/` (that run sits at needs_human with 100 dead turns from the
+prompt-on-argv bug) and re-run `analyst-driver run --input <AB1345 ASDM>
+--workdir . --telescope EVLA`. The config there is already correct. Watch
+turn 0001: it should now reach `mcp__ms-create__ms_import_asdm` and name the
+MS it will write as an `outputs` entry with kind `ms`, which is what
+`_adopt_ms` needs to fill `ms_path`. Then: (2) multi-run fan-out with two
+runs, one driver; (3) cluster run with executor=slurm, one stage. The codex
+adapter stays unverified (codex is not installed here).
+
+Two known gaps, both designed in chat and NOT implemented, worst first:
+(a) a run repeats an identical failing turn until max_turns — a consecutive
+failure cut-off would have ended the 100-turn run at 3; (b) nothing streams
+while the model thinks, so a turn is invisible for its whole duration
+(`subprocess.run` buffers stream-json until exit, and the turn record is
+written after).
 
 **Blocked on**: nothing.
+
+---
+
+## 2026-08-31 — backend permissions, and the 100-empty-turn failure
+
+First live run against the G55 ASDM (AB1345). It burned all 100 turns in about
+a minute and stopped at `needs_human`. Two defects, the second worse.
+
+**1. `claude -p` denies every unlisted tool.** Non-interactive, so nobody can
+answer a permission prompt: `mcp__ms-create__ms_import_asdm` came back
+`permission_denied` and the model said so correctly. `ClaudeBackend` gains
+`allowed_tools` -> `--allowedTools`, and the `init` template ships it LIVE
+(not commented) with the three MCP servers plus Read/Glob/Grep/Skill.
+Bash/Write/Edit are deliberately excluded: the model writes a script and the
+LOOP executes it, so allowing Bash would let a turn run CASA itself.
+
+**2. `--allowedTools <tools...>` is variadic and ate the prompt.** The fix for
+(1) caused this. `_args` appended the prompt as the last positional, the
+variadic flag consumed it, and claude exited 1 with "Input must be provided
+either through stdin or as a prompt argument". The prompt now goes on
+**stdin**, verified against the real binary; `_args()` no longer takes it.
+This also removes any argv length limit on a long brief.
+
+**The real defect is that this took 100 turns to become visible.**
+`ClaudeBackend.run` read only `out.stdout`, never `out.stderr` or
+`out.returncode`, so a harness that never launched was indistinguishable from
+a model that answered nothing usable. Every turn recorded
+`decision did not parse`, `transcript: ""`, at roughly one per 600 ms. The
+one-line reason sat unread in a pipe.
+
+`BackendResult` gains `error` and `exit_code`, set by a shared `_with_failure`
+helper used by ALL THREE adapters (opencode and codex were equally blind).
+`Loop._decide_and_dispatch` now reports
+`backend <kind> failed (exit N): <stderr>` as the stop_reason instead of
+blaming the decision, and journals `backend_error` / `backend_exit_code`.
+
+The test that should have caught this asserted the prompt was the LAST argv
+entry — precisely the arrangement that broke. Replaced with a launch test that
+asserts the prompt reaches the process via stdin and never appears in argv.
+
+861 unit tests pass; lint and format clean. Live check through
+`ClaudeBackend.run`: exit 0, model `claude-opus-5`, decision JSON parsed.
+
+**Still open, ranked.** (a) Nothing stops a run from repeating an identical
+failing turn until max_turns; a consecutive-failure cut-off would have ended
+this in 3 turns rather than 100, but it needs a threshold and that is a new
+config surface — not added. (b) Nothing streams while the model is thinking:
+`subprocess.run` buffers the stream-json until exit and the turn record is
+written afterwards, so a turn is invisible for its whole duration. Design for
+both is in chat, unimplemented.
 
 ---
 

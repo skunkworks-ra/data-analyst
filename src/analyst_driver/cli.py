@@ -57,6 +57,22 @@ poll_interval = 60
 [backend]
 # claude | opencode | codex | stub
 kind = "claude"
+# `claude -p` is non-interactive: nobody can answer a permission prompt, so a
+# tool that is not listed here is DENIED and the turn fails. The three MCP
+# servers are the driver's whole purpose. Read/Glob/Grep let it consult the
+# skill and read logs; Skill loads the skill itself.
+# Bash, Write and Edit are deliberately absent: the model writes a script and
+# the LOOP executes it. Allowing Bash would let a turn run CASA itself, which
+# is the one thing this design exists to prevent.
+allowed_tools = [
+  "mcp__ms-inspect",
+  "mcp__ms-modify",
+  "mcp__ms-create",
+  "Read",
+  "Glob",
+  "Grep",
+  "Skill",
+]
 # cmd = "claude"
 # model = "claude-opus-5"
 # mcp_config = "/path/to/.mcp.json"

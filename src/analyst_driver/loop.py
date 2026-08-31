@@ -337,6 +337,8 @@ class Loop:
             "tool_calls": result.tool_calls,
             "transcript": result.transcript,
             "harvested_metrics": harvest_from_tool_calls(result.tool_calls),
+            "backend_error": result.error,
+            "backend_exit_code": result.exit_code,
         }
         common = dict(
             stage=stage,
@@ -373,11 +375,17 @@ class Loop:
                 script_path = Path(run["workdir"]) / script_path
         if script_path is None or not script_path.exists():
             # The one refusal that is not a judgement: nothing to submit.
-            reason = (
-                "decision did not parse"
-                if decision is None
-                else f"decision names no script that exists: {script!r}"
-            )
+            if result.error:
+                # The harness failed, which is not the same as a bad answer.
+                # Say so, and say what it printed: this is the difference
+                # between one legible turn and a hundred identical empty ones.
+                reason = (
+                    f"backend {self.backend.kind} failed (exit {result.exit_code}): {result.error}"
+                )
+            elif decision is None:
+                reason = "decision did not parse"
+            else:
+                reason = f"decision names no script that exists: {script!r}"
             self.db.record_turn(
                 run_key, ordinal, jobs=[], extras={**extras, "stop_reason": reason}, **common
             )

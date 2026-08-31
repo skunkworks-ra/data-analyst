@@ -35,12 +35,33 @@ class BackendResult:
     tokens_in: int | None = None
     tokens_out: int | None = None
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    #: Why the backend itself failed — a non-zero exit or no output at all.
+    #: Distinct from "the model answered something unusable": without it a
+    #: harness that never launched is indistinguishable from a bad answer, and
+    #: the loop retries the identical failure until max_turns.
+    error: str | None = None
+    exit_code: int | None = None
 
 
 class Backend(Protocol):
     kind: str
 
     def run(self, prompt: str, workdir: str | Path) -> BackendResult: ...
+
+
+def _with_failure(res: BackendResult, out: subprocess.CompletedProcess) -> BackendResult:
+    """Record a backend that failed to produce anything, and why.
+
+    Without this a harness that never launched looks exactly like a model that
+    answered nothing usable: both give an empty text, the turn records
+    "decision did not parse", and the loop retries the identical failure until
+    max_turns. The one-line reason sits unread in stderr.
+    """
+    res.exit_code = out.returncode
+    if out.returncode != 0 or not (out.stdout or "").strip():
+        stderr = (out.stderr or "").strip()
+        res.error = stderr[:2000] or f"exited {out.returncode} with no output"
+    return res
 
 
 def _jsonl(raw: str) -> list[Any]:
@@ -81,30 +102,51 @@ class ClaudeBackend:
         mcp_config: str | None = None,
         model: str | None = None,
         timeout: float | None = None,
+        allowed_tools: list[str] | None = None,
     ):
+        """``allowed_tools`` becomes ``--allowedTools``.
+
+        ``claude -p`` is non-interactive, so there is nobody to answer a
+        permission prompt: any tool not on this list is DENIED, and the turn
+        comes back as a refusal the driver can only record and retry. Without
+        it the driver cannot call a single ms_modify or ms_create tool, which
+        is every tool it exists to call. None omits the flag, which is what a
+        backend that manages permissions elsewhere wants.
+        """
         self.cmd = cmd
         self.mcp_config = mcp_config
         self.model = model
         self.timeout = timeout
+        self.allowed_tools = list(allowed_tools) if allowed_tools else []
 
-    def _args(self, prompt: str) -> list[str]:
+    def _args(self) -> list[str]:
+        """The command line. The prompt is NOT here — it goes on stdin.
+
+        ``--allowedTools <tools...>`` is variadic: it consumes every argument
+        that follows it, so a prompt appended as the last positional is eaten
+        as another tool name and claude exits 1 with "Input must be provided
+        either through stdin or as a prompt argument". stdin also removes any
+        argv length limit on a long brief.
+        """
         args = [self.cmd, "-p", "--output-format", "stream-json", "--verbose"]
         if self.mcp_config:
             args += ["--mcp-config", self.mcp_config]
         if self.model:
             args += ["--model", self.model]
-        args.append(prompt)
+        if self.allowed_tools:
+            args += ["--allowedTools", ",".join(self.allowed_tools)]
         return args
 
     def run(self, prompt: str, workdir: str | Path) -> BackendResult:
         out = subprocess.run(
-            self._args(prompt),
+            self._args(),
+            input=prompt,
             capture_output=True,
             text=True,
             cwd=str(workdir),
             timeout=self.timeout,
         )
-        return self.parse(out.stdout)
+        return _with_failure(self.parse(out.stdout), out)
 
     @staticmethod
     def parse(raw: str) -> BackendResult:
@@ -175,7 +217,7 @@ class OpencodeBackend:
             cwd=str(workdir),
             timeout=self.timeout,
         )
-        return self.parse(out.stdout)
+        return _with_failure(self.parse(out.stdout), out)
 
     @staticmethod
     def parse(raw: str) -> BackendResult:
@@ -237,7 +279,7 @@ class CodexBackend:
             cwd=str(workdir),
             timeout=self.timeout,
         )
-        return self.parse(out.stdout)
+        return _with_failure(self.parse(out.stdout), out)
 
     @staticmethod
     def parse(raw: str) -> BackendResult:

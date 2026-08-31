@@ -359,3 +359,32 @@ def test_input_without_workdir_is_refused(project, capsys):
     write_config(project)
     assert _cli(project, "run", "--input", str(project / "x")) == 1
     assert "must be given together" in capsys.readouterr().err
+
+
+def test_default_config_allows_the_three_mcp_servers(project):
+    """A default config must be able to call the tools the driver exists for."""
+    import tomllib
+
+    _cli(project, "init")
+    with open(project / "config.toml", "rb") as fh:
+        cfg = tomllib.load(fh)
+    allowed = cfg["backend"]["allowed_tools"]
+    assert {"mcp__ms-inspect", "mcp__ms-modify", "mcp__ms-create"} <= set(allowed)
+    # the loop executes scripts, not the model
+    assert "Bash" not in allowed and "Write" not in allowed
+
+
+def test_default_config_reaches_the_backend(project):
+    """The template value must survive build_loop, not just parse."""
+    import tomllib
+
+    from analyst_driver.cli import build_loop
+
+    _cli(project, "init")
+    with open(project / "config.toml", "rb") as fh:
+        cfg = tomllib.load(fh)
+    cfg["driver"]["run_root"] = str(project / "runs")
+    db = DriverDB(project / "runs")
+    loop = build_loop(cfg, db)
+    db.close()
+    assert "mcp__ms-create" in loop.backend.allowed_tools
