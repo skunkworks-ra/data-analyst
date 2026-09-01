@@ -137,7 +137,7 @@ def run_antenna_list(ms_path: str) -> dict:
     n_ant = ant_data["n_rows"]
 
     # ------------------------------------------------------------------
-    # Numeric-only antenna names (DESIGN.md §3.3)
+    # Numeric-only antenna names (design_docs/DESIGN.md §3.3)
     # Names are labels; positions are what matter.  If positions look
     # reasonable we warn and continue, otherwise fail loud.
     # ------------------------------------------------------------------
@@ -165,7 +165,7 @@ def run_antenna_list(ms_path: str) -> dict:
             )
 
     # ------------------------------------------------------------------
-    # Fail loud check 2: orphaned antenna IDs (DESIGN.md §3.3)
+    # Fail loud check 2: orphaned antenna IDs (design_docs/DESIGN.md §3.3)
     # ------------------------------------------------------------------
     main_ids, main_calls = _read_main_antenna_ids(ms_str)
     casa_calls.extend(main_calls)

@@ -62,7 +62,7 @@ def run(ms_path: str) -> dict:
         time_ranges = tb.getcol("TIME_RANGE")  # shape [2, n_rows] MJD seconds
 
     # ------------------------------------------------------------------
-    # Telescope name validation — fail loud (DESIGN.md §3.2)
+    # Telescope name validation — fail loud (design_docs/DESIGN.md §3.2)
     # ------------------------------------------------------------------
     primary_telescope = telescope_names[0].strip()
 

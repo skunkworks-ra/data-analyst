@@ -97,7 +97,7 @@ exactly two changes:
    resumption. I lean to keeping it and documenting the exception (~60%),
    because the alternative is the model re-deriving state every resume.
 
-Whatever you choose, `CLAUDE.md` and `DESIGN.md` §1.1 must be updated to match,
+Whatever you choose, `CLAUDE.md` and `design_docs/DESIGN.md` §1.1 must be updated to match,
 because right now the doc is not describing the code.
 
 ---
@@ -112,7 +112,7 @@ record has 5 to 6 keys (`chan`, `median`, `mad`, `min`, `max`, `peak_to_floor`,
 parameter anywhere in the module.
 
 For the datasets in the docs this is survivable (128 channels). For the
-MeerKAT 32k-channel mode named in `DESIGN.md` §6.6 as a target configuration,
+MeerKAT 32k-channel mode named in `design_docs/DESIGN.md` §6.6 as a target configuration,
 this is roughly 32,768 records per SpW, tens of SpWs. That is a response that
 will not fit in a context window, from a tool whose whole job is triage before
 flagging.
@@ -159,7 +159,7 @@ Cheap, high leverage, ~30 lines of skill edits total.
 
 **Confidence: 100%.**
 
-1. **`ms_shadowing_report` is documented wrong.** `CLAUDE.md` and `DESIGN.md`
+1. **`ms_shadowing_report` is documented wrong.** `CLAUDE.md` and `design_docs/DESIGN.md`
    §6.5 both say it uses `msmd.shadowedAntennas()`, and
    `docs/session_context.md` §6 records it as non-functional. It was rewritten:
    `shadowing.py:59-66` uses `casatasks.flagdata(mode='shadow',

@@ -1,33 +1,48 @@
 """
 setjy.py — ms_setjy
 
-Sets flux density models for standard VLA calibrators found in the MS,
-using the Perley-Butler 2017 flux standard.
+Sets flux density models for the catalogued flux calibrators in an MS, each
+with the standard that applies AT ITS OWN OBSERVING FREQUENCY.
 
 Logic:
-  1. Read field names from the MS.
+  1. Read field names, and each field's observed frequency span, from the MS.
   2. Cross-match against the bundled calibrator catalogue.
-  3. For each flux standard found, write setjy() call to script.
-  4. Warn if 3C84 (resolved), 3C138, or 3C48 (variable/partially polarized).
+  3. Resolve a standard PER FIELD via calibrators.resolve_flux_standard().
+  4. Write one setjy() call per field, each with its own standard.
+  5. Warn if 3C84 (resolved), 3C138, or 3C48 (variable/partially polarized).
+
+Why per field: an MS can need two standards at once. The ALMA case is exactly
+that — Ceres on a solar-system model plus a quasar on Perley-Butler — and a
+single run-level standard cannot express it. The same tool previously applied
+'Perley-Butler 2017' to every flux field regardless of band, which silently
+mis-scales any field observed outside that model's 0.05-50 GHz validity.
+
+The resolution lives in ms_inspect.util.calibrators, NOT here, because
+ms_field_list reports the same answer. If the two drifted, the tool that acts
+would be the one that is wrong.
 
 Does NOT set polarization angle models (see CALPOL.md).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
-from ms_inspect.util.calibrators import lookup
-from ms_inspect.util.casa_context import open_table, validate_ms_path
+from ms_inspect.util.calibrators import lookup, resolve_flux_standard
+from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.frequencies import field_frequencies
 
 TOOL_NAME = "ms_setjy"
 
 # Calibrators requiring special treatment
 _RESOLVED_WARN = {"3C84", "3C286", "3C147", "3C48"}  # may be resolved
 _VARIABLE_WARN = {"3C84", "3C138", "3C48"}  # variable or partially pol
-_DEFAULT_STANDARD = "Perley-Butler 2017"
+# Empty means "resolve per field from the observing frequency". A non-empty
+# value is a deliberate whole-run OVERRIDE and skips the frequency gate.
+_RESOLVE_PER_FIELD = ""
 
 
 def _get_field_names(ms_str: str) -> list[str]:
@@ -37,6 +52,21 @@ def _get_field_names(ms_str: str) -> list[str]:
         # "np.str_('...')" under numpy >= 2, which is a NameError in the
         # generated script (no numpy import there).
         return [str(n) for n in tb.getcol("NAME")]
+
+
+def _get_field_frequencies(ms_str: str, n_fields: int) -> list[dict] | None:
+    """
+    Observed frequency span per field, or None if msmd cannot be opened.
+
+    None is NOT an error. Every field then resolves as INFERRED — the standard
+    is still reported but the frequency gate did not run — which is the honest
+    answer and lets the tool keep working on an MS whose metadata is thin.
+    """
+    try:
+        with open_msmd(ms_str) as msmd:
+            return field_frequencies(msmd, n_fields)
+    except Exception:
+        return None
 
 
 def _build_setjy_block(field_name: str, standard: str, usescratch: bool) -> str:
@@ -51,10 +81,43 @@ def _build_setjy_block(field_name: str, standard: str, usescratch: bool) -> str:
     )
 
 
+def _build_manual_block(field_name: str, spec: dict, usescratch: bool) -> str:
+    """
+    Return a setjy(standard='manual') call for a source CASA cannot model.
+
+    Only the keys the caller supplied are emitted. Nothing is defaulted: a
+    fabricated spectral index or reference frequency would be indistinguishable
+    from a measured one in the generated script.
+    """
+    lines = [
+        "setjy(",
+        "    vis=ms_path,",
+        f"    field={field_name!r},",
+        "    standard='manual',",
+    ]
+    for key in ("fluxdensity", "spix", "reffreq"):
+        if key in spec:
+            lines.append(f"    {key}={spec[key]!r},")
+    lines.append(f"    usescratch={usescratch},")
+    lines.append(")")
+    return "\n".join(lines)
+
+
+@dataclass
+class _FieldPlan:
+    """One resolved field: which setjy call it gets, and why."""
+
+    name: str
+    mode: str  # 'standard' | 'manual'
+    standard: str | None = None
+    manual: dict | None = None
+    note: str = ""
+    range_checked: bool = False
+
+
 def _build_script(
     ms_str: str,
-    flux_fields: list[str],
-    standard: str,
+    plans: list[_FieldPlan],
     usescratch: bool,
     warnings_inline: list[str],
 ) -> str:
@@ -64,13 +127,26 @@ def _build_script(
         warn_lines = "\n".join(f"# WARNING: {w}" for w in warnings_inline)
         warn_block = warn_lines + "\n\n"
 
-    setjy_blocks = "\n\n".join(_build_setjy_block(f, standard, usescratch) for f in flux_fields)
+    blocks = []
+    for plan in plans:
+        # The note travels into the script. Someone reading setjy.py six months
+        # from now needs to see WHY this field got this standard, and the
+        # response envelope will not be there.
+        header = f"# {plan.name}: {plan.note}" if plan.note else f"# {plan.name}"
+        if plan.mode == "manual":
+            body = _build_manual_block(plan.name, plan.manual or {}, usescratch)
+        else:
+            body = _build_setjy_block(plan.name, plan.standard or "", usescratch)
+        blocks.append(f"{header}\n{body}")
+    setjy_blocks = "\n\n".join(blocks)
 
     no_flux_block = ""
-    if not flux_fields:
+    if not plans:
         no_flux_block = (
-            "# No flux standard fields found in the bundled catalogue.\n"
-            "# Verify field names and re-generate this script if needed.\n"
+            "# No field resolved to a usable flux standard.\n"
+            "# Check the tool response: a field can be skipped because it is not a\n"
+            "# flux calibrator, or because it was observed outside its model's\n"
+            "# validity range. Those are different problems.\n"
         )
 
     return f"""\
@@ -91,7 +167,8 @@ print("setjy complete.")
 def run(
     ms_path: str,
     workdir: str,
-    standard: str = _DEFAULT_STANDARD,
+    standard: str = _RESOLVE_PER_FIELD,
+    manual_flux: dict | None = None,
     usescratch: bool = True,
     exclude_fields: str = "",
     execute: bool = False,
@@ -102,7 +179,18 @@ def run(
     Args:
         ms_path:    Path to calibrators.ms (or full MS).
         workdir:    Existing output directory for setjy.py script.
-        standard:   Flux standard (default 'Perley-Butler 2017').
+        standard:   Whole-run OVERRIDE. Default '' resolves a standard per
+                    field from that field's own observing frequency, which is
+                    what an MS needing two standards requires. A non-empty
+                    value forces one standard on every flux field AND SKIPS THE
+                    FREQUENCY CHECK — use it only when you know better than the
+                    catalogue.
+        manual_flux: Explicit flux for sources CASA has no model for, as
+                    {field_name: {'fluxdensity': [I, Q, U, V], 'spix': ...,
+                    'reffreq': ...}}. Only the keys given are emitted; nothing
+                    is defaulted. Without an entry such a field is SKIPPED with
+                    a warning naming what is missing — never silently routed to
+                    some other standard.
         exclude_fields: Comma-separated field NAMES to omit from the Stokes-I
                     setjy pass, even if they are catalogued flux standards. Pass
                     the pol-angle calibrator here when it overlaps a flux/BP cal:
@@ -155,45 +243,157 @@ def run(
             ms_path=ms_path,
         ) from exc
 
+    # Per-field observing frequency. None means msmd was unreadable, which is
+    # not fatal: every field then resolves INFERRED (standard reported, gate
+    # not run) instead of the tool failing.
+    freqs = _get_field_frequencies(ms_str, len(field_names))
+    if freqs is None:
+        casa_calls.append("msmd frequency read FAILED — frequency gate did not run")
+        warnings.append(
+            "Could not read per-field observing frequencies from this MS. Flux "
+            "standards were taken from the catalogue WITHOUT checking them against "
+            "the observing band. Verify each standard covers its field's frequency."
+        )
+    else:
+        casa_calls.append("msmd.spwsforfield + msmd.chanfreqs for each field")
+
     # Cross-match against catalogue — only keep flux calibrators
-    flux_fields: list[str] = []
+    manual_flux = manual_flux or {}
+    plans: list[_FieldPlan] = []
     skipped_fields: list[str] = []
+    # Kept separate from skipped_fields on purpose. "Not a flux calibrator" and
+    # "a flux calibrator we could not scale" are different facts, and merging
+    # them hides the second behind the first.
+    skipped_no_standard: list[dict] = []
     excluded_fields: list[str] = []
     inline_warnings: list[str] = []
+    resolution: list[dict] = []
 
     exclude_set = {n.strip() for n in exclude_fields.split(",") if n.strip()}
+    override = bool(standard)
 
-    for fname in field_names:
+    for fid, fname in enumerate(field_names):
         entry = lookup(fname)
         if fname in exclude_set:
             # Caller-requested skip: the field's model is set elsewhere
             # (ms_setjy_polcal). Do not write a Stokes-I model over it.
             excluded_fields.append(fname)
             continue
-        if entry is not None and "flux" in entry.role:
-            flux_fields.append(fname)
-            # Advisory warnings for specific sources
-            if entry.canonical_name in _VARIABLE_WARN:
-                msg = (
-                    f"{fname} ({entry.canonical_name}) is variable or partially "
-                    "polarized at frequencies below 4 GHz. Verify flux model validity "
-                    "for your band before using these solutions."
-                )
-                warnings.append(msg)
-                inline_warnings.append(msg)
-            if entry.resolved:
-                msg = (
-                    f"{fname} ({entry.canonical_name}) is resolved on long baselines. "
-                    "If your array has baselines > safe UV limit, use a component model "
-                    "instead of a point-source model."
-                )
-                warnings.append(msg)
-                inline_warnings.append(msg)
-        else:
+        if entry is None or "flux" not in entry.role:
             skipped_fields.append(fname)
+            continue
+
+        # Advisory warnings for specific sources
+        if entry.canonical_name in _VARIABLE_WARN:
+            msg = (
+                f"{fname} ({entry.canonical_name}) is variable or partially "
+                "polarized at frequencies below 4 GHz. Verify flux model validity "
+                "for your band before using these solutions."
+            )
+            warnings.append(msg)
+            inline_warnings.append(msg)
+        if entry.resolved:
+            msg = (
+                f"{fname} ({entry.canonical_name}) is resolved on long baselines. "
+                "If your array has baselines > safe UV limit, use a component model "
+                "instead of a point-source model."
+            )
+            warnings.append(msg)
+            inline_warnings.append(msg)
+
+        fq = freqs[fid] if freqs is not None and fid < len(freqs) else None
+        min_ghz = fq["min_ghz"] if fq else None
+        max_ghz = fq["max_ghz"] if fq else None
+
+        if override:
+            # The caller named a standard. Honour it verbatim and say plainly
+            # that the frequency check was skipped, rather than half-applying
+            # a gate the caller asked to bypass.
+            plans.append(
+                _FieldPlan(
+                    name=fname,
+                    mode="standard",
+                    standard=standard,
+                    note=f"whole-run override; frequency not checked ({standard})",
+                )
+            )
+            resolution.append(
+                {
+                    "field": fname,
+                    "standard": standard,
+                    "flag": "INFERRED",
+                    "range_checked": False,
+                    "note": "Caller-supplied whole-run override; frequency gate skipped.",
+                }
+            )
+            continue
+
+        res = resolve_flux_standard(entry, min_ghz, max_ghz)
+        resolution.append(
+            {
+                "field": fname,
+                "standard": res.standard,
+                "flag": res.flag,
+                "range_checked": res.range_checked,
+                "note": res.note,
+            }
+        )
+
+        if res.standard is not None:
+            plans.append(
+                _FieldPlan(
+                    name=fname,
+                    mode="standard",
+                    standard=res.standard,
+                    note=res.note,
+                    range_checked=res.range_checked,
+                )
+            )
+            if res.flag == "INFERRED":
+                warnings.append(f"{fname}: {res.note}")
+                inline_warnings.append(f"{fname}: {res.note}")
+            continue
+
+        # No standard. Either CASA has no model for the source (manual flux) or
+        # the field was observed outside the model's range (a real problem).
+        if res.needs_manual_flux and fname in manual_flux:
+            plans.append(
+                _FieldPlan(
+                    name=fname,
+                    mode="manual",
+                    manual=manual_flux[fname],
+                    note="caller-supplied manual flux; CASA has no model for this source",
+                )
+            )
+            continue
+
+        if res.needs_manual_flux:
+            msg = (
+                f"{fname}: CASA has no flux standard for this source. SKIPPED. Pass "
+                f"manual_flux={{'{fname}': {{'fluxdensity': [I, Q, U, V], 'spix': ..., "
+                "'reffreq': ...}} to set it explicitly. It was NOT given another standard."
+            )
+        else:
+            msg = f"{fname}: SKIPPED. {res.note}"
+        warnings.append(msg)
+        inline_warnings.append(msg)
+        skipped_no_standard.append({"field": fname, "reason": res.note})
+
+    # A manual_flux entry naming a field that never needed one is a mistake
+    # worth surfacing — most likely a typo in the field name.
+    planned_manual = {p.name for p in plans if p.mode == "manual"}
+    unused_manual = sorted(set(manual_flux) - planned_manual)
+    if unused_manual:
+        warnings.append(
+            f"manual_flux entries not used: {unused_manual}. Either the field is not "
+            "in this MS, or it already resolves to a CASA standard. Check the names "
+            "against ms_field_list."
+        )
+
+    flux_fields = [p.name for p in plans]
 
     script_path = str(workdir_path / "setjy.py")
-    script_content = _build_script(ms_str, flux_fields, standard, usescratch, inline_warnings)
+    script_content = _build_script(ms_str, plans, usescratch, inline_warnings)
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
 
@@ -201,8 +401,12 @@ def run(
         "script_path": fmt_field(script_path),
         "flux_fields": fmt_field(flux_fields),
         "skipped_fields": fmt_field(skipped_fields),
+        "skipped_no_standard": fmt_field(skipped_no_standard),
         "excluded_fields": fmt_field(excluded_fields),
+        "flux_standard_resolution": fmt_field(resolution),
         "standard": standard,
+        "standard_mode": "override" if override else "per_field",
+        "n_range_checked": sum(1 for r in resolution if r["range_checked"]),
         "usescratch": usescratch,
         "n_flux_fields": len(flux_fields),
     }
@@ -218,8 +422,9 @@ def run(
     if not execute:
         if not flux_fields:
             warnings.append(
-                "No flux standard fields found in the bundled catalogue. "
-                "Check field names match catalogue entries (e.g. '3C286', '3C147')."
+                "No field resolved to a usable flux standard. This is not always a "
+                "naming problem: check skipped_no_standard, which lists flux "
+                "calibrators that were found but could not be scaled."
             )
         else:
             warnings.append(
@@ -244,21 +449,45 @@ def run(
             ms_path=ms_path,
         ) from None
 
+    # Drives off the SAME plans as the script. Two code paths that resolved
+    # the standard separately would be free to disagree, and execute=True is
+    # the path that actually writes MODEL_DATA.
     fields_done: list[str] = []
-    for fname in flux_fields:
+    for plan in plans:
+        if plan.mode == "manual":
+            spec = plan.manual or {}
+            kwargs = {k: spec[k] for k in ("fluxdensity", "spix", "reffreq") if k in spec}
+            casa_calls.append(
+                f"casatasks.setjy(field='{plan.name}', standard='manual', "
+                f"{kwargs}, usescratch={usescratch})"
+            )
+            try:
+                setjy(
+                    vis=ms_str,
+                    field=plan.name,
+                    standard="manual",
+                    usescratch=usescratch,
+                    **kwargs,
+                )
+                fields_done.append(plan.name)
+            except Exception as exc:
+                warnings.append(f"setjy(field='{plan.name}', standard='manual') failed: {exc}")
+            continue
+
         casa_calls.append(
-            f"casatasks.setjy(field='{fname}', standard='{standard}', usescratch={usescratch})"
+            f"casatasks.setjy(field='{plan.name}', standard='{plan.standard}', "
+            f"usescratch={usescratch})"
         )
         try:
             setjy(
                 vis=ms_str,
-                field=fname,
-                standard=standard,
+                field=plan.name,
+                standard=plan.standard,
                 usescratch=usescratch,
             )
-            fields_done.append(fname)
+            fields_done.append(plan.name)
         except Exception as exc:
-            warnings.append(f"setjy(field='{fname}') failed: {exc}")
+            warnings.append(f"setjy(field='{plan.name}') failed: {exc}")
 
     base_data["fields_done"] = fmt_field(fields_done)
     return response_envelope(

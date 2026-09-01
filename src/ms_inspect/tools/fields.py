@@ -14,17 +14,26 @@ import math
 
 import numpy as np
 
-from ms_inspect.util.calibrators import infer_intents_from_role
+from ms_inspect.util.calibrators import (
+    CalibratorEntry,
+    infer_intents_from_role,
+    resolve_flux_standard,
+    role_from_intents,
+    roles_disagree,
+)
 from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, validate_ms_path
 from ms_inspect.util.conversions import rad_to_deg, rad_to_dms, rad_to_hms
 from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.frequencies import field_frequencies
 from ms_inspect.util.vla_calibrators import cone_search as vla_cone_search
 
 TOOL_NAME = "ms_field_list"
 
-# Threshold: if fewer than this fraction of fields have non-empty intents,
-# switch to heuristic inference mode.
+# Coverage below this raises a warning, and enables the whole-MS scan-pattern
+# inference. It does NOT decide any field's role — that is per field, from that
+# field's own intents. The response reports the raw fraction and its inputs, so
+# the skill can apply its own threshold.
 _INTENT_COVERAGE_THRESHOLD = 0.50
 
 # Coordinates suspiciously close to (0, 0) — almost certainly a broken export.
@@ -99,6 +108,13 @@ def run(ms_path: str) -> dict:
         except Exception:
             scan_sequence = []
 
+        # Observing frequency per field. This tool was field-only until now; the
+        # read is here because frequency is what decides whether a flux standard
+        # applies to a source (see design_docs/FLUX_STANDARD_DESIGN.md §2.2), and
+        # is per FIELD — a field is only observed in the SpWs it was observed in.
+        field_freqs = field_frequencies(msmd, n_fields)
+        casa_calls.append("msmd.spwsforfield(field_id) + msmd.chanfreqs(spw) for each field")
+
     # ------------------------------------------------------------------
     # Determine if we're in intent-inference mode
     # ------------------------------------------------------------------
@@ -110,8 +126,10 @@ def run(ms_path: str) -> dict:
         warnings.append(
             f"Only {n_with_intents}/{n_fields} fields have scan intent metadata "
             f"({intent_fraction * 100:.0f}% coverage, threshold {_INTENT_COVERAGE_THRESHOLD * 100:.0f}%). "
-            "Switching to heuristic intent inference from field names via calibrator catalogue. "
-            "Inferred intents are tagged INFERRED — verify before use."
+            "Roles are still resolved per field: a field WITH intents uses them. "
+            "Fields without intents fall back to the calibrator catalogue and are "
+            "tagged INFERRED — check those individually rather than trusting this "
+            "MS-wide figure."
         )
 
     # ------------------------------------------------------------------
@@ -140,41 +158,139 @@ def run(ms_path: str) -> dict:
                 flag="COMPLETE",
                 note=f"Matched '{name}' to catalogue entry '{cal_entry.canonical_name}'",
             )
-            cal_role = field(cal_entry.role, flag="COMPLETE")
-            cal_standard = field(cal_entry.flux_standard, flag="COMPLETE")
+            catalogue_role = field(
+                cal_entry.role,
+                flag="COMPLETE",
+                note=(
+                    f"What the catalogue lists {cal_entry.canonical_name} as suitable for. "
+                    "A cross-check against the intents, not the answer."
+                ),
+            )
             cal_resolved = field(cal_entry.resolved, flag="COMPLETE")
             if cal_entry.notes:
                 warnings.append(f"[{name}] {cal_entry.notes}")
         else:
             cal_match = field(None, flag="UNAVAILABLE", note="Not in bundled calibrator catalogue")
-            cal_role = field(None, flag="UNAVAILABLE")
-            cal_standard = field(None, flag="UNAVAILABLE")
+            catalogue_role = field(None, flag="UNAVAILABLE")
             cal_resolved = field(None, flag="UNAVAILABLE")
 
+        # --- Role resolution: this field's own intents decide ---
+        #
+        # Per FIELD, deliberately. The old code gated the catalogue fallback on
+        # a whole-MS coverage threshold, so one field missing its intents inside
+        # a well-populated MS got no role at all, even where the catalogue could
+        # have answered for it. Coverage is a property of the MS; having intents
+        # is a property of the field.
+        intent_roles = role_from_intents(intents) if intents else []
+        catalogue_roles = cal_entry.role if cal_entry else []
+
+        if intent_roles:
+            role_out = field(
+                intent_roles,
+                flag="COMPLETE",
+                note="Derived from this field's scan intents.",
+            )
+        elif catalogue_roles:
+            role_out = field(
+                catalogue_roles,
+                flag="INFERRED",
+                note=(
+                    "No intents name a role for this field. This is what the catalogue "
+                    f"lists {cal_entry.canonical_name} as suitable for — not evidence of "
+                    "how this observation used it."
+                ),
+            )
+        else:
+            role_out = field(
+                None,
+                flag="UNAVAILABLE",
+                note="No scan intents name a role, and the field is not in the catalogue.",
+            )
+
+        if roles_disagree(intent_roles, catalogue_roles):
+            warnings.append(
+                f"[{name}] Intents and catalogue DISAGREE about this field's role. "
+                f"The MS's scan intents say {intent_roles}; the catalogue lists "
+                f"{cal_entry.canonical_name} as {catalogue_roles}. "
+                "The intents win — they describe this observation, while the catalogue "
+                "describes the source. Verify before calibrating."
+            )
+
         # --- VLA calibrator positional cross-match ---
-        vla_cal_match_field = _vla_positional_match(ra_deg, dec_deg)
+        vla_cal_match_field = _vla_positional_match(ra_deg, dec_deg, cal_entry)
 
         # --- Intents ---
+        # Also per field. The catalogue fallback used to require heuristic_mode,
+        # which meant a lone field missing its intents was never offered it.
         if intents:
             intent_field = field(sorted(intents), flag="COMPLETE")
-        elif heuristic_mode and cal_entry:
+        elif cal_entry:
             inferred = infer_intents_from_role(cal_entry.role)
             intent_field = field(
                 inferred,
                 flag="INFERRED",
                 note=f"Inferred from calibrator catalogue role: {cal_entry.role}",
             )
-        elif heuristic_mode and scan_sequence:
-            # Defer: will be filled by scan-pattern inference below
+        else:
             intent_field = field(
-                [], flag="UNAVAILABLE", note="No intents in MS and no catalogue match for inference"
+                [],
+                flag="UNAVAILABLE",
+                note="No intents recorded for this field and no catalogue match for inference",
             )
-        elif heuristic_mode:
-            intent_field = field(
-                [], flag="UNAVAILABLE", note="No intents in MS and no catalogue match for inference"
+
+        # --- Observing frequency ---
+        fq = field_freqs[fid] if fid < len(field_freqs) else None
+        if fq and fq["min_ghz"] is not None:
+            fq_note = f"Span of the {fq['n_spw']} spectral window(s) this field was observed in"
+            if fq["excluded_spw"]:
+                fq_note += f"; {fq['excluded_spw']} WVR/square-law window(s) excluded"
+            freq_out = field(
+                {
+                    "min_ghz": round(fq["min_ghz"], 6),
+                    "max_ghz": round(fq["max_ghz"], 6),
+                    "centre_ghz": round(fq["centre_ghz"], 6),
+                    "n_spw": fq["n_spw"],
+                },
+                flag="COMPLETE",
+                note=fq_note,
             )
         else:
-            intent_field = field([], flag="UNAVAILABLE", note="No intents recorded for this field")
+            freq_out = field(
+                None,
+                flag="UNAVAILABLE",
+                note="No readable spectral window for this field",
+            )
+
+        # --- Flux standard: resolved from THIS field's frequency ---
+        #
+        # Deliberately after the frequency read, and deliberately not a
+        # catalogue echo. The catalogue says which standard describes the
+        # SOURCE; whether it describes this OBSERVATION depends on the band the
+        # field was observed in. Reporting 'Perley-Butler 2017' COMPLETE on a
+        # 230 GHz field was the defect this replaces.
+        #
+        # resolve_flux_standard lives in calibrators.py because ms_setjy calls
+        # the same function. Two copies could disagree, and the tool that acts
+        # would be the one that is wrong.
+        std = resolve_flux_standard(
+            cal_entry,
+            fq["min_ghz"] if fq else None,
+            fq["max_ghz"] if fq else None,
+        )
+        cal_standard = field(std.standard, flag=std.flag, note=std.note)
+
+        # Warn only where the operator must do something: pick a different
+        # standard, or supply a flux by hand. A constant-brightness-temperature
+        # body and an unread frequency carry notes instead — the first is a
+        # CASA modelling choice, not a metadata problem, and warning on either
+        # would fire on every ALMA dataset.
+        if std.needs_manual_flux:
+            warnings.append(
+                f"[{name}] CASA has no flux standard for this source. It needs an "
+                "explicit manual flux density; do not substitute another standard."
+            )
+        elif std.flag == "UNAVAILABLE" and cal_entry is not None:
+            warnings.append(f"[{name}] {std.note}")
 
         record = {
             "field_id": fid,
@@ -189,9 +305,19 @@ def run(ms_path: str) -> dict:
             "ra_hms": ra_hms,
             "dec_dms": dec_dms,
             "intents": intent_field,
+            "observing_frequency": freq_out,
             "calibrator_match": cal_match,
-            "calibrator_role": cal_role,
+            # field_role, not calibrator_role: the vocabulary includes 'target',
+            # which is not a kind of calibrator.
+            "field_role": role_out,
+            "catalogue_role": catalogue_role,
             "flux_standard": cal_standard,
+            # Whether the frequency gate actually RAN, not whether it passed.
+            # flux_standard COMPLETE means both "checked and inside the range"
+            # and "constant brightness temperature, no range exists to check".
+            # Those are different amounts of evidence and the flag cannot
+            # separate them.
+            "flux_standard_range_checked": std.range_checked,
             "resolved_source": cal_resolved,
             "vla_cal_match": vla_cal_match_field,
         }
@@ -235,7 +361,7 @@ def run(ms_path: str) -> dict:
     # Classify fields into phase_cals and targets
     phase_cal_records = []
     for rec in fields_out:
-        role_field = rec.get("calibrator_role", {})
+        role_field = rec.get("field_role", {})
         role_val = role_field.get("value") if isinstance(role_field, dict) else role_field
         intents_field = rec.get("intents", {})
         intents_val = (
@@ -255,7 +381,7 @@ def run(ms_path: str) -> dict:
             phase_cal_records.append({"name": rec["name"], "ra": ra, "dec": dec})
 
     for rec in fields_out:
-        role_field = rec.get("calibrator_role", {})
+        role_field = rec.get("field_role", {})
         role_val = role_field.get("value") if isinstance(role_field, dict) else role_field
         intents_field = rec.get("intents", {})
         intents_val = (
@@ -310,7 +436,16 @@ def run(ms_path: str) -> dict:
 
     data = {
         "n_fields": n_fields,
-        "heuristic_intents": heuristic_mode,
+        # A measurement, not a verdict. This used to be a boolean
+        # `heuristic_intents`, set from the threshold below — but once role
+        # resolution became per field, that boolean no longer described any
+        # field's role, and it was wrong in both directions: true while a field
+        # with intents used them, false while a field without intents fell back
+        # to the catalogue. The per-field `field_role` flag is the answer; this
+        # is the coverage statistic, with its inputs, for the skill to threshold
+        # as it sees fit.
+        "n_fields_with_intents": n_with_intents,
+        "intent_coverage_fraction": round(intent_fraction, 4),
         "fields": fields_out,
     }
 
@@ -485,12 +620,30 @@ def _infer_roles_from_scan_pattern(
 def _vla_positional_match(
     ra_deg: float | None,
     dec_deg: float | None,
+    cal_entry: CalibratorEntry | None = None,
 ) -> dict:
     """
     Attempt a positional cross-match against the VLA calibrator database.
 
     Returns a formatted field() dict with the match result.
+
+    Solar-system bodies are skipped deliberately. They move, so the recorded
+    phase centre is a position at one epoch and not an identity. A cone search
+    on it either finds nothing or — worse — lands on an unrelated VLA
+    calibrator that happens to sit near the ecliptic, and reports a confident
+    match. Skipping is stated in the note, not left silent.
     """
+    if cal_entry is not None and cal_entry.solar_system:
+        return field(
+            None,
+            flag="UNAVAILABLE",
+            note=(
+                f"Positional cross-match not attempted: {cal_entry.canonical_name} is a "
+                "solar-system body, so its phase centre is an epoch-dependent position "
+                "rather than an identity."
+            ),
+        )
+
     if ra_deg is None or dec_deg is None:
         return field(None, flag="UNAVAILABLE", note="No coordinates for VLA positional match")
 

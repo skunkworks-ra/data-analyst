@@ -140,11 +140,20 @@ Archival and converted data routinely has incomplete metadata. The following fou
 
 **Symptom:** `msmd.intentsforfield()` returns empty sets, or all fields have intent `""`  
 **Cause:** UVFITS conversion, early MeerKAT data, GMRT LTA exports  
-**Strategy:**
-1. Detect: if fewer than 50% of scans have non-empty intents, trigger heuristic mode.
-2. Infer from field names against a bundled calibrator catalogue (see §3.5).
-3. Return inferred intents tagged `INFERRED` with confidence score.
-4. Fields that cannot be matched are tagged `UNKNOWN_INTENT`.
+**Strategy — the decision is per FIELD, not per MS:**
+1. The field has intents → its role is derived from them, flagged `COMPLETE`.
+2. The field has none, but its name matches the bundled catalogue (see §3.5) → the catalogue role, flagged `INFERRED`. The note must say this is what the source is *suitable for*, not evidence of how this observation used it.
+3. Neither → `UNAVAILABLE`. No guess is substituted.
+
+**Why per field.** An earlier revision gated step 2 on a whole-MS coverage threshold: below 50% of fields carrying intents, the catalogue fallback switched on for everything; at or above it, the fallback was unreachable. A single field missing its intents inside an otherwise well-populated MS therefore got no role at all, even where the catalogue could have answered. Coverage is a property of the MS; having intents is a property of the field, and only the second one should decide.
+
+The 50% threshold survives as *reporting* only — it raises a warning that overall intent coverage is thin. It no longer steers behaviour.
+
+**Intents lose to nothing, and beat the catalogue.** Where both speak and their role sets are **disjoint**, the intents win and a warning names both sides. Disjointness is the test, not inequality: a source the catalogue lists as flux *and* bandpass, used here as bandpass only, is a narrower truth rather than a contradiction. The case this exists for is a catalogue flux calibrator whose intents say `OBSERVE_TARGET` — real, and observed on ALMA 3C286 Band 6 data.
+
+**Role vocabulary.** Intents name more roles than the catalogue can: `flux`, `bandpass`, `phase`, `amplitude`, `delay`, `polangle`, `polleakage`, `target`, `check`. The response field is therefore `field_role`, not `calibrator_role` — `target` is not a kind of calibrator. `catalogue_role` carries the catalogue's answer alongside it as a cross-check.
+
+Technical intents that ride along on calibrators and targets alike — `CALIBRATE_ATMOSPHERE`, `CALIBRATE_POINTING`, `CALIBRATE_WVR` and friends — yield **no** role. They record what was measured, not what the field is for; mapping them would give every ALMA field a role.
 
 ### 3.2 Missing or Unknown Telescope Name
 
@@ -205,120 +214,88 @@ Partial antenna tables (some antennas fully described, some orphaned) follow the
 
 ### 3.5 Bundled Calibrator Catalogue
 
-A compact, bundled JSON catalogue covers the primary and bandpass calibrators for the three target telescopes. Scope is intentionally restricted to calibrators — phase calibrators are field-specific and not listed here. This catalogue is used for:
+> **Canonical source: `src/ms_inspect/util/calibrators.py`.**
+> The catalogue is a list of `CalibratorEntry` dataclasses in that module. It
+> is not a JSON file and never has been. Read the entries there; this section
+> describes only the schema and the rules that govern it.
+>
+> Earlier revisions of this document inlined a copy of the catalogue data. That
+> copy drifted — it kept eight entries and a set of flux-standard strings CASA
+> does not accept, long after the module had been corrected. Do not reintroduce
+> a second copy here.
+
+A compact, bundled catalogue covers the primary and bandpass calibrators for the supported telescopes, plus the solar-system bodies ALMA uses as flux standards. Scope is intentionally restricted to calibrators — phase calibrators are field-specific and not listed here. This catalogue is used for:
 1. Intent inference (§3.1) — identifying calibrator fields when intents are absent
 2. Flux model validation — checking that the named source has a known flux standard
 3. Resolved source detection — warning when a calibrator requires a component model
 
 #### Catalogue Schema
 
-```json
-{
-  "3C286": {
-    "aka": ["1331+305", "J1331+3030", "1331+3030"],
-    "role": ["flux", "bandpass"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": false,
-    "flux_standard": "Perley-Butler-2017",
-    "notes": "Primary flux and bandpass calibrator for VLA. Linearly polarised ~11% at L-band."
-  },
-  "3C48": {
-    "aka": ["0137+331", "J0137+3309"],
-    "role": ["flux", "bandpass"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": false,
-    "flux_standard": "Perley-Butler-2017",
-    "notes": "Slightly variable at high frequencies. Avoid for polarisation calibration."
-  },
-  "3C147": {
-    "aka": ["0538+498", "J0542+4951"],
-    "role": ["flux"],
-    "telescopes": ["VLA"],
-    "resolved": false,
-    "flux_standard": "Perley-Butler-2017",
-    "notes": null
-  },
-  "3C138": {
-    "aka": ["0518+165", "J0521+1638"],
-    "role": ["flux", "bandpass"],
-    "telescopes": ["VLA"],
-    "resolved": false,
-    "flux_standard": "Perley-Butler-2017",
-    "notes": "Linearly polarised. Useful for R-L phase calibration."
-  },
-  "PKS1934-638": {
-    "aka": ["1934-638", "J1939-6342", "PKS1934"],
-    "role": ["flux", "bandpass"],
-    "telescopes": ["MeerKAT"],
-    "resolved": false,
-    "flux_standard": "Reynolds-1994",
-    "notes": "Primary flux and bandpass calibrator for MeerKAT and ATCA."
-  },
-  "PKS0408-65": {
-    "aka": ["0408-658", "J0408-6545", "PKS0408"],
-    "role": ["flux"],
-    "telescopes": ["MeerKAT"],
-    "resolved": false,
-    "flux_standard": "Stevens-2004",
-    "notes": "Secondary flux calibrator for MeerKAT when 1934 is unavailable."
-  },
-  "CasA": {
-    "aka": ["CAS-A", "J2323+5848", "3C461"],
-    "role": ["flux"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": true,
-    "flux_standard": "Perley-Butler-2017",
-    "safe_uv_range_klambda": {
-      "P-band (230-470 MHz)": { "max_klambda": 2.0,  "reference": "Perley & Butler 2017" },
-      "L-band (1-2 GHz)":     { "max_klambda": 0.5,  "reference": "estimated — use component model" }
+`CalibratorEntry` fields, in declaration order:
+
+| field | type | meaning |
+|---|---|---|
+| `canonical_name` | `str` | the name reported back to the caller |
+| `aka` | `list[str]` | alternative names and coordinate strings, matched after normalisation |
+| `role` | `list[str]` | `'flux'`, `'bandpass'` — what the source is *suitable for*, not what a given observation used it for |
+| `telescopes` | `list[str]` | `'VLA'`, `'MeerKAT'`, `'uGMRT'`, `'ALMA'` |
+| `resolved` | `bool` | needs a component model on long baselines; drives §3.5 handling below |
+| `flux_standard` | `str \| None` | CASA's own standard string, or `None` |
+| `freq_range_ghz` | `tuple[float, float] \| None` | this source's validity range under its standard |
+| `solar_system` | `bool` | moving target; position is not a discriminator |
+| `constant_brightness_temperature` | `bool` | CASA models it at one brightness temperature, so no validity range exists |
+| `notes` | `str \| None` | free text surfaced to the caller as a warning |
+| `safe_uv_range_klambda` | `dict[str, UVRangeEntry]` | per-band safe maximum baseline; see below |
+| `casa_model_available` | `bool` | a CASA component model ships for this source |
+| `casa_model_name` | `str \| None` | that model's name, for the `setjy` call |
+
+Four rules constrain the data, each enforced by a test in `tests/unit/test_calibrators.py`:
+
+1. **`flux_standard` is spelled exactly as `setjy` accepts it** — a space before the year, not a hyphen. `'Perley-Butler 2017'`, not `'Perley-Butler-2017'`. `None` means CASA has no standard for the source, and it must be given an explicit manual flux density. It must never be routed to a standard string. PKS0408-65 is the case that forces this.
+
+2. **`freq_range_ghz` is per source, not per standard.** Perley-Butler 2017 spans 0.05–50 GHz *as a standard*, but Fornax A within it is valid only over 0.2–0.5 GHz. A single per-standard range would pass Fornax A at 50 GHz. `None` means the range is **unknown to us** — callers must not read it as unbounded and must not gate on it.
+
+3. **`constant_brightness_temperature` is the one case where a missing `freq_range_ghz` is a known answer.** CASA models Mars, the four Galilean moons, Titan and the four asteroids as a uniform disk at a single brightness temperature (`FluxCalc_SS_JPL_Butler.cc`, `compute_constant_temperature`), so it codes no frequency limit — there is nothing to extrapolate. Only Venus, Jupiter, Uranus and Neptune have a frequency-dependent temperature and therefore a range. The marker must not be read as "valid everywhere": the temperature was measured over some band, and a caller must report that no range check ran rather than that one passed.
+
+4. **`solar_system` marks a moving target.** Both the name lookup and the VLA positional cross-match must skip the coordinate test rather than mismatch on it. Every solar-system body carries `resolved=True`: apparent diameter varies over the synodic cycle, and even the smallest is resolved on ALMA's long baselines, so `False` would fail silently in the dangerous direction.
+
+#### Resolving a field's flux standard
+
+`resolve_flux_standard(entry, min_ghz, max_ghz)` in `util/calibrators.py` is the single answer, called by both `ms_field_list` (which reports it) and `ms_setjy` (which acts on it). Two copies could disagree, and the tool that acts would be the one that is wrong.
+
+It returns a `StandardResolution` carrying `standard`, `flag`, `note`, `range_checked` and `needs_manual_flux`. The cases, in order:
+
+| condition | standard | flag | `range_checked` |
+|---|---|---|---|
+| no catalogue match | `None` | UNAVAILABLE | false |
+| `flux_standard is None` (CASA has no model) | `None`, `needs_manual_flux` | **COMPLETE** | false |
+| constant brightness temperature | the standard | COMPLETE | false |
+| range known, frequency unreadable | the standard | INFERRED | false |
+| observed span fully inside the range | the standard | COMPLETE | **true** |
+| observed span not fully inside | `None` | UNAVAILABLE | **true** |
+
+Two deliberate choices. A source CASA cannot model is flagged **COMPLETE**, not UNAVAILABLE: we know the answer and the answer is "there is no standard". Flagging it as a gap invites a caller to fill it with a fallback, which is the one thing that must not happen. And a span that **straddles** an edge fails rather than passing on the overlap — half a band is not a usable flux scale.
+
+`range_checked` exists because `flag` cannot carry it. COMPLETE means both "checked and inside the range" and "no range exists to check", and those are different amounts of evidence. Every consumer surfaces it: `ms_field_list` as `flux_standard_range_checked` per field, `ms_setjy` as `n_range_checked`.
+
+Shape of a single entry, for orientation only — the values below are illustrative, not current:
+
+```python
+CalibratorEntry(
+    canonical_name="CygA",
+    aka=["cyg-a", "cyga", "j1959+4044", "3c405", "cygnus-a", "cygnus a"],
+    role=["flux"],
+    telescopes=["VLA", "uGMRT"],
+    resolved=True,
+    flux_standard="Perley-Butler 2017",
+    freq_range_ghz=(0.05, 12.0),
+    notes="Cygnus A. Double-lobed radio galaxy. ...",
+    safe_uv_range_klambda={
+        "L-band (1-2 GHz)": UVRangeEntry(max_klambda=50.0, reference="McKean et al. 2016"),
     },
-    "casa_model_available": true,
-    "casa_model_name": "CasA_Epoch2010.0",
-    "notes": "Highly resolved. Flux varies with time (~0.6%/yr decline at GHz freq). Use setjy with component model only."
-  },
-  "CygA": {
-    "aka": ["CYG-A", "J1959+4044", "3C405"],
-    "role": ["flux"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": true,
-    "flux_standard": "Perley-Butler-2017",
-    "safe_uv_range_klambda": {
-      "P-band (230-470 MHz)": { "max_klambda": 5.0,  "reference": "McKean et al. 2016" },
-      "L-band (1-2 GHz)":     { "max_klambda": 50.0, "reference": "McKean et al. 2016" }
-    },
-    "casa_model_available": true,
-    "casa_model_name": "3C405_CygA",
-    "notes": "Double-lobed radio galaxy. Safe as point source on short baselines only. Component model required for VLA B/A config."
-  },
-  "TauA": {
-    "aka": ["TAU-A", "J0534+2200", "3C144", "M1"],
-    "role": ["flux"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": true,
-    "flux_standard": "Perley-Butler-2017",
-    "safe_uv_range_klambda": {
-      "P-band (230-470 MHz)": { "max_klambda": 1.0,  "reference": "estimated" },
-      "L-band (1-2 GHz)":     { "max_klambda": 5.0,  "reference": "estimated" }
-    },
-    "casa_model_available": true,
-    "casa_model_name": "3C144_TauA",
-    "notes": "Crab Nebula. Extended supernova remnant ~7 arcmin. Use component model. Flux varies ~0.2%/yr."
-  },
-  "VirA": {
-    "aka": ["VIR-A", "J1230+1223", "3C274", "M87"],
-    "role": ["flux"],
-    "telescopes": ["VLA", "uGMRT"],
-    "resolved": true,
-    "flux_standard": "Perley-Butler-2017",
-    "safe_uv_range_klambda": {
-      "P-band (230-470 MHz)": { "max_klambda": 3.0,  "reference": "estimated" },
-      "L-band (1-2 GHz)":     { "max_klambda": 20.0, "reference": "estimated" }
-    },
-    "casa_model_available": true,
-    "casa_model_name": "3C274_VirA",
-    "notes": "M87. Compact core + extended lobes. Jet visible on long baselines. Core variable — use carefully."
-  }
-}
+    casa_model_available=True,
+    casa_model_name="3C405_CygA",
+)
 ```
 
 #### Resolved Calibrator Handling Logic
@@ -960,7 +937,7 @@ the same functions are also callable programmatically by skills and scripts
 | `ms_set_intents` | Populate STATE subtable + STATE_ID from calibrator-catalogue matching (see below) |
 | `ms_apply_preflag` | Deterministic pre-cal flagging (online + shadow + clip + tfcrop) + calibrator split |
 | `ms_generate_priorcals` | Generate gc/opac/rq/ap prior caltables via `gencal` |
-| `ms_setjy` | Set Perley-Butler 2017 flux models; `exclude_fields` protects an overlapping pol-angle cal |
+| `ms_setjy` | Set flux models; the standard is resolved per field from that field's own frequency (§3.5); `exclude_fields` protects an overlapping pol-angle cal |
 | `ms_setjy_polcal` | Set polarization-angle models for pol calibrators |
 | `ms_initial_bandpass` | gaincal → bandpass → applycal; populates CORRECTED |
 | `ms_apply_initial_rflag` | rflag + tfcrop on CORRECTED − MODEL residuals; requires explicit `field` |

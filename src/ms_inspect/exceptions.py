@@ -5,7 +5,7 @@ All raise-able types are defined here. Tool modules import from this file
 and never define their own exception classes.
 
 Error codes map directly to the error_type field in the JSON response
-envelope defined in DESIGN.md §7.2.
+envelope defined in design_docs/DESIGN.md §7.2.
 """
 
 from __future__ import annotations

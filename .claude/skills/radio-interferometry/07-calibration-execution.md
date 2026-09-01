@@ -53,17 +53,40 @@ IDs, convert to names before proceeding.
 
 ---
 
-## Flux standards by band
+## Flux standards
 
-| Band | Frequency range | Standard | CASA name |
-|---|---|---|---|
-| P-band | 200–500 MHz | Scaife-Heald 2012 | `'Scaife-Heald 2012'` |
-| L-band | 1–2 GHz | Perley-Butler 2017 | `'Perley-Butler 2017'` |
-| S/C/X/Ku/K | 2–26 GHz | Perley-Butler 2017 | `'Perley-Butler 2017'` |
-| Q-band+ | > 40 GHz | Perley-Butler 2017 | `'Perley-Butler 2017'` |
+**Do not pass `standard` to `ms_setjy`.** Leave it empty, which is the default.
+The tool then resolves a standard PER FIELD from that field's own observing
+frequency, using the same catalogue `ms_field_list` reports from. Passing a
+value is a whole-run OVERRIDE that forces one standard on every flux field
+**and skips the frequency validity check**.
 
-For VLA P-band with 3C147: use `standard='Scaife-Heald 2012'`. Perley-Butler 2017
-does not cover P-band.
+Why this matters: the standard is a property of the source *and the band*, not
+of the run. One MS can need two at once — a solar-system body on
+`Butler-JPL-Horizons 2012` plus a quasar on `Perley-Butler 2017` is the ordinary
+ALMA case, and a single run-level argument cannot express it. Perley-Butler 2017
+also stops at 50 GHz, and individual sources inside it are much narrower still:
+Fornax A is valid only over 0.2–0.5 GHz, Virgo A only to 3 GHz.
+
+What to check in the `ms_setjy` response:
+
+- `flux_standard_resolution` — the standard, flag and `range_checked` per field.
+- `skipped_no_standard` — flux calibrators that were FOUND but could not be
+  scaled, usually because the field was observed outside the model's validity
+  range. This is NOT the same list as `skipped_fields` (not a flux calibrator).
+  A non-empty `skipped_no_standard` means you must pick a different flux
+  calibrator, not that the tool failed.
+- `n_range_checked` — how many fields the frequency gate actually ran on. A
+  solar-system body modelled at a constant brightness temperature has no range
+  to check, so it is scaled without being verified.
+
+Override only when you know better than the catalogue — for example VLA P-band
+with 3C147, where `standard='Scaife-Heald 2012'` is required and Perley-Butler
+2017 does not cover the band. State the reason when you do.
+
+A source CASA has no model for (PKS0408-65) is skipped, never given a
+substitute standard. Supply `manual_flux={'<field>': {'fluxdensity': [I,Q,U,V],
+'spix': ..., 'reffreq': ...}}` from the literature.
 
 ---
 

@@ -8,7 +8,7 @@ Transport is selected via RADIO_MCP_TRANSPORT environment variable:
     RADIO_MCP_TRANSPORT=http             — for HPC / remote access
     RADIO_MCP_PORT=8000                  — HTTP port (default 8000)
 
-All tools follow the contract defined in DESIGN.md §7:
+All tools follow the contract defined in design_docs/DESIGN.md §7:
 - Return a standard JSON envelope (status, completeness_summary, data, warnings, provenance)
 - Raise typed exceptions from exceptions.py on hard failures
 - Never interpret, suggest, or chain — that is the Skill's job
@@ -549,18 +549,36 @@ async def ms_field_list(params: MSPathInput) -> str:
     """
     Layer 1, Tool 2: List all observed fields with J2000 coordinates and calibration roles.
 
-    Cross-matches field names against the bundled calibrator catalogue to identify
-    flux calibrators, bandpass calibrators, and resolved sources.
-
-    When scan intents are absent (<50% coverage), falls back to heuristic
-    intent inference from field names. Inferred intents are tagged INFERRED.
+    A field's role comes from its own scan intents. Where a field has no
+    intents, the bundled calibrator catalogue answers instead, tagged INFERRED.
+    The decision is per field, not per MS.
 
     Args:
         params.ms_path: Path to the Measurement Set.
 
     Returns:
         JSON array of field records: field_id, name, ra/dec in deg and HMS/DMS,
-        intents, calibrator_match, calibrator_role, flux_standard, resolved_source.
+        intents, observing_frequency, calibrator_match, field_role,
+        catalogue_role, flux_standard, flux_standard_range_checked,
+        resolved_source.
+
+        observing_frequency gives min_ghz/max_ghz/centre_ghz/n_spw across the
+        spectral windows THIS field was observed in, so it can differ between
+        fields of one MS. ALMA water-vapour-radiometer windows are excluded.
+
+        field_role is the answer. Its vocabulary is wider than the catalogue's:
+        flux, bandpass, phase, amplitude, delay, polangle, polleakage, target,
+        check. catalogue_role is what the catalogue lists the source as
+        suitable for, retained as a cross-check. When the two contradict, the
+        intents win and a warning names both sides.
+
+        flux_standard is resolved from THIS field's observing frequency, not
+        echoed from the catalogue. A source observed outside its model's
+        validity range gets NO standard and a warning naming both the range and
+        the observed span. flux_standard_range_checked says whether that
+        frequency check actually ran: it is False for a solar-system body
+        modelled at a constant brightness temperature, which has no range to
+        check, and False when the frequency could not be read.
     """
     return await _run_tool(fields.run, params.ms_path)
 
@@ -825,7 +843,7 @@ async def ms_parallactic_angle_vs_time(params: MSPathInput) -> str:
     """
     Layer 2, Tool 4: Return parallactic angle range per field (sky-frame and feed-frame).
 
-    CONVENTION (DESIGN.md §6.4):
+    CONVENTION (design_docs/DESIGN.md §6.4):
     - pa_sky_deg:  astropy sky-frame PA, North through East
     - pa_feed_deg: feed-frame PA = pa_sky - 90° for ALT-AZ mounts (CASA convention)
 

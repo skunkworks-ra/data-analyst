@@ -109,7 +109,7 @@ For any MCP-compatible client — point at `http://localhost:8000/mcp` (streamab
 ## Tool inventory
 
 The full per-tool inventory with descriptions lives in
-[`DESIGN.md`](DESIGN.md) (§8 ms-inspect, §8b ms-modify, §8c ms-create). A
+[`design_docs/DESIGN.md`](design_docs/DESIGN.md) (§8 ms-inspect, §8b ms-modify, §8c ms-create). A
 summary by category:
 
 ### ms-inspect — read-only inspection (33 tools)
