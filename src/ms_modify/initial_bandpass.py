@@ -24,6 +24,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_spw_sel, response_envelope
+from ms_inspect.util.stage_log import record_stage
 from ms_modify.exceptions import InitialBandpassFailedError
 
 TOOL_NAME = "ms_initial_bandpass"
@@ -42,6 +43,7 @@ def _table_exists(path: str) -> bool:
 
 def _build_script(
     ms_str: str,
+    workdir: str,
     init_gain_table: str,
     bp_table: str,
     bp_field: str,
@@ -60,6 +62,7 @@ def _build_script(
         if uvrange
         else ""
     )
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
     from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
 
     priorcals_repr = repr(priorcals)
@@ -79,6 +82,9 @@ bp_table = {bp_table!r}
 priorcals = {priorcals_repr}
 
 {safe_rm}
+{record}
+workdir = {workdir!r}
+
 _safe_rm_table(init_gain_table)
 _safe_rm_table(bp_table)
 
@@ -99,6 +105,7 @@ gaincal_kwargs = dict(
     gaintable=priorcals,
 )
 {uvrange_line}gaincal(**gaincal_kwargs)
+_record_stage(workdir, "initial_bandpass", init_gain_table)
 
 # Step 2 — bandpass (solint=inf, combine='scan')
 bp_gaintable = priorcals + [init_gain_table]
@@ -119,6 +126,7 @@ bandpass_kwargs = dict(
     gaintable=bp_gaintable,
 )
 bandpass(**bandpass_kwargs)
+_record_stage(workdir, "initial_bandpass", bp_table)
 
 # Step 3 — applycal: solutions are solved on bp_field but applied to
 # applycal_field (decoupled so the caller controls which field(s) receive
@@ -135,6 +143,7 @@ applycal(
     applymode={applymode!r},
     flagbackup=True,
 )
+_record_stage(workdir, "initial_bandpass", ms_str)
 print("Done. CORRECTED column populated on applycal_field.")
 """
 
@@ -231,6 +240,7 @@ def run(
     # ------------------------------------------------------------------
     script_content = _build_script(
         ms_str=ms_str,
+        workdir=str(workdir_path),
         init_gain_table=init_gain_table,
         bp_table=bp_table,
         bp_field=bp_field,
@@ -327,13 +337,18 @@ def run(
             ms_path=ms_path,
         ) from e
 
-    if not _table_exists(init_gain_table):
+    # record_stage does the existence check and writes the stage-log line either
+    # way; the domain error is re-raised over it so the caller keeps the
+    # diagnostic message rather than a bare RuntimeError.
+    try:
+        record_stage(str(workdir_path), "initial_bandpass", init_gain_table)
+    except RuntimeError as exc:
         raise InitialBandpassFailedError(
             f"gaincal did not produce init_gain.g at '{init_gain_table}'. "
             "Possible causes: too few unflagged baselines, wrong field/scan selection, "
             f"or refant '{ref_ant}' not present in the MS.",
             ms_path=ms_path,
-        )
+        ) from exc
 
     # ------------------------------------------------------------------
     # Step 2 — bandpass (solint=inf, combine='scan')
@@ -374,13 +389,18 @@ def run(
             ms_path=ms_path,
         ) from e
 
-    if not _table_exists(bp_table):
+    # record_stage does the existence check and writes the stage-log line either
+    # way; the domain error is re-raised over it so the caller keeps the
+    # diagnostic message rather than a bare RuntimeError.
+    try:
+        record_stage(str(workdir_path), "initial_bandpass", bp_table)
+    except RuntimeError as exc:
         raise InitialBandpassFailedError(
             f"bandpass did not produce BP0.b at '{bp_table}'. "
             "Possible causes: too few unflagged solutions, wrong field/scan selection, "
             f"or init_gain.g was produced but contained no valid solutions.",
             ms_path=ms_path,
-        )
+        ) from exc
 
     # ------------------------------------------------------------------
     # Step 3 — applycal (bandpass calibrator only)
@@ -415,6 +435,11 @@ def run(
         corrected_written = False
     else:
         corrected_written = True
+        # Step 3 completing is what makes the stage complete: bp_table alone is
+        # written at step 2, so a stage log carrying only that would report the
+        # stage done while CORRECTED was never populated. The MS always exists,
+        # so this line cannot raise — it records that step 3 returned.
+        record_stage(str(workdir_path), "initial_bandpass", ms_str)
 
     # ------------------------------------------------------------------
     # Build response

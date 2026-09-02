@@ -25,6 +25,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.stage_log import record_stage
 
 TOOL_NAME = "ms_generate_priorcals"
 
@@ -45,12 +46,14 @@ def _table_nrows(path: str) -> int:
 
 def _build_script(
     ms_str: str,
+    workdir: str,
     gc_table: str,
     opac_table: str,
     rq_table: str,
     antpos_table: str,
 ) -> str:
     """Return a self-contained priorcals Python script."""
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
     from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
 
     return f"""\
@@ -83,6 +86,9 @@ def _table_nrows(path):
 
 
 {safe_rm}
+{record}
+workdir = {workdir!r}
+
 priorcals = []
 skipped = []
 skip_reasons = {{}}
@@ -169,6 +175,14 @@ if "antpos.ap" not in skip_reasons:
         skip_reasons["antpos.ap"] = "gencal returned 0-row table"
         print("  antpos: empty — skipped (no corrections needed)")
 
+# Record only the tables that were produced and are non-empty. A skipped
+# prior is legitimate here — pre-WIDAR data has no SYSPOWER subtable, and an
+# antpos table with no corrections is correctly empty — so absence must not
+# raise the way it does in the single-caltable tools. The skip reasons above
+# stay in this script's stdout; only the successes become durable record.
+for _produced in priorcals:
+    _record_stage(workdir, "priorcals", _produced)
+
 print()
 print(f"priorcals = {{priorcals}}")
 print(f"skipped   = {{skipped}}")
@@ -216,6 +230,7 @@ def run(
 
     script_content = _build_script(
         ms_str=ms_str,
+        workdir=str(workdir_path),
         gc_table=gc_table,
         opac_table=opac_table,
         rq_table=rq_table,
@@ -323,6 +338,11 @@ def run(
     else:
         skipped.append("antpos.ap")
         skip_reasons["antpos.ap"] = "gencal returned 0-row table"
+
+    # Successes only — see the same loop in the generated script for why a
+    # skipped prior must not raise here.
+    for produced in priorcals:
+        record_stage(str(workdir_path), "priorcals", produced)
 
     data = {
         "script_path": fmt_field(script_path),

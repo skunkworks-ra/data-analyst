@@ -39,19 +39,63 @@ def _script_from(result) -> str:
     return Path(path).read_text()
 
 
-def _recorded(script: str) -> list[tuple[str, str]]:
-    """(stage, product) for every _record_stage call in a generated script."""
-    tree = ast.parse(script)
-    out = []
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "_record_stage"
-        ):
-            stage, product = node.args[1], node.args[2]
-            out.append((ast.literal_eval(stage), ast.literal_eval(product)))
+def _string_bindings(tree) -> dict:
+    """Module-level `name = "literal"` assignments, so a call that passes a
+    variable can still be resolved to the path the tool put there."""
+    out = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and isinstance(node.value.value, str):
+                    out[target.id] = node.value.value
     return out
+
+
+def _record_calls(tree) -> list[ast.Call]:
+    return [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "_record_stage"
+    ]
+
+
+def _recorded(script: str) -> list[tuple[str, str]]:
+    """(stage, product) for every _record_stage call, names resolved."""
+    tree = ast.parse(script)
+    names = _string_bindings(tree)
+    out = []
+    for call in _record_calls(tree):
+        stage = ast.literal_eval(call.args[1])
+        arg = call.args[2]
+        if isinstance(arg, ast.Constant):
+            product = arg.value
+        elif isinstance(arg, ast.Name):
+            product = names.get(arg.id, f"<unresolved {arg.id}>")
+        else:
+            product = "<unresolved>"
+        out.append((stage, product))
+    return out
+
+
+def _module_level_index(script: str, func_name: str, product: str | None = None) -> int:
+    """Position of a top-level call, ignoring anything inside a function body."""
+    tree = ast.parse(script)
+    names = _string_bindings(tree)
+    for i, node in enumerate(tree.body):
+        if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+            continue
+        call = node.value
+        if getattr(call.func, "id", "") != func_name:
+            continue
+        if product is None:
+            return i
+        arg = call.args[2]
+        got = arg.value if isinstance(arg, ast.Constant) else names.get(arg.id)
+        if got == product:
+            return i
+    raise AssertionError(f"no top-level {func_name} call for {product!r}")
 
 
 @pytest.fixture
@@ -172,3 +216,98 @@ def test_generated_script_records_into_the_workdir_it_was_given(ms_and_workdir):
     )
     call = re.search(r"_record_stage\((.+?), \"gaincal\"", script)
     assert ast.literal_eval(call.group(1)) == str(wd)
+
+
+# ---------------------------------------------------------------------------
+# Multi-product scripts — where the raise actually changes an outcome
+# ---------------------------------------------------------------------------
+
+
+def test_initial_bandpass_records_all_three_of_its_steps(ms_and_workdir):
+    from ms_modify.initial_bandpass import run
+
+    ms, wd = ms_and_workdir
+    script = _script_from(
+        run(
+            ms_path=str(ms),
+            bp_field="0",
+            applycal_field="0",
+            ref_ant="ea01",
+            bp_scan="3",
+            workdir=str(wd),
+        )
+    )
+    assert _recorded(script) == [
+        ("initial_bandpass", str(wd / "init_gain.g")),
+        ("initial_bandpass", str(wd / "BP0.b")),
+        ("initial_bandpass", str(ms)),
+    ]
+
+
+def test_initial_bandpass_records_the_gain_table_before_the_bandpass_solve(
+    ms_and_workdir,
+):
+    """This ordering is the whole point: the bandpass solve uses init_gain.g.
+
+    Recording it AFTER the bandpass call would let the script solve against a
+    table the previous step failed to write, which is the failure the raise
+    exists to prevent.
+    """
+    from ms_modify.initial_bandpass import run
+
+    ms, wd = ms_and_workdir
+    script = _script_from(
+        run(
+            ms_path=str(ms),
+            bp_field="0",
+            applycal_field="0",
+            ref_ant="ea01",
+            bp_scan="3",
+            workdir=str(wd),
+        )
+    )
+    assert _module_level_index(
+        script, "_record_stage", str(wd / "init_gain.g")
+    ) < _module_level_index(script, "bandpass")
+
+
+def test_priorcals_records_only_what_it_actually_produced(ms_and_workdir):
+    """A skipped prior is legitimate, so priorcals must not use the raising form.
+
+    Pre-WIDAR data has no SYSPOWER subtable and an antpos table with no
+    corrections is correctly empty. The script therefore records the tables it
+    appended to `priorcals`, and never asserts a fixed set.
+    """
+    from ms_modify.priorcals import run
+
+    ms, wd = ms_and_workdir
+    script = _script_from(run(ms_path=str(ms), workdir=str(wd)))
+
+    # No unconditional call: every recorded product comes from the loop, so
+    # nothing is recorded for a prior that gencal skipped.
+    tree = ast.parse(script)
+    assert not [
+        n
+        for n in tree.body
+        if isinstance(n, ast.Expr)
+        and isinstance(n.value, ast.Call)
+        and getattr(n.value.func, "id", "") == "_record_stage"
+    ]
+    loops = [
+        n
+        for n in ast.walk(ast.parse(script))
+        if isinstance(n, ast.For) and getattr(n.iter, "id", "") == "priorcals"
+    ]
+    assert len(loops) == 1
+    call = loops[0].body[0].value
+    assert call.func.id == "_record_stage"
+    assert ast.literal_eval(call.args[1]) == "priorcals"
+
+
+def test_priorcals_script_defines_the_recorder(ms_and_workdir):
+    from ms_modify.priorcals import run
+
+    ms, wd = ms_and_workdir
+    script = _script_from(run(ms_path=str(ms), workdir=str(wd)))
+    defined = {n.name for n in ast.walk(ast.parse(script)) if isinstance(n, ast.FunctionDef)}
+    assert "_record_stage" in defined
