@@ -61,9 +61,15 @@ kind = "claude"
 # tool that is not listed here is DENIED and the turn fails. The three MCP
 # servers are the driver's whole purpose. Read/Glob/Grep let it consult the
 # skill and read logs; Skill loads the skill itself.
-# Bash, Write and Edit are deliberately absent: the model writes a script and
-# the LOOP executes it. Allowing Bash would let a turn run CASA itself, which
-# is the one thing this design exists to prevent.
+# The model writes a script and the LOOP executes it. A turn that ran CASA
+# itself would leave no job id, no exit code and no artifact checksum in the
+# journal — the run becomes unauditable, which is the point of the loop.
+#
+# allowed_tools PRE-APPROVES. It does not remove anything: the 2026-08-31 G55
+# run made 101 Bash calls across 16 turns with Bash absent from this list.
+# disallowed_tools is what actually removes a tool, and ClaudeBackend checks
+# the harness's own system/init event against it on every turn, because a flag
+# that is silently ignored looks exactly like a flag that works.
 allowed_tools = [
   "mcp__ms-inspect",
   "mcp__ms-modify",
@@ -72,6 +78,19 @@ allowed_tools = [
   "Glob",
   "Grep",
   "Skill",
+]
+# Listed here for visibility only — this IS the code default
+# (backends.DEFAULT_DISALLOWED_TOOLS), so deleting these lines changes nothing
+# and a config written before the ban existed is still protected. Set it to []
+# to turn the ban off deliberately.
+disallowed_tools = [
+  "Bash",
+  "Write",
+  "Edit",
+  "NotebookEdit",
+  "Task",
+  "WebFetch",
+  "WebSearch",
 ]
 # cmd = "claude"
 # model = "claude-opus-5"

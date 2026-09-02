@@ -41,6 +41,11 @@ class BackendResult:
     #: the loop retries the identical failure until max_turns.
     error: str | None = None
     exit_code: int | None = None
+    #: Tool names the harness reported loading, from the system/init event.
+    #: None when no such event appeared. Distinct from the tools actually used.
+    tool_names_offered: list[str] | None = None
+    #: Banned tools the harness offered anyway — the ban silently not applying.
+    tools_ban_violated: set[str] = field(default_factory=set)
 
 
 class Backend(Protocol):
@@ -93,6 +98,29 @@ class StubBackend:
         return BackendResult(text=self.responses.pop(0), model="stub")
 
 
+#: Removed from every claude turn unless a caller explicitly overrides it.
+#: This is a CODE default, not a config default, on purpose: a config written
+#: before the ban existed has no disallowed_tools key, and taking the ban from
+#: config alone would leave every such run unprotected while the file still
+#: claimed Bash was absent. Pass disallowed_tools=[] to turn it off deliberately.
+#:
+#: Bash is the one that matters — a turn that runs CASA itself leaves no job id,
+#: no exit code and no artifact checksum in the journal, so the run becomes
+#: unauditable. Write/Edit/NotebookEdit would let a turn change an MS or a
+#: caltable outside the tools, where the guards live. Task, WebFetch and
+#: WebSearch are removed as unnecessary surface, not because of an observed
+#: failure.
+DEFAULT_DISALLOWED_TOOLS = [
+    "Bash",
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    "Task",
+    "WebFetch",
+    "WebSearch",
+]
+
+
 class ClaudeBackend:
     kind = "claude"
 
@@ -103,21 +131,36 @@ class ClaudeBackend:
         model: str | None = None,
         timeout: float | None = None,
         allowed_tools: list[str] | None = None,
+        disallowed_tools: list[str] | None = None,
     ):
-        """``allowed_tools`` becomes ``--allowedTools``.
+        """``allowed_tools`` becomes ``--allowedTools``, ``disallowed_tools``
+        ``--disallowedTools``.
 
         ``claude -p`` is non-interactive, so there is nobody to answer a
-        permission prompt: any tool not on this list is DENIED, and the turn
-        comes back as a refusal the driver can only record and retry. Without
-        it the driver cannot call a single ms_modify or ms_create tool, which
-        is every tool it exists to call. None omits the flag, which is what a
-        backend that manages permissions elsewhere wants.
+        permission prompt: any tool not on the allow list is DENIED, and the
+        turn comes back as a refusal the driver can only record and retry.
+        Without it the driver cannot call a single ms_modify or ms_create tool,
+        which is every tool it exists to call.
+
+        The two flags are NOT opposites, and conflating them is why the ban was
+        never enforced. ``--allowedTools`` PRE-APPROVES; it does not remove
+        anything. The 2026-08-31 G55 run made 101 Bash calls across 16 turns
+        with Bash absent from the allow list — only 36 were blocked, and those
+        by the working-directory rule, not by the tool list. Every transcript's
+        system/init event listed Bash, Write, Edit, Task and WebFetch. Removing
+        a tool takes ``--disallowedTools``.
         """
         self.cmd = cmd
         self.mcp_config = mcp_config
         self.model = model
         self.timeout = timeout
         self.allowed_tools = list(allowed_tools) if allowed_tools else []
+        # None means "not specified" and takes the code default; an explicit
+        # empty list means "no ban", which is a different thing and must not be
+        # silently upgraded.
+        self.disallowed_tools = (
+            list(DEFAULT_DISALLOWED_TOOLS) if disallowed_tools is None else list(disallowed_tools)
+        )
 
     def _args(self) -> list[str]:
         """The command line. The prompt is NOT here — it goes on stdin.
@@ -135,6 +178,8 @@ class ClaudeBackend:
             args += ["--model", self.model]
         if self.allowed_tools:
             args += ["--allowedTools", ",".join(self.allowed_tools)]
+        if self.disallowed_tools:
+            args += ["--disallowedTools", ",".join(self.disallowed_tools)]
         return args
 
     def run(self, prompt: str, workdir: str | Path) -> BackendResult:
@@ -146,7 +191,30 @@ class ClaudeBackend:
             cwd=str(workdir),
             timeout=self.timeout,
         )
-        return _with_failure(self.parse(out.stdout), out)
+        res = _with_failure(self.parse(out.stdout), out)
+        leaked = self.banned_tools_offered(res.tool_names_offered)
+        if leaked:
+            res.tools_ban_violated = leaked
+            res.error = (
+                f"backend offered banned tools {sorted(leaked)} despite --disallowedTools."
+                " The turn could have run CASA itself, so nothing it did is in the journal."
+                + (f" ({res.error})" if res.error else "")
+            )
+        return res
+
+    def banned_tools_offered(self, offered: list[str] | None) -> set[str]:
+        """Which banned tools the harness actually offered this turn.
+
+        A flag that is passed but ignored looks exactly like a flag that works:
+        the config claims Bash is gone, the transcript says otherwise, and
+        nothing reads the transcript. The system/init event lists the tools the
+        harness really loaded, so it is checked against the ban rather than
+        trusted. None means no init event was seen — reported as no violation,
+        because an absent event is not evidence of a leak.
+        """
+        if not self.disallowed_tools or offered is None:
+            return set()
+        return {t for t in offered if t in set(self.disallowed_tools)}
 
     @staticmethod
     def parse(raw: str) -> BackendResult:
@@ -159,6 +227,9 @@ class ClaudeBackend:
             etype = ev.get("type")
             if etype == "system" and ev.get("subtype") == "init":
                 res.model = ev.get("model") or res.model
+                tools = ev.get("tools")
+                if isinstance(tools, list):
+                    res.tool_names_offered = [t for t in tools if isinstance(t, str)]
             msg = ev.get("message")
             content = msg.get("content") if isinstance(msg, dict) else None
             if not isinstance(content, list):

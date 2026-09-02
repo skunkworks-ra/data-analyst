@@ -15,6 +15,7 @@ exit code 0 is ``accepted``, anything else is ``failed``.
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -184,6 +185,7 @@ Input: {input_path}
 MS: {ms_path}
 Work directory: {workdir}
 Telescope: {telescope}
+Free space in the work directory: {free_bytes}
 
 Workflow status (ms_workflow_status, measured from disk):
 {status_json}
@@ -215,6 +217,30 @@ Do this, in order:
 """
 
 
+def free_bytes(workdir: str | Path) -> int | None:
+    """Free bytes on the filesystem holding workdir. None if it cannot be read.
+
+    Reported as a measured number with no threshold and no refusal, consistent
+    with "the driver may report a number, it may never name a verdict". The
+    2026-08-31 G55 run halted when applycal_target aborted mid-write on a full
+    filesystem (exit -6, FiledesIO::write, 1.3 MB free against a 310 GB target
+    MS) and left a partial main table. Nothing in the brief had said so.
+
+    Sizing the requirement per stage is the harder half and is not done here.
+    """
+    try:
+        return shutil.disk_usage(str(workdir)).free
+    except OSError:
+        return None
+
+
+def _format_bytes(n: int | None) -> str:
+    """Bytes, plus GB, because a raw byte count is hard to compare to an MS size."""
+    if n is None:
+        return "unavailable (could not stat the work directory)"
+    return f"{n} bytes ({n / 1e9:.1f} GB)"
+
+
 def render_brief(run: dict, status_payload: dict, previous_turn: dict | None) -> str:
     if previous_turn is None:
         previous = "none — this is the first turn."
@@ -232,6 +258,7 @@ def render_brief(run: dict, status_payload: dict, previous_turn: dict | None) ->
         ms_path=run["ms_path"] or "not imported yet",
         workdir=run["workdir"],
         telescope=run.get("telescope") or "unknown",
+        free_bytes=_format_bytes(free_bytes(run["workdir"])),
         status_json=json.dumps(status_payload, indent=1, sort_keys=True, default=str),
         previous=previous,
     )

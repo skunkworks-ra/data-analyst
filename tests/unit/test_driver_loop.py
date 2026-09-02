@@ -668,7 +668,10 @@ def test_claude_backend_never_puts_the_prompt_in_argv():
     """
     args = ClaudeBackend(allowed_tools=["Read"])._args()
     assert not any("prompt" in a for a in args)
-    assert args[-1] == "Read" or args[-1].endswith("Read")
+    # --disallowedTools now follows the allow list, so the allow list is no
+    # longer last. The property that matters is unchanged: no argv entry is the
+    # prompt, because --allowedTools is variadic and would swallow it.
+    assert "Read" in args[args.index("--allowedTools") + 1]
 
 
 def test_claude_backend_sends_the_prompt_on_stdin(tmp_path, monkeypatch):
@@ -745,3 +748,69 @@ def test_turn_reports_the_backend_failure_reason(tmp_path):
     assert turn["backend_exit_code"] == 1
     assert "Input must be provided" in turn["backend_error"]
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# Free space in the brief
+# ---------------------------------------------------------------------------
+#
+# The G55 run halted when applycal_target aborted mid-write on a full
+# filesystem and left a partial main table. Nothing in the brief had said the
+# disk was nearly full. This is reported as a measured number with no threshold
+# and no refusal — the driver may report a number, it may never name a verdict.
+
+
+def test_free_bytes_reports_a_real_number(tmp_path):
+    from analyst_driver.loop import free_bytes
+
+    n = free_bytes(tmp_path)
+    assert isinstance(n, int)
+    assert n > 0
+
+
+def test_free_bytes_of_a_missing_directory_is_none(tmp_path):
+    """It must not raise: this runs on every turn, before every submit."""
+    from analyst_driver.loop import free_bytes
+
+    assert free_bytes(tmp_path / "does_not_exist") is None
+
+
+def test_the_brief_carries_free_space(tmp_path):
+    from analyst_driver.loop import render_brief
+
+    brief = render_brief(
+        {"workdir": str(tmp_path), "ms_path": "/d/x.ms", "input_path": "/d/x.asdm",
+         "telescope": "EVLA"},
+        {"data": {}},
+        None,
+    )
+    assert "Free space in the work directory:" in brief
+    assert " GB)" in brief
+
+
+def test_the_brief_states_no_threshold_and_no_verdict(tmp_path):
+    """Guards the design rule, not the formatting: if someone later adds
+    'WARNING: low disk' here, the driver has started naming verdicts."""
+    from analyst_driver.loop import render_brief
+
+    brief = render_brief(
+        {"workdir": str(tmp_path), "ms_path": "/d/x.ms", "input_path": "/d/x.asdm",
+         "telescope": "EVLA"},
+        {"data": {}},
+        None,
+    )
+    line = next(ln for ln in brief.splitlines() if ln.startswith("Free space"))
+    assert not any(w in line.lower() for w in ("warning", "low", "insufficient", "too little"))
+
+
+def test_unreadable_free_space_is_stated_not_omitted(tmp_path):
+    """A missing line would read as 'plenty of room' rather than 'unknown'."""
+    from analyst_driver.loop import render_brief
+
+    brief = render_brief(
+        {"workdir": str(tmp_path / "gone"), "ms_path": "/d/x.ms", "input_path": "/d/x.asdm",
+         "telescope": "EVLA"},
+        {"data": {}},
+        None,
+    )
+    assert "unavailable" in brief
