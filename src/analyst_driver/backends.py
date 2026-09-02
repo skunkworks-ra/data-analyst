@@ -32,7 +32,14 @@ class BackendResult:
     text: str
     transcript: str | None = None  # raw event stream, journal-only
     model: str | None = None
+    #: Uncached input only. On a cached conversation this is the tail the cache
+    #: did not cover — 12 to 26 tokens a turn on the 2026-08-31 G55 run, against
+    #: 5.97M cache reads and 616k cache writes. It was the ONLY input field read
+    #: until 2026-09-02, so any cost figure taken from the driver database
+    #: undercounted input by 17,899x. Never use it alone; see total_tokens_in.
     tokens_in: int | None = None
+    tokens_cache_read: int | None = None
+    tokens_cache_creation: int | None = None
     tokens_out: int | None = None
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     #: Why the backend itself failed — a non-zero exit or no output at all.
@@ -41,6 +48,21 @@ class BackendResult:
     #: the loop retries the identical failure until max_turns.
     error: str | None = None
     exit_code: int | None = None
+
+    @property
+    def total_tokens_in(self) -> int | None:
+        """Every input token the turn was billed for, cached or not.
+
+        None only when the backend reported no input counts at all — distinct
+        from 0, which would be a measurement. The three components are kept
+        separately as well, because they bill at different rates and a single
+        total cannot support a cost figure.
+        """
+        parts = [self.tokens_in, self.tokens_cache_read, self.tokens_cache_creation]
+        if all(p is None for p in parts):
+            return None
+        return sum(p or 0 for p in parts)
+
     #: Tool names the harness reported loading, from the system/init event.
     #: None when no such event appeared. Distinct from the tools actually used.
     tool_names_offered: list[str] | None = None
@@ -252,6 +274,8 @@ class ClaudeBackend:
                     res.text = ev["result"]
                 usage = ev.get("usage") or {}
                 res.tokens_in = usage.get("input_tokens")
+                res.tokens_cache_read = usage.get("cache_read_input_tokens")
+                res.tokens_cache_creation = usage.get("cache_creation_input_tokens")
                 res.tokens_out = usage.get("output_tokens")
         return res
 

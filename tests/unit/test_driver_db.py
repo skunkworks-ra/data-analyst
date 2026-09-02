@@ -478,3 +478,57 @@ def test_find_runs_by_ms_does_not_match_another_ms(db, tmp_path):
         started_at="2026-08-31T10:00:00Z",
     )
     assert db.find_runs_by_ms(tmp_path / "b.ms") == []
+
+
+# ---------------------------------------------------------------------------
+# Token columns
+# ---------------------------------------------------------------------------
+
+
+def test_turn_records_all_four_token_counts(tmp_path):
+    """One column cannot carry input usage: uncached input, cache reads and
+    cache writes bill at different rates."""
+    db = DriverDB(tmp_path / "runs")
+    key = _make_run(db)
+    db.record_turn(
+        key, 1, stage="gaincal", brief="b", decision={}, model="m",
+        tokens_in=26, tokens_cache_read=417313, tokens_cache_creation=31666,
+        tokens_out=4138,
+    )
+    (row,) = db.conn.execute(
+        "SELECT tokens_in, tokens_cache_read, tokens_cache_creation, tokens_out FROM turns"
+    ).fetchall()
+    assert row == (26, 417313, 31666, 4138)
+    db.close()
+
+
+def test_the_cache_columns_are_added_to_a_database_that_predates_them(tmp_path):
+    """A database written before 2026-09-02 has neither column. CREATE TABLE
+    IF NOT EXISTS is a no-op on an existing table, so this needs the ALTER."""
+    import sqlite3
+
+    (tmp_path / "runs").mkdir(parents=True, exist_ok=True)
+    path = tmp_path / "runs" / "driver.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE turns (id INTEGER PRIMARY KEY, run_id INTEGER, ordinal INTEGER,"
+        " stage TEXT, attempt INTEGER, state TEXT, outcome TEXT, brief TEXT,"
+        " decision TEXT, model TEXT, tokens_in INTEGER, tokens_out INTEGER,"
+        " wall_time_s REAL, UNIQUE (run_id, ordinal));"
+        "INSERT INTO turns (run_id, ordinal, stage, attempt, state, tokens_in)"
+        " VALUES (1, 1, 'gaincal', 1, 'done', 26);"
+    )
+    conn.commit()
+    conn.close()
+
+    db = DriverDB(tmp_path / "runs")
+    have = {r[1] for r in db.conn.execute("PRAGMA table_info(turns)")}
+    assert {"tokens_cache_read", "tokens_cache_creation"} <= have
+
+    # NULL, not 0: the old row was never measured, and 0 would read as
+    # "measured, and it was nothing" — the same mistake the columns fix.
+    (row,) = db.conn.execute(
+        "SELECT tokens_cache_read, tokens_cache_creation FROM turns"
+    ).fetchall()
+    assert row == (None, None)
+    db.close()

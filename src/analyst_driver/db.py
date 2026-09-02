@@ -92,7 +92,15 @@ CREATE TABLE IF NOT EXISTS turns (
     brief TEXT,
     decision TEXT,
     model TEXT,
-    tokens_in INTEGER,
+    -- Four separate counts, not one. They bill at different rates, so a single
+    -- "input tokens" number cannot support a cost figure. tokens_in used to
+    -- hold usage.input_tokens alone; on a cached conversation that is only the
+    -- uncached tail (12-26 tokens a turn on the G55 run) while the cache
+    -- counts carry everything real, so any cost taken from it undercounted
+    -- input by 17,899x.
+    tokens_in INTEGER,              -- uncached input
+    tokens_cache_read INTEGER,      -- read from the prompt cache
+    tokens_cache_creation INTEGER,  -- written to the prompt cache
     tokens_out INTEGER,
     wall_time_s REAL,
     UNIQUE (run_id, ordinal)
@@ -216,6 +224,14 @@ class DriverDB:
         if "input_path" not in have:
             self.conn.execute("ALTER TABLE runs ADD COLUMN input_path TEXT NOT NULL DEFAULT ''")
             self.conn.execute("UPDATE runs SET input_path = ms_path WHERE input_path = ''")
+
+        # NULL, not 0, for rows written before these columns existed: 0 would
+        # read as "measured, and it was nothing", which is the same mistake the
+        # columns exist to correct.
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(turns)")}
+        for column in ("tokens_cache_read", "tokens_cache_creation"):
+            if column not in have:
+                self.conn.execute(f"ALTER TABLE turns ADD COLUMN {column} INTEGER DEFAULT NULL")
 
     def close(self) -> None:
         self.conn.close()
@@ -347,6 +363,8 @@ class DriverDB:
         decision: dict | None = None,
         model: str | None = None,
         tokens_in: int | None = None,
+        tokens_cache_read: int | None = None,
+        tokens_cache_creation: int | None = None,
         tokens_out: int | None = None,
         jobs: list[dict] | None = None,
         extras: dict | None = None,
@@ -376,6 +394,8 @@ class DriverDB:
             "decision": decision,
             "model": model,
             "tokens_in": tokens_in,
+            "tokens_cache_read": tokens_cache_read,
+            "tokens_cache_creation": tokens_cache_creation,
             "tokens_out": tokens_out,
             "wall_time_s": None,
             "jobs": list(jobs or []),
@@ -523,8 +543,9 @@ class DriverDB:
         decision = record.get("decision")
         cur.execute(
             "INSERT INTO turns (run_id, ordinal, stage, attempt, state, outcome, brief,"
-            " decision, model, tokens_in, tokens_out, wall_time_s)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            " decision, model, tokens_in, tokens_cache_read, tokens_cache_creation,"
+            " tokens_out, wall_time_s)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 run_id,
                 record["ordinal"],
@@ -536,6 +557,8 @@ class DriverDB:
                 json.dumps(decision, sort_keys=True) if decision is not None else None,
                 record["model"],
                 record["tokens_in"],
+                record["tokens_cache_read"],
+                record["tokens_cache_creation"],
                 record["tokens_out"],
                 record["wall_time_s"],
             ),
@@ -614,7 +637,8 @@ class DriverDB:
             ).fetchall(),
             "turns": q(
                 "SELECT r.run_key, t.ordinal, t.stage, t.attempt, t.state, t.outcome,"
-                " t.brief, t.decision, t.model, t.tokens_in, t.tokens_out, t.wall_time_s"
+                " t.brief, t.decision, t.model, t.tokens_in, t.tokens_cache_read,"
+                " t.tokens_cache_creation, t.tokens_out, t.wall_time_s"
                 " FROM turns t JOIN runs r ON t.run_id = r.id"
                 " ORDER BY r.run_key, t.ordinal"
             ).fetchall(),

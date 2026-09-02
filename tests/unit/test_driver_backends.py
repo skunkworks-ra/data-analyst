@@ -162,3 +162,60 @@ def test_an_explicit_empty_list_turns_the_ban_off(g55_init_event):
 def test_the_default_ban_catches_the_g55_leak(g55_init_event):
     """End to end on the real event, with no arguments at all."""
     assert "Bash" in ClaudeBackend().banned_tools_offered(g55_init_event["tools"])
+
+
+# ---------------------------------------------------------------- token usage
+#
+# The fixture is the real result event from turn 2 of the G55 run. Its usage
+# block is why a hand-written one would not have caught this: input_tokens is
+# 26 while cache_read_input_tokens is 417,313. Across the run the driver
+# recorded 368 input tokens against 6,586,740 actually billed — 17,899x low.
+# Any cost figure taken from the database was wrong by four orders of
+# magnitude, and nothing about the number looked wrong.
+
+
+@pytest.fixture
+def g55_result_event() -> dict:
+    return json.loads((FIXTURES / "g55_turn2_result_event.json").read_text())
+
+
+def test_all_three_input_counts_are_parsed(g55_result_event):
+    res = ClaudeBackend.parse(json.dumps(g55_result_event) + "\n")
+    assert res.tokens_in == 26
+    assert res.tokens_cache_read == 417313
+    assert res.tokens_cache_creation == 31666
+    assert res.tokens_out == 4138
+
+
+def test_the_uncached_count_alone_is_not_the_input_total(g55_result_event):
+    """The defect in one assertion: tokens_in is a rounding error on this turn."""
+    res = ClaudeBackend.parse(json.dumps(g55_result_event) + "\n")
+    assert res.total_tokens_in == 26 + 417313 + 31666
+    assert res.total_tokens_in > 10_000 * res.tokens_in
+
+
+def test_total_is_none_when_no_input_counts_are_reported():
+    """None is 'the backend told us nothing', not 'the turn used no input'.
+    A 0 here would be a measurement, and this is the absence of one."""
+    raw = json.dumps({"type": "result", "result": "x", "usage": {"output_tokens": 5}}) + "\n"
+    assert ClaudeBackend.parse(raw).total_tokens_in is None
+
+
+def test_total_counts_a_reported_zero(g55_result_event):
+    """A backend that genuinely reports zero uncached input must not be
+    confused with one that reports nothing."""
+    raw = json.dumps({"type": "result", "result": "x",
+                      "usage": {"input_tokens": 0, "cache_read_input_tokens": 100}}) + "\n"
+    res = ClaudeBackend.parse(raw)
+    assert res.total_tokens_in == 100
+
+
+def test_the_components_are_kept_separately_not_only_summed(g55_result_event):
+    """They bill at different rates, so a single total cannot support a cost
+    figure. Both the parts and the sum have to survive."""
+    res = ClaudeBackend.parse(json.dumps(g55_result_event) + "\n")
+    assert (res.tokens_in, res.tokens_cache_read, res.tokens_cache_creation) == (
+        26,
+        417313,
+        31666,
+    )

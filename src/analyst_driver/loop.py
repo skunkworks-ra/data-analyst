@@ -373,6 +373,8 @@ class Loop:
             decision=decision,
             model=result.model,
             tokens_in=result.tokens_in,
+            tokens_cache_read=result.tokens_cache_read,
+            tokens_cache_creation=result.tokens_cache_creation,
             tokens_out=result.tokens_out,
         )
 
