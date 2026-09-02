@@ -138,3 +138,88 @@ def test_products_for_deduplicates_a_retry():
 def test_products_for_omits_a_product_recorded_absent():
     entries = [{"stage": "gaincal", "product": "/w/gain.g", "exists": False, "error": "x"}]
     assert stage_log.products_for(entries, "gaincal") == []
+
+
+# ---------------------------------------------------------------- measurements
+#
+# The measurement is the only real content of a line for a tool that changes an
+# MS in place: the existence check passes before that tool ever runs. These
+# assert the two halves stay independent — a recorded measurement of "the stage
+# changed nothing" must not be confused with "the product is missing", and vice
+# versa.
+
+
+def test_measurement_is_recorded_alongside_the_existence_check(tmp_path):
+    product = tmp_path / "t.ms"
+    product.mkdir()
+    _load_recorder()(str(tmp_path), "applycal", str(product), {"corrected_data": True})
+
+    (entry,) = stage_log.read_stage_log(tmp_path)
+    assert entry["exists"] is True
+    assert entry["measurement"] == {"corrected_data": True}
+
+
+def test_a_failing_measurement_does_not_make_the_recorder_raise(tmp_path):
+    """Whether a measurement means failure is the caller's decision, not the
+    recorder's: flagging nothing is legitimate, an absent CORRECTED_DATA is not.
+    The scripts that must stop raise on their own after recording."""
+    product = tmp_path / "t.ms"
+    product.mkdir()
+    _load_recorder()(str(tmp_path), "applycal", str(product), {"corrected_data": False})
+
+    (entry,) = stage_log.read_stage_log(tmp_path)
+    assert entry["exists"] is True
+    assert entry["measurement"] == {"corrected_data": False}
+
+
+def test_a_missing_product_still_raises_when_a_measurement_is_passed(tmp_path):
+    with pytest.raises(RuntimeError, match="does not exist"):
+        _load_recorder()(
+            str(tmp_path), "preflag", str(tmp_path / "gone.ms"), {"flagged_fraction": 0.1}
+        )
+    (entry,) = stage_log.read_stage_log(tmp_path)
+    assert entry["exists"] is False
+    assert entry["measurement"] == {"flagged_fraction": 0.1}
+
+
+def test_no_measurement_key_when_none_is_passed(tmp_path):
+    """Absent, not null: a null would read as 'measured, and it was nothing'."""
+    product = tmp_path / "gain.g"
+    product.mkdir()
+    _load_recorder()(str(tmp_path), "gaincal", str(product))
+    assert "measurement" not in stage_log.read_stage_log(tmp_path)[0]
+
+
+def test_a_none_valued_measurement_survives_the_round_trip(tmp_path):
+    """flagged_fraction is None when the summary reports zero total rows. That
+    is 'could not measure', and it must not silently become 0.0."""
+    product = tmp_path / "t.ms"
+    product.mkdir()
+    _load_recorder()(str(tmp_path), "rflag", str(product), {"flagged_fraction": None})
+    assert stage_log.read_stage_log(tmp_path)[0]["measurement"] == {"flagged_fraction": None}
+
+
+def test_completed_stages_ignores_the_measurement(tmp_path):
+    """A stage that ran and changed nothing still ran."""
+    entries = [{"stage": "rflag", "product": "/w/t.ms", "exists": True,
+                "measurement": {"flagged_fraction": 0.0}}]
+    assert stage_log.completed_stages(entries) == {"rflag"}
+
+
+def test_the_in_process_recorder_is_the_same_function_as_the_pasted_one(tmp_path):
+    """stage_log.record_stage is defined by executing RECORD_STAGE_SNIPPET, so
+    the two callers cannot drift. If someone re-implements it by hand, this
+    fails."""
+    product = tmp_path / "gain.g"
+    product.mkdir()
+    stage_log.record_stage(str(tmp_path), "gaincal", str(product), {"n": 1})
+
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "gain.g").mkdir()
+    _load_recorder()(str(other), "gaincal", str(other / "gain.g"), {"n": 1})
+
+    mine = stage_log.read_stage_log(tmp_path)[0]
+    theirs = stage_log.read_stage_log(other)[0]
+    assert set(mine) == set(theirs)
+    assert mine["measurement"] == theirs["measurement"]

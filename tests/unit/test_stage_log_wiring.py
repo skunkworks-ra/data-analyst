@@ -329,7 +329,13 @@ def _measurements(script: str) -> list[dict]:
     for call in _record_calls(ast.parse(script)):
         out.append(
             {
-                k.value: (v.id if isinstance(v, ast.Name) else ast.literal_eval(v))
+                k.value: (
+                    v.id
+                    if isinstance(v, ast.Name)
+                    else v.value
+                    if isinstance(v, ast.Constant)
+                    else ast.unparse(v)
+                )
                 for k, v in zip(call.args[3].keys, call.args[3].values, strict=True)
             }
             if len(call.args) > 3
@@ -482,3 +488,143 @@ def test_applycal_emitted_code_runs_records_and_raises(tmp_path):
     # nothing, the measurement is what reports the stage did not do its job.
     assert entry["exists"] is True
     assert entry["measurement"] == {"field": "0", "corrected_data": False}
+
+
+# ---------------------------------------------------------------------------
+# The remaining wired tools
+# ---------------------------------------------------------------------------
+#
+# Every writing tool must emit a line: ms_workflow_status derives the whole
+# reduction state from them, so a generator that quietly stops emitting one
+# makes that stage look like it never ran. These are the five that had no
+# wiring test when the feature landed.
+
+
+def test_fluxscale_records_its_fluxtable(tmp_path):
+    """_build_script directly: run() reads the input caltable's FIELD subtable."""
+    from ms_modify.fluxscale import _build_script
+
+    script = _build_script(
+        ms_str="/data/x.ms",
+        caltable="/w/gain.g",
+        workdir=str(tmp_path),
+        fluxtable="/w/flux.fluxscale",
+        reference="3C147",
+        transfer=["J0555+3948"],
+        incremental=False,
+    )
+    assert _recorded(script) == [("fluxscale", "/w/flux.fluxscale")]
+
+
+def test_polcal_records_its_caltable(ms_and_workdir):
+    from ms_modify.polcal import run
+
+    ms, wd = ms_and_workdir
+    caltable = str(wd / "pol.D")
+    script = _script_from(
+        run(
+            ms_path=str(ms),
+            field="0",
+            caltable=caltable,
+            workdir=str(wd),
+            poltype="Df",
+            refant="ea01",
+        )
+    )
+    assert _recorded(script) == [("polcal", caltable)]
+
+
+def test_initial_rflag_measures_the_flagged_fraction(ms_and_workdir):
+    from ms_modify.initial_rflag import run
+
+    ms, wd = ms_and_workdir
+    script = _script_from(run(ms_path=str(ms), workdir=str(wd), field="0"))
+    assert _measurements(script) == [{"flagged_fraction": "_flagged"}]
+
+
+def test_postcal_flag_measures_the_flagged_fraction(ms_and_workdir):
+    from ms_modify.postcal_flag import run
+
+    ms, wd = ms_and_workdir
+    script = _script_from(run(ms_path=str(ms), workdir=str(wd), field="0"))
+    assert _measurements(script) == [{"flagged_fraction": "_flagged"}]
+
+
+def test_set_intents_records_the_state_row_count(tmp_path):
+    """_build_set_intents_script directly: run() needs real FIELD/STATE tables."""
+    from ms_modify.intents import _build_set_intents_script
+
+    script = _build_set_intents_script(
+        "/data/x.ms",
+        [{"field_id": 0, "name": "3C147", "intents": ["CALIBRATE_BANDPASS#UNSPECIFIED"]}],
+        {"CALIBRATE_BANDPASS#UNSPECIFIED": 0},
+        str(tmp_path),
+    )
+    assert [set(m) for m in _measurements(script)] == [{"state_rows", "main_rows_updated"}]
+
+
+def test_set_intents_stops_when_state_is_still_empty(tmp_path):
+    """An empty STATE means the writes did not take, which is the one thing
+    this stage exists to prevent downstream."""
+    from ms_modify.intents import _build_set_intents_script
+
+    script = _build_set_intents_script(
+        "/data/x.ms",
+        [{"field_id": 0, "name": "3C147", "intents": ["CALIBRATE_BANDPASS#UNSPECIFIED"]}],
+        {"CALIBRATE_BANDPASS#UNSPECIFIED": 0},
+        str(tmp_path),
+    )
+    top = [
+        n
+        for n in ast.parse(script).body
+        if isinstance(n, ast.If) and any(isinstance(b, ast.Raise) for b in n.body)
+    ]
+    assert len(top) == 1
+
+
+def test_every_wired_generator_emits_the_recorder(ms_and_workdir, tmp_path):
+    """One assertion over all of them, so a newly added generator that forgets
+    the recorder is caught here rather than in a run three weeks later."""
+    from ms_modify import (
+        applycal,
+        bandpass,
+        gaincal,
+        initial_bandpass,
+        initial_rflag,
+        polcal,
+        postcal_flag,
+        preflag,
+        priorcals,
+        rflag,
+    )
+
+    ms, wd = ms_and_workdir
+    ct = _caltable(wd)
+    online = tmp_path / "x.flagonline.txt"
+    online.write_text("")
+    common = dict(ms_path=str(ms), workdir=str(wd))
+    results = {
+        "gaincal": lambda: gaincal.run(field="0", spw="", caltable=str(wd / "g1.G"),
+                                       refant="ea01", **common),
+        "bandpass": lambda: bandpass.run(field="0", spw="", caltable=str(wd / "b1.B"),
+                                         refant="ea01", **common),
+        "polcal": lambda: polcal.run(field="0", caltable=str(wd / "p1.D"),
+                                     poltype="Df", refant="ea01", **common),
+        "initial_bandpass": lambda: initial_bandpass.run(
+            bp_field="0", applycal_field="0", ref_ant="ea01", bp_scan="3", **common),
+        "priorcals": lambda: priorcals.run(**common),
+        "preflag": lambda: preflag.run(cal_fields="0", online_flag_file=str(online), **common),
+        "applycal": lambda: applycal.run(field="0", gaintable=[ct], gainfield=[""],
+                                         interp=["linear"], **common),
+        "rflag": lambda: rflag.run(field="0", spw="", datacolumn="corrected", **common),
+        "initial_rflag": lambda: initial_rflag.run(field="0", **common),
+        "postcal_flag": lambda: postcal_flag.run(field="0", **common),
+    }
+    # fluxscale is covered by its own test above: run() needs a real caltable.
+    missing = []
+    for name, call in results.items():
+        script = _script_from(call())
+        defined = {n.name for n in ast.walk(ast.parse(script)) if isinstance(n, ast.FunctionDef)}
+        if "_record_stage" not in defined or not _record_calls(ast.parse(script)):
+            missing.append(name)
+    assert missing == []
