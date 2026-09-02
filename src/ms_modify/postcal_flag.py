@@ -234,7 +234,9 @@ def _render_call(kw: dict) -> str:
     return f"flagdata(\n{body},\n)"
 
 
-def _build_script(ms_str: str, flag_calls: list[dict]) -> str:
+def _build_script(ms_str: str, flag_calls: list[dict], workdir: str = "") -> str:
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
+
     call_blocks = "\n\n".join(_render_call(kw) for kw in flag_calls)
     return f"""\
 #!/usr/bin/env python
@@ -253,6 +255,8 @@ redundant per-call backups.
 \"\"\"
 from casatasks import flagdata, flagmanager
 
+{record}
+
 ms_path = {ms_str!r}
 
 # One versioned backup of the pre-flag FLAG state.
@@ -260,6 +264,15 @@ flagmanager(vis=ms_path, mode="save", versionname={_FLAG_VERSION!r})
 
 {call_blocks}
 
+# flagdata(action='apply') returns nothing useful, so completion is measured
+# with a summary pass. It reports the flagged fraction the stage produced —
+# a number, not a verdict — so a pass that flagged nothing is visible in the
+# record instead of looking identical to one that worked.
+_summary = flagdata(vis={ms_str!r}, mode="summary")
+_flagged = (
+    float(_summary["flagged"]) / float(_summary["total"]) if _summary.get("total") else None
+)
+_record_stage({workdir!r}, "postcal_flag", {ms_str!r}, {{"flagged_fraction": _flagged}})
 print("Post-calibration flagging complete.")
 print("Use ms_flag_summary for the flag delta and ms_spw_amp_severity to re-measure.")
 """
@@ -380,7 +393,7 @@ def run(
         freqcutoff,
     )
 
-    script_content = _build_script(ms_str, flag_calls)
+    script_content = _build_script(ms_str, flag_calls, workdir=str(workdir_path))
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
 

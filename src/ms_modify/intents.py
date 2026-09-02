@@ -16,6 +16,7 @@ from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import rad_to_deg
 from ms_inspect.util.formatting import field, response_envelope
 from ms_inspect.util.pol_calibrators import effective_role_at_band, lookup_pol
+from ms_inspect.util.stage_log import record_stage
 from ms_inspect.util.vla_calibrators import cone_search as vla_cone_search
 from ms_modify.exceptions import IntentsAlreadyPopulatedError
 
@@ -214,8 +215,12 @@ def _build_set_intents_script(
     ms_path: str,
     intent_map: list[dict],
     obs_modes: dict[str, int],
+    workdir: str,
 ) -> str:
     """Return a self-contained Python script that reproduces the STATE writes."""
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
+    from ms_inspect.util.stage_log import TABLE_PROBE_SNIPPET as probe
+
     obs_modes_repr = repr(obs_modes)
     field_to_state = {m["field_id"]: obs_modes[";".join(sorted(m["intents"]))] for m in intent_map}
     field_to_state_repr = repr(field_to_state)
@@ -227,6 +232,9 @@ Run with: python set_intents.py
 \"\"\"
 import numpy as np
 from casatools import table as _tbtool
+
+{record}
+{probe}
 
 ms_path = {ms_path!r}
 
@@ -260,6 +268,21 @@ field_ids = tb.getcol("FIELD_ID")
 state_ids = np.array([field_to_state.get(int(fid), 0) for fid in field_ids], dtype=np.int32)
 tb.putcol("STATE_ID", state_ids)
 tb.close()
+# The stage exists to populate STATE. Re-read its row count rather than trust
+# that the writes above went through.
+_state_rows = _table_rows(ms_path + "/STATE")
+_record_stage(
+    {workdir!r},
+    "set_intents",
+    ms_path,
+    {{"state_rows": _state_rows, "main_rows_updated": len(field_ids)}},
+)
+if _state_rows == 0:
+    raise RuntimeError(
+        "set_intents returned but the STATE subtable of "
+        + ms_path
+        + " has no rows — the stage did not do what it exists to do."
+    )
 print(f"Done. {{len(obs_modes)}} state rows written, {{len(field_ids)}} MAIN rows updated.")
 """
 
@@ -437,7 +460,9 @@ def set_intents(
             from pathlib import Path as _Path
 
             script_path = str(_Path(workdir) / "set_intents.py")
-            _Path(script_path).write_text(_build_set_intents_script(ms_path, intent_map, obs_modes))
+            _Path(script_path).write_text(
+                _build_set_intents_script(ms_path, intent_map, obs_modes, workdir)
+            )
             casa_calls.append(f"write_script → {script_path}")
 
         data = {
@@ -500,8 +525,6 @@ def set_intents(
             tb.putcell("REF", row, 0)
         casa_calls.append(f"tb.addrows + tb.putcell for {len(obs_modes)} state rows")
 
-    n_state_rows = len(obs_modes)
-
     # ------------------------------------------------------------------
     # Step 7: Update STATE_ID in MAIN table
     # ------------------------------------------------------------------
@@ -524,6 +547,19 @@ def set_intents(
         casa_calls.append("tb.putcol('STATE_ID', state_id_array)")
 
     n_main_rows = len(field_ids)
+
+    # Re-read STATE rather than report len(obs_modes), which is what we meant
+    # to write, not what is on disk. workdir is optional on this tool, so the
+    # stage log gets a line only when the caller gave one.
+    with open_table(state_path) as tb:
+        n_state_rows = tb.nrows()
+    if workdir:
+        record_stage(
+            workdir,
+            "set_intents",
+            str(p),
+            {"state_rows": n_state_rows, "main_rows_updated": n_main_rows},
+        )
 
     # ------------------------------------------------------------------
     # Step 8: Return result

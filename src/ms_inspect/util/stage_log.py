@@ -45,11 +45,18 @@ STAGE_LOG_NAME = "stage_log.jsonl"
 #: a buffered write is lost when a job dies mid-stage, which is precisely the
 #: case the line has to explain.
 RECORD_STAGE_SNIPPET = '''\
-def _record_stage(workdir, stage, product):
+def _record_stage(workdir, stage, product, measurement=None):
     """Append one line to stage_log.jsonl. Raise if the product is missing.
 
     Raising is the point: a multi-step script must not run its next step
     against a product the previous step failed to write.
+
+    ``measurement`` carries what the stage actually changed, for the tools that
+    modify an MS in place rather than writing a new table. For those the
+    existence check is vacuous — the MS was there before the tool ran — so the
+    measurement is the only real content of the line. Those scripts raise on
+    their own after recording, because what counts as failure is the
+    measurement, not the path.
     """
     import json
     import os
@@ -62,6 +69,8 @@ def _record_stage(workdir, stage, product):
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "exists": exists,
     }
+    if measurement is not None:
+        entry["measurement"] = measurement
     if not exists:
         entry["error"] = "product not found after the step that writes it"
     with open(os.path.join(workdir, "stage_log.jsonl"), "a") as _fh:
@@ -73,6 +82,44 @@ def _record_stage(workdir, stage, product):
             f"{stage}: expected product {product!r} does not exist; stopping "
             "rather than continuing with a missing input."
         )
+'''
+
+
+#: Pasted into the scripts that must measure what they changed. Kept here
+#: rather than copied into each generator, so the three callers cannot drift.
+TABLE_PROBE_SNIPPET = '''\
+def _table_colnames(path):
+    """Column names of a CASA table; empty list if it cannot be opened."""
+    from casatools import table as _table
+
+    tb = _table()
+    try:
+        tb.open(path, nomodify=True)
+        return list(tb.colnames())
+    except Exception:
+        return []
+    finally:
+        try:
+            tb.close()
+        except Exception:
+            pass
+
+
+def _table_rows(path):
+    """Row count of a CASA table; 0 if it cannot be opened."""
+    from casatools import table as _table
+
+    tb = _table()
+    try:
+        tb.open(path, nomodify=True)
+        return int(tb.nrows())
+    except Exception:
+        return 0
+    finally:
+        try:
+            tb.close()
+        except Exception:
+            pass
 '''
 
 

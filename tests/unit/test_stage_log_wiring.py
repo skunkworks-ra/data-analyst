@@ -311,3 +311,174 @@ def test_priorcals_script_defines_the_recorder(ms_and_workdir):
     script = _script_from(run(ms_path=str(ms), workdir=str(wd)))
     defined = {n.name for n in ast.walk(ast.parse(script)) if isinstance(n, ast.FunctionDef)}
     assert "_record_stage" in defined
+
+
+# ---------------------------------------------------------------------------
+# Tools that change an MS in place — the line's content is the measurement
+# ---------------------------------------------------------------------------
+#
+# For these the existence check is vacuous: the MS was there before the tool
+# ran. So each script measures what the stage was supposed to change and logs
+# that number. The tests below assert the measurement is taken AFTER the task
+# and that the script stops when the measurement says the stage did nothing.
+
+
+def _measurements(script: str) -> list[dict]:
+    """The measurement dict literal passed to each _record_stage call."""
+    out = []
+    for call in _record_calls(ast.parse(script)):
+        out.append(
+            {
+                k.value: (v.id if isinstance(v, ast.Name) else ast.literal_eval(v))
+                for k, v in zip(call.args[3].keys, call.args[3].values, strict=True)
+            }
+            if len(call.args) > 3
+            else {}
+        )
+    return out
+
+
+def _caltable(tmp_path) -> str:
+    ct = tmp_path / "g.G"
+    ct.mkdir()
+    (ct / "table.info").write_text("Type = Calibration\n")
+    return str(ct)
+
+
+def test_applycal_measures_the_column_it_exists_to_populate(ms_and_workdir, tmp_path):
+    """applycal returns None, so a clean return proves only that it did not raise."""
+    from ms_modify.applycal import run
+
+    ms, wd = ms_and_workdir
+    script = _script_from(
+        run(
+            ms_path=str(ms),
+            field="0",
+            gaintable=[_caltable(wd)],
+            gainfield=[""],
+            interp=["linear"],
+            workdir=str(wd),
+        )
+    )
+    assert _measurements(script) == [{"field": "0", "corrected_data": "_corrected"}]
+    assert _module_level_index(script, "applycal") < _module_level_index(
+        script, "_record_stage"
+    )
+
+
+def test_applycal_script_stops_when_corrected_data_is_absent(ms_and_workdir, tmp_path):
+    """Recording the failure is not enough — the stage must not report success."""
+    from ms_modify.applycal import run
+
+    ms, wd = ms_and_workdir
+    script = _script_from(
+        run(
+            ms_path=str(ms),
+            field="0",
+            gaintable=[_caltable(wd)],
+            gainfield=[""],
+            interp=["linear"],
+            workdir=str(wd),
+        )
+    )
+    # Module level only: the recorder's own raise lives inside its function.
+    top = [
+        n
+        for n in ast.parse(script).body
+        if isinstance(n, ast.If)
+        and any(isinstance(b, ast.Raise) for b in n.body)
+    ]
+    assert len(top) == 1
+    assert getattr(top[0].test, "op", None).__class__ is ast.Not
+
+
+def test_setjy_measures_model_data(tmp_path):
+    """_build_script directly: the run() path needs a real FIELD subtable."""
+    from ms_modify.setjy import _build_script
+
+    script = _build_script(
+        "/data/x.ms", str(tmp_path), ["3C147"], "Perley-Butler 2017", True, []
+    )
+    keys = [set(m) for m in _measurements(script)]
+    assert keys == [{"model_data", "usescratch"}]
+
+
+def test_rflag_measures_the_flagged_fraction(ms_and_workdir):
+    from ms_modify.rflag import run
+
+    ms, wd = ms_and_workdir
+    script = _script_from(
+        run(ms_path=str(ms), field="0", spw="", workdir=str(wd), datacolumn="corrected")
+    )
+    assert _measurements(script) == [{"flagged_fraction": "_flagged"}]
+    assert _module_level_index(script, "flagdata") < _module_level_index(
+        script, "_record_stage"
+    )
+
+
+def test_preflag_uses_the_raising_form_for_calibrators_ms_only(ms_and_workdir, tmp_path):
+    """Two lines with different semantics in one script.
+
+    The flag pass gets a measurement and no raise — flagging nothing is a
+    legitimate outcome. calibrators.ms is a real new product that every later
+    stage runs against, so its line raises if the split produced nothing.
+    """
+    from ms_modify.preflag import run
+
+    ms, wd = ms_and_workdir
+    online = tmp_path / "x.flagonline.txt"
+    online.write_text("")
+    script = _script_from(
+        run(ms_path=str(ms), workdir=str(wd), cal_fields="0", online_flag_file=str(online))
+    )
+    calls = _record_calls(ast.parse(script))
+    assert len(calls) == 2
+    assert len(calls[0].args) == 4  # flag pass — carries a measurement
+    assert len(calls[1].args) == 3  # calibrators.ms — existence, and it raises
+
+
+def test_applycal_emitted_code_runs_records_and_raises(tmp_path):
+    """End to end on the emitted source, not on its text.
+
+    Executes the generated script with the casatasks import and the applycal
+    call removed, so the recorder, the column probe and the raise all run for
+    real against an MS that has no CORRECTED_DATA. This is the assertion that
+    would catch a template that produces syntactically valid but broken code.
+    """
+    from ms_modify.applycal import _build_script
+
+    ms = tmp_path / "t.ms"
+    ms.mkdir()
+    src = _build_script(
+        ms_str=str(ms),
+        workdir=str(tmp_path),
+        field="0",
+        gaintable=["/x"],
+        gainfield=[""],
+        interp=["linear"],
+        calwt=False,
+        applymode="calonly",
+        parang=True,
+        flagbackup=False,
+    )
+    tree = ast.parse(src)
+    keep = [
+        n
+        for n in tree.body
+        if not (isinstance(n, ast.ImportFrom) and n.module == "casatasks")
+        and not (
+            isinstance(n, ast.Expr) and getattr(getattr(n.value, "func", None), "id", "") == "applycal"
+        )
+    ]
+    module = ast.fix_missing_locations(ast.Module(body=keep, type_ignores=[]))
+    with pytest.raises(RuntimeError, match="CORRECTED_DATA is not present"):
+        exec(compile(module, "<generated>", "exec"), {})
+
+    from ms_inspect.util import stage_log
+
+    (entry,) = stage_log.read_stage_log(tmp_path)
+    assert entry["stage"] == "applycal"
+    # The distinction the whole design rests on: the path check passes and says
+    # nothing, the measurement is what reports the stage did not do its job.
+    assert entry["exists"] is True
+    assert entry["measurement"] == {"field": "0", "corrected_data": False}

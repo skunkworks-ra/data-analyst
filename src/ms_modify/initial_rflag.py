@@ -24,6 +24,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.stage_log import record_stage
 
 TOOL_NAME = "ms_apply_initial_rflag"
 
@@ -37,6 +38,7 @@ def _build_script(
     freqdevscale: float,
     timecutoff: float,
     freqcutoff: float,
+    workdir: str = "",
 ) -> str:
     """Return a self-contained initial_rflag Python script.
 
@@ -46,6 +48,8 @@ def _build_script(
     (their CORRECTED-MODEL residual is dominated by uncorrected gain/phase error,
     not RFI). The caller (skill) decides which field is valid at each stage.
     """
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
+
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -60,6 +64,8 @@ flagmanager save captures the pre-flag state; flagbackup=False on both passes
 avoids redundant per-call backups.
 \"\"\"
 from casatasks import flagdata, flagmanager
+
+{record}
 
 ms_path = {ms_str!r}
 field = {field!r}
@@ -90,6 +96,15 @@ flagdata(
     action="apply",
     flagbackup=False,
 )
+# flagdata(action='apply') returns nothing useful, so completion is measured
+# with a summary pass. It reports the flagged fraction the stage produced —
+# a number, not a verdict — so a pass that flagged nothing is visible in the
+# record instead of looking identical to one that worked.
+_summary = flagdata(vis={ms_str!r}, mode="summary")
+_flagged = (
+    float(_summary["flagged"]) / float(_summary["total"]) if _summary.get("total") else None
+)
+_record_stage({workdir!r}, "initial_rflag", {ms_str!r}, {{"flagged_fraction": _flagged}})
 print("Initial rflag + tfcrop complete.")
 print("Use ms_flag_summary to inspect the flag delta,")
 print("and ms_residual_stats to verify the residual distribution.")
@@ -157,7 +172,13 @@ def run(
 
     # Always write the script
     script_content = _build_script(
-        ms_str, field, timedevscale, freqdevscale, timecutoff, freqcutoff
+        ms_str,
+        field,
+        timedevscale,
+        freqdevscale,
+        timecutoff,
+        freqcutoff,
+        workdir=str(workdir_path),
     )
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
@@ -235,6 +256,18 @@ def run(
             f"initial rflag/tfcrop failed: {exc}",
             ms_path=ms_path,
         ) from exc
+
+    # flagdata(action='apply') returns nothing useful, so measure the flagged
+    # fraction the pass produced instead of asserting that it worked.
+    summary = flagdata(vis=ms_str, mode="summary")
+    total = float(summary.get("total") or 0.0)
+    flagged_fraction = float(summary["flagged"]) / total if total else None
+    record_stage(
+        str(workdir_path),
+        "initial_rflag",
+        ms_str,
+        {"flagged_fraction": flagged_fraction},
+    )
 
     base_data["flags_applied"] = fmt_field(True)
     return response_envelope(
