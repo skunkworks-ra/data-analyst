@@ -30,30 +30,35 @@ from analyst_driver.owner import set_owner_job
 
 
 def parse_decision(text: str) -> dict | None:
-    """The last well-formed JSON object in the text, or None.
+    """The last top-level JSON object in the text, or None.
 
-    A parse failure is a retryable turn, not a run failure — the caller
-    records it and the next turn starts fresh.
+    "Top-level" means: not sitting inside an object already found. Once
+    ``raw_decode`` reports where an object ends, the cursor jumps straight
+    there — nothing inside that span is examined again, so a nested object
+    (e.g. one of the "outputs" entries) is never treated as an independent
+    candidate. This is what a trailing markdown code fence used to defeat:
+    the fence broke an "object ends at the exact tail" check, and the old
+    fallback then picked the last nested brace it found instead of the
+    envelope containing it (G55 run, turn 7). A parse failure is a
+    retryable turn, not a run failure — the caller records it and the next
+    turn starts fresh.
     """
     decoder = json.JSONDecoder()
-    starts = [i for i, ch in enumerate(text) if ch == "{"]
-    for i in reversed(starts):
-        try:
-            obj, end = decoder.raw_decode(text[i:])
-        except json.JSONDecodeError:
+    last: dict | None = None
+    i = 0
+    while i < len(text):
+        if text[i] != "{":
+            i += 1
             continue
-        if isinstance(obj, dict) and i + end == len(text.rstrip()):
-            return obj
-    # no object ends at the tail; accept the last complete one anywhere
-    best = None
-    for i in starts:
         try:
-            obj, _ = decoder.raw_decode(text[i:])
+            obj, end = decoder.raw_decode(text, i)
         except json.JSONDecodeError:
+            i += 1
             continue
         if isinstance(obj, dict):
-            best = obj
-    return best
+            last = obj
+        i = end
+    return last
 
 
 def _as_number(v: Any) -> float | None:
