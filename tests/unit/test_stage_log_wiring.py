@@ -103,6 +103,25 @@ def ms_and_workdir(tmp_path):
     return _make_ms(tmp_path), _make_workdir(tmp_path)
 
 
+def _patch_model_data_present(monkeypatch) -> None:
+    """initial_rflag.run() now checks MODEL_DATA before writing a script (T8),
+    which needs casatools.table.open() to succeed. _make_ms's fake MS has no
+    real table, so this stands in for a real open, MODEL_DATA present."""
+    from contextlib import contextmanager
+
+    from ms_modify import initial_rflag
+
+    @contextmanager
+    def _fake_open_table(path, **kw):
+        class _T:
+            def colnames(self):
+                return ["DATA", "CORRECTED_DATA", "MODEL_DATA"]
+
+        yield _T()
+
+    monkeypatch.setattr(initial_rflag, "open_table", _fake_open_table)
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -534,9 +553,10 @@ def test_polcal_records_its_caltable(ms_and_workdir):
     assert _recorded(script) == [("polcal", caltable)]
 
 
-def test_initial_rflag_measures_the_flagged_fraction(ms_and_workdir):
+def test_initial_rflag_measures_the_flagged_fraction(ms_and_workdir, monkeypatch):
     from ms_modify.initial_rflag import run
 
+    _patch_model_data_present(monkeypatch)
     ms, wd = ms_and_workdir
     script = _script_from(run(ms_path=str(ms), workdir=str(wd), field="0"))
     assert _measurements(script) == [{"flagged_fraction": "_flagged"}]
@@ -582,7 +602,7 @@ def test_set_intents_stops_when_state_is_still_empty(tmp_path):
     assert len(top) == 1
 
 
-def test_every_wired_generator_emits_the_recorder(ms_and_workdir, tmp_path):
+def test_every_wired_generator_emits_the_recorder(ms_and_workdir, tmp_path, monkeypatch):
     """One assertion over all of them, so a newly added generator that forgets
     the recorder is caught here rather than in a run three weeks later."""
     from ms_modify import (
@@ -598,6 +618,7 @@ def test_every_wired_generator_emits_the_recorder(ms_and_workdir, tmp_path):
         rflag,
     )
 
+    _patch_model_data_present(monkeypatch)
     ms, wd = ms_and_workdir
     ct = _caltable(wd)
     online = tmp_path / "x.flagonline.txt"

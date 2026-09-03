@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ms_inspect.util.casa_context import validate_ms_path
+from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.stage_log import record_stage
@@ -169,6 +169,23 @@ def run(
             "flags ~90% of the data and is recoverable only by re-splitting.",
             ms_path=ms_path,
         )
+
+    # This tool always flags datacolumn='residual' (CORRECTED − MODEL); that
+    # computation is meaningless without a MODEL_DATA column. On the G55 run,
+    # ms_verify_model had already reported it absent and the caller called
+    # this tool anyway — the script it wrote failed in CASA 7 s later ("Failed
+    # to parse parameters for mode rflag"). Refuse here instead of writing a
+    # script CASA will reject; the skill already says to run setjy first.
+    with open_table(ms_str) as tb:
+        if "MODEL_DATA" not in set(tb.colnames()):
+            from ms_inspect.exceptions import ComputationError
+
+            raise ComputationError(
+                "MODEL_DATA column not present. Models may have been written "
+                "virtually (usescratch=False), which writes no MODEL_DATA column; "
+                "re-run setjy with usescratch=True to materialize it.",
+                ms_path=ms_path,
+            )
 
     # Always write the script
     script_content = _build_script(

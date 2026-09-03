@@ -3,16 +3,33 @@ Unit tests for ms_apply_initial_rflag.
 
 No CASA required. Tests cover:
 - _build_script: generated driver script content (two direct flagdata passes)
-- run: workdir validation, script file creation
+- run: workdir validation, script file creation, the MODEL_DATA guard
+
+`run()` now opens the MS to check for MODEL_DATA before writing a script (the
+whole tool computes on datacolumn='residual' = CORRECTED - MODEL, which is
+meaningless without it — T8). `open_table` is monkeypatched throughout this
+class (MODEL_DATA present by default; the one negative test overrides it) so
+the guard's two branches are exercised without a real MS or casatools ever
+actually running, consistent with the rest of this suite.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 from ms_modify.initial_rflag import _build_script
+
+
+@contextmanager
+def _fake_table(colnames: list[str]):
+    class _T:
+        def colnames(self):
+            return colnames
+
+    yield _T()
 
 # ---------------------------------------------------------------------------
 # _build_script
@@ -72,6 +89,17 @@ class TestBuildScript:
 
 
 class TestInitialRflagRun:
+    @pytest.fixture(autouse=True)
+    def _model_data_present(self, monkeypatch):
+        """MODEL_DATA present by default; the one negative test overrides this."""
+        from ms_modify import initial_rflag
+
+        monkeypatch.setattr(
+            initial_rflag,
+            "open_table",
+            lambda path, **kw: _fake_table(["DATA", "CORRECTED_DATA", "MODEL_DATA"]),
+        )
+
     def _make_ms(self, tmp_path) -> Path:
         ms = tmp_path / "test.ms"
         ms.mkdir()
@@ -163,3 +191,22 @@ class TestInitialRflagRun:
         run(str(ms), str(workdir), "3C147", execute=False)
         mtime2 = (workdir / "initial_rflag.py").stat().st_mtime_ns
         assert mtime2 >= mtime1
+
+    def test_missing_model_data_refuses_to_write_script(self, tmp_path, monkeypatch):
+        """T8: the G55 run's turn 5 — ms_verify_model had already reported
+        MODEL_DATA absent; the tool wrote initial_rflag.py anyway and CASA
+        rejected it 7s later. The guard must refuse before writing anything."""
+        from ms_inspect.exceptions import ComputationError
+        from ms_modify import initial_rflag
+
+        monkeypatch.setattr(
+            initial_rflag,
+            "open_table",
+            lambda path, **kw: _fake_table(["DATA", "CORRECTED_DATA"]),
+        )
+        ms = self._make_ms(tmp_path)
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        with pytest.raises(ComputationError, match="MODEL_DATA column not present"):
+            initial_rflag.run(str(ms), str(workdir), "3C147", execute=False)
+        assert not (workdir / "initial_rflag.py").exists()
