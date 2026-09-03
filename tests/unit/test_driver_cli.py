@@ -141,11 +141,11 @@ def test_run_registers_then_drives_to_completion(project, capsys):
     db = DriverDB(project / "runs")
     status = db.conn.execute("SELECT status FROM runs WHERE run_key = ?", (run_key,)).fetchone()[0]
     db.close()
-    assert status == "completed"
+    assert status == "stopped"
 
 
 def test_completed_run_is_not_re_driven(project, capsys):
-    """The point of the completed status: bare `run` must let it alone."""
+    """The point of the stopped status: bare `run` must let it alone."""
     write_config(project, [_stage_script(project), DONE])
     _cli(project, "run", "--ms", str(project / "a.ms"), "--workdir", str(project / "work"))
     capsys.readouterr()

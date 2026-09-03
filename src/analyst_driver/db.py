@@ -58,12 +58,15 @@ OUTCOMES = frozenset({"accepted", "retried", "failed"})
 #: Valid run statuses. ``active`` is the only one that means work remains;
 #: every other value is terminal and the driver skips it.
 #:
-#: ``completed`` exists because a reduction that has finished must be
-#: distinguishable from one that was interrupted. Without it both read
-#: ``active``, a bare ``run`` re-drives finished reductions, and a resume
-#: gate has nothing to read.
-RUN_STATUSES = frozenset({"active", "completed", "needs_human", "failed"})
-TERMINAL_STATUSES = frozenset({"completed", "needs_human", "failed"})
+#: ``stopped`` exists because a reduction the model ended must be
+#: distinguishable from one still in progress. Without it both read
+#: ``active``, a bare ``run`` re-drives it, and a resume gate has nothing to
+#: read. It is deliberately not called ``completed``: the driver cannot
+#: confirm the reduction actually succeeded, only that the model set
+#: done=true and stopped submitting turns — read decision.notes on the last
+#: turn for what the model actually meant.
+RUN_STATUSES = frozenset({"active", "stopped", "needs_human", "failed"})
+TERMINAL_STATUSES = frozenset({"stopped", "needs_human", "failed"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (

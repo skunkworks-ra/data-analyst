@@ -437,7 +437,7 @@ def test_no_temp_files_left(db):
 
 def test_set_run_status_accepts_the_vocabulary(db):
     key = _make_run(db)
-    for status in ("completed", "needs_human", "failed", "active"):
+    for status in ("stopped", "needs_human", "failed", "active"):
         db.set_run_status(key, status)
         assert db._read_json(db._run_json(key))["status"] == status
 
@@ -458,9 +458,9 @@ def test_find_runs_by_ms_matches_the_absolute_path(db, tmp_path):
 def test_find_runs_by_ms_excludes_terminal_runs(db, tmp_path):
     ms = tmp_path / "x.ms"
     db.create_run("k1", ms_path=str(ms.absolute()), workdir="/w", started_at="2026-08-31T10:00:00Z")
-    db.set_run_status("k1", "completed")
+    db.set_run_status("k1", "stopped")
     assert db.find_runs_by_ms(ms) == []
-    assert len(db.find_runs_by_ms(ms, statuses=("completed",))) == 1
+    assert len(db.find_runs_by_ms(ms, statuses=("stopped",))) == 1
 
 
 def test_find_runs_by_ms_orders_oldest_first(db, tmp_path):

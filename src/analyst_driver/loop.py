@@ -99,19 +99,45 @@ def harvest_metrics(payload: Any, prefix: str) -> list[dict]:
     return rows
 
 
+def _unwrap_mcp_result(payload: Any) -> Any:
+    """Undo the MCP bridge's own double-encoding, if present.
+
+    A real captured envelope (G55 run, turn 5) decodes once to
+    ``{"result": "<json string>"}`` — a dict with exactly one key whose value
+    is itself JSON text. That is the bridge's wrapper, not the tool's
+    payload, so a second decode is needed before ``harvest_metrics`` or
+    ``_find_key`` ever sees a numeric leaf. Any other shape (a plain dict, a
+    ``{"result": <non-string>}``) is returned unchanged — this unwraps one
+    specific artifact, not "result" as a generic envelope key a tool might
+    legitimately use itself.
+    """
+    if (
+        isinstance(payload, dict)
+        and set(payload) == {"result"}
+        and isinstance(payload["result"], str)
+    ):
+        try:
+            return json.loads(payload["result"])
+        except json.JSONDecodeError:
+            return payload
+    return payload
+
+
 def _tool_payload(result: Any) -> Any:
     """Normalize a backend's tool_result content to a parsed object."""
     if isinstance(result, str):
         try:
-            return json.loads(result)
+            payload = json.loads(result)
         except json.JSONDecodeError:
             return None
+        return _unwrap_mcp_result(payload)
     if isinstance(result, list):  # content blocks [{"type": "text", "text": ...}]
         text = "".join(b.get("text", "") for b in result if isinstance(b, dict))
         try:
-            return json.loads(text)
+            payload = json.loads(text)
         except json.JSONDecodeError:
             return None
+        return _unwrap_mcp_result(payload)
     return result
 
 
@@ -138,12 +164,21 @@ def _find_key(node: Any, key: str) -> list[Any]:
     return found
 
 
-def check_citations(cited: list[dict], workdir: str | Path) -> list[dict]:
+def check_citations(cited: list[dict], tool_calls: list[dict]) -> list[dict]:
     """Record both sides of every cited value. Never refuse.
 
-    'decision cited flag_fraction = 0.12; the file says 0.92' is a fact the
-    record keeps; judging it is the next model's job, not the driver's.
+    'decision cited flag_fraction = 0.12; ms_flag_summary said 0.92' is a
+    fact the record keeps; judging it is the next model's job, not the
+    driver's.
+
+    ``source`` is the model's own prose naming which tool call it read the
+    value from (e.g. "ms_field_list on calibrators.ms, field 4") — not a
+    file path, so it is not resolved as one. The check instead searches this
+    turn's own ``tool_calls``, which already hold the measured values: every
+    numeric fact the model could truthfully cite this turn is somewhere in
+    there.
     """
+    payloads = [_tool_payload(c.get("result")) for c in tool_calls]
     out: list[dict] = []
     for c in cited:
         if not isinstance(c, dict):
@@ -154,25 +189,19 @@ def check_citations(cited: list[dict], workdir: str | Path) -> list[dict]:
             "source": c.get("source"),
             "found_value": None,
             "n_matches": 0,
-            "error": None,
         }
-        src = c.get("source")
-        if src:
-            path = Path(src)
-            if not path.is_absolute():
-                path = Path(workdir) / path
-            try:
-                payload = json.loads(path.read_text())
-                key = str(c.get("name") or "").split(".")[-1]
-                matches = _find_key(payload, key) if key else []
-                rec["n_matches"] = len(matches)
-                if matches:
-                    first = matches[0]
-                    if isinstance(first, dict) and "value" in first:
-                        first = first["value"]
-                    rec["found_value"] = first
-            except (OSError, json.JSONDecodeError) as exc:
-                rec["error"] = f"{type(exc).__name__}: {exc}"
+        key = str(c.get("name") or "").split(".")[-1]
+        matches: list[Any] = []
+        if key:
+            for payload in payloads:
+                if payload is not None:
+                    matches.extend(_find_key(payload, key))
+        rec["n_matches"] = len(matches)
+        if matches:
+            first = matches[0]
+            if isinstance(first, dict) and "value" in first:
+                first = first["value"]
+            rec["found_value"] = first
         out.append(rec)
     return out
 
@@ -352,15 +381,22 @@ class Loop:
         ordinal = self.db.next_ordinal(run_key)
 
         data = status_payload.get("data") if isinstance(status_payload, dict) else {}
-        stage = (
-            (decision or {}).get("stage")
-            or (data.get("next_recommended_step") if isinstance(data, dict) else None)
-            or "unknown"
-        )
+        if (decision or {}).get("done") is True:
+            # A terminal marker, not a continuation stage. ms_workflow_status's
+            # next_recommended_step answers "what to do next" — borrowing it
+            # here mislabels the turn where the model says there is no next,
+            # and skews the attempt count for whatever stage it names.
+            stage = "done"
+        else:
+            stage = (
+                (decision or {}).get("stage")
+                or (data.get("next_recommended_step") if isinstance(data, dict) else None)
+                or "unknown"
+            )
 
         cited = (decision or {}).get("cited") or []
         extras = {
-            "citations": check_citations(cited, run["workdir"]),
+            "citations": check_citations(cited, result.tool_calls),
             "tool_calls": result.tool_calls,
             "transcript": result.transcript,
             "harvested_metrics": harvest_from_tool_calls(result.tool_calls),
@@ -393,7 +429,15 @@ class Loop:
             self.db.complete_turn(
                 run_key, ordinal, outcome="accepted", metrics=extras["harvested_metrics"]
             )
-            self.db.set_run_status(run_key, "completed")
+            # "stopped" is a neutral terminal state, not a verdict: the driver
+            # cannot independently confirm a reduction actually succeeded, only
+            # that the model set done=true and the run is no longer active. The
+            # 2026-08-31 G55 run used done=true to signal a halt it could not
+            # recover from ("Halted, not complete" in its own notes) — the old
+            # "completed" status contradicted that note. Read decision.notes
+            # for what the model actually meant; the status field only says
+            # the run stopped.
+            self.db.set_run_status(run_key, "stopped")
             return {"action": "run_completed", "ordinal": ordinal}
 
         script = (decision or {}).get("script")

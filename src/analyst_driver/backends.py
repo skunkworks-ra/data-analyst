@@ -105,19 +105,28 @@ def _jsonl(raw: str) -> list[Any]:
 
 
 class StubBackend:
-    """Canned responses, for tests and the dry run."""
+    """Canned responses, for tests and the dry run.
+
+    ``tool_calls``, given, supplies one list per response (parallel to
+    ``responses``) so a test can exercise the metric-harvest and citation
+    paths, which read ``BackendResult.tool_calls`` — a real turn's decision
+    text and its tool calls are two views of the one captured transcript,
+    not independent inputs.
+    """
 
     kind = "stub"
 
-    def __init__(self, responses: list[str]):
+    def __init__(self, responses: list[str], tool_calls: list[list[dict]] | None = None):
         self.responses = list(responses)
+        self.tool_calls = list(tool_calls) if tool_calls is not None else None
         self.calls: list[str] = []
 
     def run(self, prompt: str, workdir: str | Path) -> BackendResult:
         self.calls.append(prompt)
         if not self.responses:
             raise RuntimeError("stub backend ran out of responses")
-        return BackendResult(text=self.responses.pop(0), model="stub")
+        calls = self.tool_calls.pop(0) if self.tool_calls is not None else []
+        return BackendResult(text=self.responses.pop(0), model="stub", tool_calls=calls)
 
 
 #: Removed from every claude turn unless a caller explicitly overrides it.

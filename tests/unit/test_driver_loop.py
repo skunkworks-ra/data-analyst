@@ -35,6 +35,8 @@ from analyst_driver.loop import (
 )
 from analyst_driver.owner import read_owner, write_owner
 
+FIXTURES = Path(__file__).parent / "fixtures"
+
 # ------------------------------------------------------------ parse_decision
 
 
@@ -99,24 +101,78 @@ def test_harvest_from_tool_calls_parses_text_blocks():
     assert rows == [{"name": "ms_image_stats.rms", "value": 1.5, "unit": None, "flag": None}]
 
 
+def test_harvest_unwraps_the_real_mcp_double_encoding():
+    """A captured envelope (G55 run, turn 5, ms_corrected_stats).
+
+    ``result`` decodes once to ``{"result": "<json string>"}`` — the MCP
+    bridge's own wrapper — not the tool's payload. Before the fix this
+    produced zero rows on every real run despite passing hand-typed tests.
+    """
+    call = json.loads((FIXTURES / "g55_turn5_mcp_tool_call.json").read_text())
+    rows = harvest_from_tool_calls([call])
+    by_name = {r["name"]: r for r in rows}
+    assert by_name["mcp__ms-inspect__ms_corrected_stats.data.per_field[0].amp_median"]["value"] == (
+        0.158563
+    )
+    assert by_name["mcp__ms-inspect__ms_corrected_stats.data.per_field[1].phase_rms_deg"][
+        "value"
+    ] == 7.536
+
+
 # --------------------------------------------------------- check_citations
 
 
-def test_citation_mismatch_recorded_not_refused(tmp_path):
-    (tmp_path / "measurements.json").write_text(json.dumps({"flag_fraction": 0.92}))
+def test_citation_mismatch_recorded_not_refused():
+    """'decision cited flag_fraction=0.12; the tool said 0.92' is a fact kept, not a refusal."""
+    tool_calls = [{"tool": "ms_flag_summary", "result": json.dumps({"flag_fraction": 0.92})}]
     out = check_citations(
-        [{"name": "flag_fraction", "value": 0.12, "source": "measurements.json"}],
-        tmp_path,
+        [{"name": "flag_fraction", "value": 0.12, "source": "ms_flag_summary"}],
+        tool_calls,
     )
     assert out[0]["cited_value"] == 0.12
     assert out[0]["found_value"] == 0.92
     assert out[0]["n_matches"] == 1
 
 
-def test_citation_missing_source_recorded(tmp_path):
-    out = check_citations([{"name": "x", "value": 1, "source": "absent.json"}], tmp_path)
+def test_citation_not_found_in_any_tool_call_recorded():
+    out = check_citations([{"name": "x", "value": 1, "source": "ms_flag_summary"}], [])
     assert out[0]["found_value"] is None
-    assert out[0]["error"] is not None
+    assert out[0]["n_matches"] == 0
+
+
+def test_citation_source_is_prose_not_a_path():
+    """The model's own words, not a file path — the defect check_citations existed to fix.
+
+    A real ``source`` value looks like "ms_field_list on calibrators.ms
+    (field_id 4, OBSERVE_TARGET)": prose naming a tool call, never a path
+    that resolves on disk. The check must not try to open it.
+    """
+    tool_calls = [{"tool": "ms_field_list", "result": json.dumps({"field_id": 4})}]
+    out = check_citations(
+        [
+            {
+                "name": "field_id",
+                "value": 4,
+                "source": "ms_field_list on calibrators.ms (field_id 4, OBSERVE_TARGET)",
+            }
+        ],
+        tool_calls,
+    )
+    assert out[0]["found_value"] == 4
+    assert out[0]["n_matches"] == 1
+
+
+def test_citation_resolves_against_the_real_double_encoded_call():
+    """Same fixture as the harvest test: the key exists once per field (6),
+    so a citation naming it without a field qualifier finds all six and
+    reports the first — this is the search, not a targeted lookup."""
+    call = json.loads((FIXTURES / "g55_turn5_mcp_tool_call.json").read_text())
+    out = check_citations(
+        [{"name": "phase_rms_deg", "value": 7.536, "source": "ms_corrected_stats, field 1"}],
+        [call],
+    )
+    assert out[0]["n_matches"] == 6
+    assert out[0]["found_value"] == 104.794
 
 
 # ------------------------------------------------------------- render_brief
@@ -359,13 +415,19 @@ def test_no_script_is_a_retryable_turn(env):
 
 def test_citations_recorded_both_sides(env):
     db, key, workdir = env
-    (workdir / "m.json").write_text(json.dumps({"flag_fraction": 0.92}))
     script = _script(workdir)
     decision = {
         "script": str(script),
-        "cited": [{"name": "flag_fraction", "value": 0.12, "source": "m.json"}],
+        "cited": [
+            {
+                "name": "flag_fraction",
+                "value": 0.12,
+                "source": "ms_flag_summary on calibrators.ms",
+            }
+        ],
     }
-    backend = StubBackend([json.dumps(decision)])
+    tool_calls = [[{"tool": "ms_flag_summary", "result": json.dumps({"flag_fraction": 0.92})}]]
+    backend = StubBackend([json.dumps(decision)], tool_calls=tool_calls)
     _loop(db, backend).step(key)
     record = db._read_json(db._turn_json(key, 1))
     cite = record["citations"][0]
@@ -437,7 +499,20 @@ def test_done_decision_completes_the_run(tmp_path):
     db, loop = _done_loop(tmp_path, json.dumps({"done": True, "notes": "finished"}))
     result = loop.step("k1")
     assert result["action"] == "run_completed"
-    assert db._read_json(db._run_json("k1"))["status"] == "completed"
+    # "stopped", not "completed": the driver never verifies the model's claim,
+    # only that it made one — decision.notes carries what the model meant.
+    assert db._read_json(db._run_json("k1"))["status"] == "stopped"
+    db.close()
+
+
+def test_done_decision_labels_the_turn_done_not_the_next_recommendation(tmp_path):
+    """A terminal marker must not borrow ms_workflow_status's forward-looking
+    label — that mislabels the halted-run case, where 'done' is how the
+    model signals it cannot continue, not that it finished cleanly."""
+    db, loop = _done_loop(tmp_path, json.dumps({"done": True, "notes": "halted, not complete"}))
+    loop.step("k1")
+    turn = db._read_json(db._turn_json("k1", 1))
+    assert turn["stage"] == "done"
     db.close()
 
 
@@ -461,10 +536,10 @@ def test_done_false_is_not_a_completion(tmp_path):
     db.close()
 
 
-def test_completed_run_is_skipped_on_the_next_step(tmp_path):
+def test_stopped_run_is_skipped_on_the_next_step(tmp_path):
     db, loop = _done_loop(tmp_path, json.dumps({"done": True}))
     loop.step("k1")
-    assert loop.step("k1") == {"action": "skipped", "status": "completed"}
+    assert loop.step("k1") == {"action": "skipped", "status": "stopped"}
     db.close()
 
 
