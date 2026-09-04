@@ -194,6 +194,21 @@ def test_render_brief_from_synthetic_status():
     assert "import_asdm" in brief2
 
 
+def test_render_brief_states_the_declared_scope():
+    run = {"ms_path": "/d/a.ms", "workdir": "/w", "telescope": "VLA"}
+    payload = {"data": {"next_recommended_step": "apply_preflag"}}
+    brief = render_brief(run, payload, None, "calibration + imaging, prefer awproject")
+    assert "calibration + imaging, prefer awproject" in brief
+
+
+def test_render_brief_default_scope_says_use_your_own_judgement():
+    """No scope declared must not read as an empty, silently-missing line."""
+    run = {"ms_path": "/d/a.ms", "workdir": "/w", "telescope": "VLA"}
+    payload = {"data": {"next_recommended_step": "apply_preflag"}}
+    brief = render_brief(run, payload, None)
+    assert "not declared — use your own judgement" in brief
+
+
 # ------------------------------------------------------------- executors
 
 
@@ -373,6 +388,23 @@ def env(tmp_path, monkeypatch):
 
 def _loop(db, backend):
     return Loop(db, backend, LocalExecutor(runner="/bin/sh"), max_turns=5, poll_interval=0.01)
+
+
+def test_loop_scope_reaches_the_backend_prompt(env, tmp_path):
+    """Loop(scope=...) must survive to the actual brief, not just render_brief."""
+    db, key, workdir = env
+    script = _script(workdir, "exit 0")
+    decision = {"script": str(script), "tool": "ms_apply_preflag", "stage": "apply_preflag"}
+    backend = StubBackend([json.dumps(decision)])
+    loop = Loop(
+        db,
+        backend,
+        LocalExecutor(runner="/bin/sh"),
+        poll_interval=0.01,
+        scope="full-Stokes calibration + imaging",
+    )
+    loop.step(key)
+    assert "full-Stokes calibration + imaging" in backend.calls[0]
 
 
 def test_one_turn_end_to_end(env, tmp_path):

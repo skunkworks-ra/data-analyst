@@ -220,6 +220,7 @@ MS: {ms_path}
 Work directory: {workdir}
 Telescope: {telescope}
 Free space in the work directory: {free_bytes}
+Declared scope for this run: {scope}
 
 Workflow status (ms_workflow_status, measured from disk):
 {status_json}
@@ -244,10 +245,12 @@ Do this, in order:
    Only "script" is required. At the import stage name the MS the script will
    write as an output with kind "ms": that is how the loop learns where the
    MS is, and the run cannot continue without it.
-5. If the reduction is finished and no stage remains, reply instead with
+5. If the reduction has reached the declared scope above, or is otherwise
+   finished with no stage remaining, reply instead with
    {{"done": true, "notes": "<why it is finished>"}} and name no script.
    Only you can say this: ms_workflow_status reports "selfcal_or_done" and
-   cannot tell the two apart.
+   cannot tell the two apart. The declared scope is a stated goal, not a
+   rule the loop checks — weigh it against what the data actually needs.
 """
 
 
@@ -275,7 +278,9 @@ def _format_bytes(n: int | None) -> str:
     return f"{n} bytes ({n / 1e9:.1f} GB)"
 
 
-def render_brief(run: dict, status_payload: dict, previous_turn: dict | None) -> str:
+def render_brief(
+    run: dict, status_payload: dict, previous_turn: dict | None, scope: str = ""
+) -> str:
     if previous_turn is None:
         previous = "none — this is the first turn."
     else:
@@ -293,6 +298,7 @@ def render_brief(run: dict, status_payload: dict, previous_turn: dict | None) ->
         workdir=run["workdir"],
         telescope=run.get("telescope") or "unknown",
         free_bytes=_format_bytes(free_bytes(run["workdir"])),
+        scope=scope or "not declared — use your own judgement",
         status_json=json.dumps(status_payload, indent=1, sort_keys=True, default=str),
         previous=previous,
     )
@@ -322,12 +328,14 @@ class Loop:
         *,
         max_turns: int = 100,
         poll_interval: float = 60.0,
+        scope: str = "",
     ):
         self.db = db
         self.backend = backend
         self.executor = executor
         self.max_turns = max_turns
         self.poll_interval = poll_interval
+        self.scope = scope
 
     # sense — ground truth only, no model
     def sense(self, run: dict) -> dict:
@@ -380,7 +388,7 @@ class Loop:
         self, run_key: str, run: dict, last: dict | None, *, block: bool
     ) -> dict:
         status_payload = self.sense(run)
-        brief = render_brief(run, status_payload, last)
+        brief = render_brief(run, status_payload, last, self.scope)
         result: BackendResult = self.backend.run(brief, run["workdir"])
         decision = parse_decision(result.text or "")
         ordinal = self.db.next_ordinal(run_key)

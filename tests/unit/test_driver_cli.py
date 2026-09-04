@@ -388,3 +388,45 @@ def test_default_config_reaches_the_backend(project):
     loop = build_loop(cfg, db)
     db.close()
     assert "mcp__ms-create" in loop.backend.allowed_tools
+
+
+def test_default_config_scope_is_empty(project):
+    """An unedited template must behave exactly as no scope did — empty, not absent."""
+    import tomllib
+
+    from analyst_driver.cli import build_loop
+
+    _cli(project, "init")
+    with open(project / "config.toml", "rb") as fh:
+        cfg = tomllib.load(fh)
+    cfg["driver"]["run_root"] = str(project / "runs")
+    db = DriverDB(project / "runs")
+    loop = build_loop(cfg, db)
+    db.close()
+    assert loop.scope == ""
+
+
+def test_scope_cli_flag_overrides_config(project, monkeypatch):
+    """--scope must reach build_loop even though config.toml has no scope key."""
+    import analyst_driver.cli as cli_mod
+
+    write_config(project, [_stage_script(project), DONE])
+    real_build_loop = cli_mod.build_loop
+    seen: dict = {}
+
+    def spy(cfg, db):
+        seen["scope"] = (cfg.get("driver") or {}).get("scope")
+        return real_build_loop(cfg, db)
+
+    monkeypatch.setattr(cli_mod, "build_loop", spy)
+    _cli(
+        project,
+        "run",
+        "--ms",
+        str(project / "a.ms"),
+        "--workdir",
+        str(project / "work"),
+        "--scope",
+        "calibration + imaging",
+    )
+    assert seen["scope"] == "calibration + imaging"

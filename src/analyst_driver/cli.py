@@ -53,6 +53,15 @@ run_root = "runs"
 max_turns = 100
 # Seconds between polls while waiting for a job.
 poll_interval = 60
+# Declares this run's goal in plain language — appended to every turn's
+# brief. The model reads it like any other instruction; the loop never
+# parses or checks it. Only the model decides {"done": true}, still.
+# Examples:
+#   scope = "calibration only"
+#   scope = "calibration + imaging"
+#   scope = "full-Stokes calibration + imaging"
+#   scope = "calibration + imaging, prefer MT-MFS nterms=2, use awproject"
+scope = ""
 
 [backend]
 # claude | opencode | codex | stub
@@ -143,6 +152,7 @@ def build_loop(cfg: dict[str, Any], db: DriverDB) -> Loop:
         executor,
         max_turns=int(driver_cfg.get("max_turns", 100)),
         poll_interval=float(driver_cfg.get("poll_interval", 60)),
+        scope=driver_cfg.get("scope", ""),
     )
 
 
@@ -289,6 +299,8 @@ def cmd_step(args: argparse.Namespace, cfg: dict[str, Any], db: DriverDB) -> int
 
 
 def cmd_run(args: argparse.Namespace, cfg: dict[str, Any], db: DriverDB) -> int:
+    if args.scope is not None:
+        cfg = {**cfg, "driver": {**(cfg.get("driver") or {}), "scope": args.scope}}
     loop = build_loop(cfg, db)
     keys, code, msg = _resolve_run(args, cfg, db)
     if code:
@@ -372,6 +384,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--telescope", default=None)
     p.add_argument("--run", default=None, help="one run_key; default all active runs")
     p.add_argument("--resume", action="store_true", help="take over an interrupted run")
+    p.add_argument(
+        "--scope", default=None, help="override config.toml's [driver] scope for this invocation"
+    )
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("status", help="list runs, their latest turn and their owner")
