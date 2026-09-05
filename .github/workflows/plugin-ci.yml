@@ -98,6 +98,9 @@ jobs:
           claude plugin marketplace add ./
           claude plugin install radio-analyst@radio-analyst
 
+      - name: Warm up MCP server (cold casatools import happens here, not in the timed call)
+        run: claude mcp list
+
       - name: Ask Claude to use the plugin end-to-end (billed to Pro subscription token)
         run: |
           claude -p "Use the ms_observation_info tool from the ms-inspect MCP server on the MS at $PWD/smoke.ms and report the telescope name it returns." \
