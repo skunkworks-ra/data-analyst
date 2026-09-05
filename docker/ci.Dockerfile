@@ -11,12 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://pixi.sh/install.sh | bash \
     && mv /root/.pixi/bin/pixi /usr/local/bin/pixi
 
-# Node — required by the Claude Code CLI installer
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
+# Claude Code CLI (native installer; version floor enforced via the
+# project's .claude/settings.json minimumVersion, not pinned here)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/root/.local/bin:${PATH}"
 
 WORKDIR /workspace

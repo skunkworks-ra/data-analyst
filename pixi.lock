@@ -250,6 +250,9 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/1e/d3/26bf1008eb3d2daa8ef4cacc7f3bfdc11818d111f7e2d0201bc6e3b49d45/annotated_doc-0.0.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/78/b6/6307fbef88d9b5ee7421e68d78a9f162e0da4900bc5f5793f6d3d0e34fb8/annotated_types-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/38/0e/27be9fdef66e72d64c0cdc3cc2823101b80585f8119b5c112c2e8f5f7dab/anyio-4.12.1-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/87/2f/7ec061e2eda1d029b7a09c0ae6e87a659aee2f47856dc0b2195d24f33eed/casaconfig-1.5.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/63/f6/ab174ba383b1c41ba326e39b416ef210d73b85e9f6359608d4446aba536d/casatasks-6.7.6.14-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/e3/fe/29ffbf125acd6ae63f4465ba59878627fd41221fce2ab369748d5df9a190/casatools-6.7.6.14-cp312-cp312-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/78/2d/7fa73dfa841b5ac06c7b8855cfc18622132e365f5b81d02230333ff26e9e/cffi-2.0.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/67/5c/ae30362a88b4da237d71ea214a8c7eb915db3eec941adda511729ac25fa2/charset_normalizer-3.4.5-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/6b/e7/237155ae19a9023de7e30ec64e5d99a9431a567407ac21170a046d22a5a3/cryptography-46.0.5-cp311-abi3-manylinux_2_28_x86_64.whl
@@ -1632,6 +1635,31 @@ packages:
   - pkg:pypi/cached-property?source=hash-mapping
   size: 11065
   timestamp: 1615209567874
+- pypi: https://files.pythonhosted.org/packages/87/2f/7ec061e2eda1d029b7a09c0ae6e87a659aee2f47856dc0b2195d24f33eed/casaconfig-1.5.0-py3-none-any.whl
+  name: casaconfig
+  version: 1.5.0
+  sha256: f046c92183d2b9561921abbba9ea4bcee291822941be2e54010544d0d4d12671
+  requires_dist:
+  - certifi>=2023.5.7
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/63/f6/ab174ba383b1c41ba326e39b416ef210d73b85e9f6359608d4446aba536d/casatasks-6.7.6.14-py3-none-any.whl
+  name: casatasks
+  version: 6.7.6.14
+  sha256: f99ca8c781e286bebc4a7fe1e2b4dd8fe2d1ef184d8bc4737849c9338630ea3d
+  requires_dist:
+  - casatools==6.7.6.14
+  - matplotlib
+  - scipy
+  - certifi
+  - pyerfa
+- pypi: https://files.pythonhosted.org/packages/e3/fe/29ffbf125acd6ae63f4465ba59878627fd41221fce2ab369748d5df9a190/casatools-6.7.6.14-cp312-cp312-manylinux_2_28_x86_64.whl
+  name: casatools
+  version: 6.7.6.14
+  sha256: f6db5ec590fb988799a614a0143391d4987d2c0650235b56fbedbdac33295e18
+  requires_dist:
+  - numpy
+  - casaconfig
+  requires_python: '>=3.6'
 - conda: https://conda.anaconda.org/conda-forge/noarch/certifi-2026.2.25-pyhd8ed1ab_0.conda
   sha256: a6b118fd1ed6099dc4fc03f9c492b88882a780fadaef4ed4f93dc70757713656
   md5: 765c4d97e877cdbbb88ff33152b86125
