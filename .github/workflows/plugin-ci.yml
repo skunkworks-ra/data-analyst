@@ -1,0 +1,113 @@
+name: Plugin CI
+
+on:
+  push:
+    branches: [main, ci-setup]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/radio-analyst-ci
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ env.IMAGE }}:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/ci.Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  smoke-free:
+    needs: build-image
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.build-image.outputs.image }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: pixi install
+        run: pixi install --manifest-path pixi.toml
+
+      - name: Prepare CASA measures data dir
+        run: mkdir -p "$HOME/.casa/data"
+
+      - name: Generate smoke MS
+        run: pixi run --manifest-path pixi.toml python scripts/ci/generate_smoke_ms.py smoke.ms
+
+      - name: Install plugin from this checkout (isolated HOME)
+        run: |
+          mkdir -p .scratch/ci-home
+          export HOME="$PWD/.scratch/ci-home"
+          claude plugin marketplace add ./
+          claude plugin install radio-analyst@radio-analyst
+          claude plugin list
+
+      - name: Raw MCP handshake + tool call (no LLM, no tokens spent)
+        run: pixi run --manifest-path pixi.toml python scripts/ci/mcp_smoke.py smoke.ms
+
+  smoke-llm:
+    needs: [build-image, smoke-free]
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.build-image.outputs.image }}
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      # casatools' cold import pulls in ~150 shared libraries; the plugin's
+      # first MCP server spawn under claude -p can exceed the 30s default.
+      MCP_TIMEOUT: "120000"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: pixi install
+        run: pixi install --manifest-path pixi.toml
+
+      - name: Prepare CASA measures data dir
+        run: mkdir -p "$HOME/.casa/data"
+
+      - name: Generate smoke MS
+        run: pixi run --manifest-path pixi.toml python scripts/ci/generate_smoke_ms.py smoke.ms
+
+      - name: Install plugin (isolated HOME)
+        run: |
+          mkdir -p .scratch/ci-home
+          export HOME="$PWD/.scratch/ci-home"
+          echo "HOME=$HOME" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.casa/data"
+          claude plugin marketplace add ./
+          claude plugin install radio-analyst@radio-analyst
+
+      - name: Warm up MCP server (cold casatools import happens here, not in the timed call)
+        run: claude mcp list
+
+      - name: Ask Claude to use the plugin end-to-end (billed to Pro subscription token)
+        run: |
+          claude -p "Use the ms_observation_info tool from the ms-inspect MCP server on the MS at $PWD/smoke.ms and report the telescope name it returns." \
+            --model haiku \
+            --allowed-tools "mcp__plugin_radio-analyst_ms-inspect__ms_observation_info" \
+            --permission-prompts none \
+            --output-format json \
+            > llm_smoke_output.json
+          cat llm_smoke_output.json
+          grep -qi "VLA" llm_smoke_output.json

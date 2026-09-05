@@ -27,11 +27,15 @@ ruff       = ">=0.4"
 [pypi-dependencies]
 ms-inspect       = { path = ".", editable = true }   # this package
 mcp              = { version = ">=1.0", extras = ["cli"] }
-# casatools / casatasks: install manually via `pixi run pip install casatools casatasks`
-# (uv resolver doesn't handle macosx_15_0 platform tag on newer macOS)
+# casatools / casatasks: pinned for linux-64 below via [target.linux-64].
+# On osx-arm64, install manually (uv resolver doesn't handle macosx_15_0 tag).
 pytest-asyncio   = ">=0.23"
 requests         = ">=2.28"
 beautifulsoup4   = ">=4.12"
+
+[target.linux-64.pypi-dependencies]
+casatools = ">=6.6"
+casatasks = ">=6.6"
 
 # ---------------------------------------------------------------------------
 # Tasks — common developer workflows
