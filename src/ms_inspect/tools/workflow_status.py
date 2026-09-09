@@ -207,6 +207,14 @@ def run(ms_path: str, workdir: str) -> dict:
             else field(corrected_calibrators)
         ),
         "final_solves_completed": final_solves_done,
+        # Which MS each MS-reading probe actually opened. Without this the
+        # three probes above are indistinguishable from each other in the
+        # output, and a wrong answer looks identical to a right one.
+        "probed": {
+            "intents_from": ms_str if (p / "STATE").exists() else None,
+            "corrected_target_from": ms_str if ms_valid else None,
+            "corrected_calibrators_from": (str(calibrators_ms) if calibrators_ms_present else None),
+        },
         "workdir": str(wd),
         "next_recommended_step": next_step,
     }

@@ -108,8 +108,16 @@ def test_unreadable_main_table_yields_unavailable_corrected(fake_ms, monkeypatch
     assert result["completeness_summary"] == "UNAVAILABLE"
 
 
+def _make_calibrators_ms(workdir):
+    cal_ms = workdir / "calibrators.ms"
+    cal_ms.mkdir()
+    (cal_ms / "table.info").write_text("Type = Measurement Set\n")
+    return cal_ms
+
+
 def test_present_corrected_column_reads_true(fake_ms, monkeypatch):
     ms, workdir = fake_ms
+    _make_calibrators_ms(workdir)
     monkeypatch.setattr(
         workflow_status,
         "open_table",
@@ -142,6 +150,36 @@ def _log(workdir, *stages, product="/w/thing"):
                 )
                 + "\n"
             )
+
+
+def test_probed_names_the_measurement_set_behind_every_probe(fake_ms, monkeypatch):
+    """
+    Each probe must record the path it opened.
+
+    Without this the probes are indistinguishable from each other in the
+    output, and a wrong answer looks identical to a right one.
+    """
+    ms, workdir = fake_ms
+    (ms / "STATE").mkdir()
+    cal_ms = _make_calibrators_ms(workdir)
+    monkeypatch.setattr(workflow_status, "open_table", _fake_main_table(colnames=["DATA"]))
+
+    probed = _run(ms, workdir)["data"]["probed"]
+
+    assert probed["intents_from"] == str(ms)
+    assert probed["corrected_target_from"] == str(ms)
+    assert probed["corrected_calibrators_from"] == str(cal_ms)
+
+
+def test_probed_reports_none_for_a_measurement_set_that_does_not_exist_yet(fake_ms, monkeypatch):
+    """No calibrators.ms means nothing was probed there, and it must say so."""
+    ms, workdir = fake_ms
+    monkeypatch.setattr(workflow_status, "open_table", _fake_main_table(colnames=["DATA"]))
+
+    probed = _run(ms, workdir)["data"]["probed"]
+
+    assert probed["corrected_calibrators_from"] is None
+    assert probed["corrected_target_from"] == str(ms)
 
 
 # --- helpers -----------------------------------------------------------------

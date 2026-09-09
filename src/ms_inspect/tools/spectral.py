@@ -24,6 +24,7 @@ from ms_inspect.util.conversions import (
     polarization_basis,
 )
 from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.science_spw import NoScienceSpwError, select_science_spws
 from ms_inspect.util.telescope import resolve_telescope
 
 TOOL_SPW = "ms_spectral_window_list"
@@ -109,6 +110,8 @@ def run_spectral_window_list(ms_path: str) -> dict:
         casa_calls.append("msmd.nspw()")
 
         spws_out: list[dict] = []
+        intents_per_spw: dict[int, list[str]] = {}
+        n_chan_per_spw: dict[int, int] = {}
 
         for spw_id in range(n_spw):
             chan_freqs = np.asarray(msmd.chanfreqs(spw_id))  # Hz
@@ -116,6 +119,15 @@ def run_spectral_window_list(ms_path: str) -> dict:
             n_chan = len(chan_freqs)
 
             casa_calls.append(f"msmd.chanfreqs({spw_id}), msmd.chanwidths({spw_id})")
+
+            n_chan_per_spw[spw_id] = n_chan
+            # Intents drive the science-window selection below. An MS with no
+            # STATE table raises here; that is a legitimate state, and the
+            # selection falls back to structure and says so.
+            try:
+                intents_per_spw[spw_id] = sorted(msmd.intentsforspw(spw_id))
+            except Exception:
+                intents_per_spw[spw_id] = []
 
             # Channel widths: take absolute value (can be negative = decreasing freq)
             abs_widths = np.abs(chan_widths)
@@ -184,11 +196,43 @@ def run_spectral_window_list(ms_path: str) -> dict:
 
             spws_out.append(record)
 
+    # Which windows may appear in the suggested calibration strings.
+    #
+    # ALMA only. Offering every window here is actively harmful: on a real Band 6
+    # dataset the 56 windows include 32 water-vapour windows, 8 pointing windows
+    # and 8 atmospheric windows, and the pointing ones are indistinguishable from
+    # science windows on every measure except intent. Pasting the unrestricted
+    # string into bandpass or gaincal solves on all of them.
+    science_selection: dict | None = None
+    suggest_spws: set[int] | None = None
+    if profile and profile.canonical == "ALMA":
+        try:
+            sel = select_science_spws(
+                n_chan=n_chan_per_spw,
+                intents_per_spw=intents_per_spw,
+                spw_names=spw_names,
+                spws_with_data={s for s, _ in dd_to_spw_pol.values()},
+            )
+            suggest_spws = set(sel.science)
+            science_selection = sel.as_dict()
+            warnings.extend(sel.warnings)
+        except NoScienceSpwError as exc:
+            # Keep the listing useful, but do not let the strings look trustworthy.
+            warnings.append(
+                f"SCIENCE WINDOW SELECTION FAILED — the suggested channel strings "
+                f"below cover EVERY spectral window, including water-vapour, "
+                f"pointing and atmospheric windows. Do not paste them into "
+                f"bandpass or gaincal without checking. Reason: {exc}"
+            )
+            science_selection = {"error": str(exc)}
+
     # Build suggested channel selection strings
     center_parts: list[str] = []
     wide_parts: list[str] = []
     for spw_rec in spws_out:
         sid = spw_rec["spw_id"]
+        if suggest_spws is not None and sid not in suggest_spws:
+            continue
         n_chan = (
             spw_rec["n_channels"]["value"]
             if isinstance(spw_rec["n_channels"], dict)
@@ -210,18 +254,27 @@ def run_spectral_window_list(ms_path: str) -> dict:
     spw_id_list = [r["spw_id"] for r in spws_out]
     all_spw_string = f"0~{max(spw_id_list)}" if spw_id_list else "0"
 
+    suggested: dict = {
+        "center_channels_string": ",".join(center_parts),
+        "wide_channels_string": ",".join(wide_parts),
+        "all_spw_string": all_spw_string,
+        "inner_fraction_center": 0.15,
+        "inner_fraction_wide": 0.90,
+    }
+    if suggest_spws is not None:
+        # Say what the strings cover. Without this, a restricted string and an
+        # unrestricted one are indistinguishable to the caller.
+        suggested["restricted_to_science_spws"] = sorted(suggest_spws)
+        suggested["science_spw_string"] = ",".join(str(s) for s in sorted(suggest_spws))
+
     data = {
         "n_spw": n_spw,
         "telescope": profile.canonical if profile else "UNKNOWN",
         "spectral_windows": spws_out,
-        "suggested": {
-            "center_channels_string": ",".join(center_parts),
-            "wide_channels_string": ",".join(wide_parts),
-            "all_spw_string": all_spw_string,
-            "inner_fraction_center": 0.15,
-            "inner_fraction_wide": 0.90,
-        },
+        "suggested": suggested,
     }
+    if science_selection is not None:
+        data["science_spw_selection"] = science_selection
 
     return response_envelope(
         tool_name=TOOL_SPW,
