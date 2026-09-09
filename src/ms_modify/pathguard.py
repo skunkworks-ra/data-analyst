@@ -1,11 +1,12 @@
 """
 pathguard.py — output-caltable path validation for ms_modify write tools.
 
-Every tool that deletes-and-rewrites an output caltable (gaincal, bandpass,
+Every tool that archives-and-rewrites an output caltable (gaincal, bandpass,
 polcal, fluxscale, ...) must validate the user-supplied path with
 validate_output_caltable() before embedding it in a generated script or
 passing it to a CASA task. The generated scripts additionally carry a runtime
-guard (SAFE_RM_TABLE_SNIPPET) so a stale script can never rmtree an MS.
+guard (SAFE_RM_TABLE_SNIPPET) so a stale script can never touch an MS, and so
+a retry archives the previous attempt's caltable aside instead of deleting it.
 """
 
 from __future__ import annotations
@@ -60,18 +61,30 @@ def validate_output_caltable(
     if not ct.is_relative_to(wd):
         raise ComputationError(
             f"Output caltable {ct} is not inside workdir {wd}. Caltables are "
-            "deleted and rewritten on each run, so they must live in workdir.",
+            "archived aside and rewritten on each run, so they must live in "
+            "workdir.",
             ms_path=ms_path,
         )
     return ct
 
 
-# Runtime guard embedded in generated scripts. Refuses to delete anything whose
-# table.info identifies it as a Measurement Set, even if the script is edited
-# or re-run against a changed filesystem.
+# Runtime guard embedded in generated scripts. A retry must not destroy the
+# only copy of what an earlier attempt produced (PLAN.md, "Where the trouble
+# is" #1: a second gaincal used to overwrite the first gain.G with nothing to
+# undo it). So this archives the existing table aside -- os.rename, atomic on
+# the same filesystem, which workdir always is here -- rather than deleting
+# it. Refuses to touch anything whose table.info identifies it as a
+# Measurement Set, even if the script is edited or re-run against a changed
+# filesystem.
 SAFE_RM_TABLE_SNIPPET = '''\
 def _safe_rm_table(path):
-    """Remove an existing caltable; refuse to delete a Measurement Set."""
+    """Archive an existing caltable aside; refuse to touch a Measurement Set.
+
+    The prior attempt is renamed to "<path>.attemptN" (N picks the first free
+    slot) rather than removed, so a retry's output never destroys the
+    previous attempt's. Nothing reads the ".attemptN" name automatically --
+    it exists so the file is recoverable, not so a later stage picks it up.
+    """
     if not os.path.exists(path):
         return
     info = os.path.join(path, "table.info")
@@ -79,8 +92,11 @@ def _safe_rm_table(path):
         with open(info) as _fh:
             if "Measurement Set" in _fh.readline():
                 raise RuntimeError(
-                    f"Refusing to delete {path!r}: table.info identifies it "
+                    f"Refusing to touch {path!r}: table.info identifies it "
                     "as a Measurement Set, not a caltable."
                 )
-    shutil.rmtree(path)
+    n = 1
+    while os.path.exists(f"{path}.attempt{n}"):
+        n += 1
+    os.rename(path, f"{path}.attempt{n}")
 '''

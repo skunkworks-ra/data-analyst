@@ -18,6 +18,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
+from ms_inspect.util.stage_log import record_stage
 from ms_modify.exceptions import TcleanFailedError
 
 TOOL_NAME = "ms_tclean"
@@ -67,6 +68,7 @@ def _script_path(workdir: Path, imagename: str) -> Path:
 
 
 def _build_script(
+    workdir: str,
     ms_str: str,
     imagename: str,
     field: str,
@@ -91,6 +93,9 @@ def _build_script(
     width: str | None,
     outframe: str | None,
 ) -> str:
+    # Same rule the execute=True path uses at the bottom of run(): mtmfs with
+    # nterms writes Taylor terms, so there is no plain .image to record.
+    is_mtmfs = deconvolver == "mtmfs" and nterms is not None
     optional_lines = ""
     if spw:
         optional_lines += f"    spw          = {spw!r},\n"
@@ -113,6 +118,8 @@ def _build_script(
 
     script_name = Path(imagename).name.replace(".", "_")
 
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
+
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -125,6 +132,9 @@ import shutil
 from casatasks import tclean
 
 ms_path   = {ms_str!r}
+{record}
+workdir = {workdir!r}
+
 imagename = {imagename!r}
 
 # Remove existing tclean products for this imagename before re-running.
@@ -172,6 +182,17 @@ _desc = {{
     5: "diverging (>3x prev major cycle)", 6: "diverging (>3x minimum)",
     7: "zero mask", 8: "n-sigma / combined",
 }}.get(_code, "unknown")
+# The image existing is not success: a clean that stopped on the iteration
+# limit, or diverged, is deconvolution-limited rather than a detection. tclean
+# does return a summary, so the stopcode is read rather than measured — record
+# it beside the product so the record says which kind of stop this was.
+_image = imagename + (".image.tt0" if {is_mtmfs} else ".image")
+_record_stage(
+    workdir,
+    "tclean",
+    _image,
+    {{"stopcode": _code, "converged": _code in (2, 8)}},
+)
 if _code in (2, 8):
     print(f"tclean CONVERGED (stopcode={{_code}}: {{_desc}}):", imagename)
 else:
@@ -348,6 +369,7 @@ def run(
 
     script_file = _script_path(workdir_path, imagename)
     script_content = _build_script(
+        workdir=str(workdir_path),
         ms_str=ms_str,
         imagename=imagename,
         field=field,
@@ -467,6 +489,12 @@ def run(
     stopcode, stop_reason, converged, conv_warn = _convergence(summary)
     if conv_warn:
         warnings.append(conv_warn)
+    record_stage(
+        str(workdir_path),
+        "tclean",
+        image_path,
+        {"stopcode": stopcode, "converged": converged},
+    )
 
     data = {
         "script_path": fmt_field(str(script_file)),

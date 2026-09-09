@@ -23,6 +23,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import describe_numeric_fields, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.stage_log import record_stage
 from ms_modify.exceptions import FluxscaleFailedError
 
 TOOL_NAME = "ms_fluxscale"
@@ -51,19 +52,16 @@ def _resolve_field_ids(caltable: str, names: list[str]) -> list[str]:
     return out
 
 
-def _table_exists(path: str) -> bool:
-    p = Path(path)
-    return p.exists() and p.is_dir() and any(p.iterdir())
-
-
 def _build_script(
     ms_str: str,
     caltable: str,
+    workdir: str,
     fluxtable: str,
     reference: str,
     transfer: list[str],
     incremental: bool,
 ) -> str:
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
     from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
 
     return f"""\
@@ -77,6 +75,7 @@ import shutil
 from casatasks import fluxscale
 
 {safe_rm}
+{record}
 _safe_rm_table({fluxtable!r})
 result = fluxscale(
     vis={ms_str!r},
@@ -86,6 +85,7 @@ result = fluxscale(
     transfer={transfer!r},
     incremental={incremental},
 )
+_record_stage({workdir!r}, "fluxscale", {fluxtable!r})
 print("Done. Fluxtable written to: {fluxtable}")
 print("fluxscale result:", result)
 """
@@ -158,6 +158,7 @@ def run(
         _build_script(
             ms_str=ms_str,
             caltable=caltable,
+            workdir=str(workdir_path),
             fluxtable=fluxtable,
             reference=reference,
             transfer=transfer,
@@ -222,12 +223,17 @@ def run(
             ms_path=ms_path,
         ) from e
 
-    if not _table_exists(fluxtable):
+    # record_stage does the existence check and writes the stage-log line either
+    # way; the domain error is re-raised over it so the caller keeps the
+    # diagnostic message rather than a bare RuntimeError.
+    try:
+        record_stage(str(workdir_path), "fluxscale", fluxtable)
+    except RuntimeError as exc:
         raise FluxscaleFailedError(
             f"fluxscale did not produce fluxtable at {fluxtable!r}. "
             "Check that the reference field has solutions in the input caltable.",
             ms_path=ms_path,
-        )
+        ) from exc
 
     # Extract flux densities from the returned dict for structured output.
     # result is keyed by field_id (str) → spw_id (str) → {'fluxd': array([I,Q,U,V])}

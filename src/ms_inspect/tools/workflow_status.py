@@ -2,37 +2,123 @@
 tools/workflow_status.py — ms_workflow_status
 
 Rolls up the state of an MS + workdir into a single next-step label.
-Composer over filesystem + existing tool logic. No new CASA calls beyond
-what verify_import / priorcals_check / caltables do.
+
+The stage state comes from workdir/stage_log.jsonl, which the generated
+scripts append to as they complete. It used to be inferred from the filesystem
+with a hardcoded list of caltable names — ["delay.K", "bandpass.B", "gain.G",
+"gain.fluxscaled"]. That could never work: the caltable path is an ARGUMENT to
+every writing tool, with no default, so the names belong to the caller. On the
+2026-08-31 G55 run this tool looked for those four while the run had written
+delay.K, bandpass.b, gain.g and flux.fluxscale, reported one caltable out of
+four, and froze next_recommended_step at apply_initial_rflag_then_applycal for
+ten turns.
+
+Two kinds of fact, kept apart on purpose:
+
+- The stage log says which stages COMPLETED. It is history, written by the job
+  that did the work. Nothing else can supply this — an MS on disk does not
+  record which tool produced it.
+- The MS probes (intents, CORRECTED_DATA) say what is TRUE NOW. A live read
+  beats a log line if someone deleted a column after the fact.
+
+A workdir with no stage log reads as nothing done. That is deliberate: the
+system assumes the reduction is driven end to end by these tools. It does mean
+a workdir created before the stage log existed cannot be resumed here.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from ms_inspect.util.casa_context import open_table, validate_ms_path
+from ms_inspect.util.casa_context import open_table
 from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.stage_log import STAGE_LOG_NAME, completed_stages, products_for, read_stage_log
 
 TOOL_NAME = "ms_workflow_status"
 
+#: Stage names as the writing tools record them.
+_IMPORT = "import_asdm"
+_INTENTS = "set_intents"
+_PREFLAG = "preflag"
+_PRIORCALS = "priorcals"
+_INITIAL_BANDPASS = "initial_bandpass"
+_INITIAL_RFLAG = "initial_rflag"
+_APPLYCAL = "applycal"
+_TCLEAN = "tclean"
+
+#: Final-solve stages. The reduction has a delay, a bandpass and a gain when
+#: all three have recorded a product — by stage, never by filename.
+_FINAL_SOLVES = ("gaincal", "bandpass", "fluxscale")
+
+
+def _probe_corrected(ms_str: str) -> tuple[bool | None, str | None]:
+    """Is CORRECTED_DATA present. None (with a reason) if the probe failed.
+
+    The MAIN table always exists on a valid MS, so an exception here is a real
+    read failure — a lock, a permission, a half-written table — and must not be
+    reported as an absent column.
+    """
+    try:
+        with open_table(ms_str) as tb:
+            return "CORRECTED_DATA" in set(tb.colnames()), None
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+
 
 def run(ms_path: str, workdir: str) -> dict:
-    p = validate_ms_path(ms_path)
+    # An absent or not-yet-imported path is a STAGE, not an error: it is what
+    # next_recommended_step = "import_asdm" exists to report. The path is
+    # therefore probed, not validated. Every tool that operates ON an MS still
+    # validates.
+    p = Path(ms_path).expanduser().resolve()
     ms_str = str(p)
     wd = Path(workdir)
     casa_calls: list[str] = []
     warnings: list[str] = []
 
-    # 1. MS valid
     ms_valid = (p / "table.info").exists()
+    if not ms_valid:
+        warnings.append(
+            f"'{p}' is not a Measurement Set"
+            f" ({'path does not exist' if not p.exists() else 'no table.info'});"
+            " reporting the import stage rather than the MS state."
+        )
 
-    # 2. Intents populated (check STATE subtable)
+    # ---------------------------------------------------------------- history
+    entries = read_stage_log(wd)
+    done = completed_stages(entries)
+    if not entries:
+        warnings.append(
+            f"No {STAGE_LOG_NAME} in {wd}. Every stage reads as not yet run."
+            " A workdir written before the stage log existed cannot be resumed here."
+        )
+
+    # ------------------------------------------------------------- live state
     #
-    # An absent STATE subtable legitimately means "set_intents has not run".
-    # A STATE subtable that exists but cannot be read (lock, permissions,
-    # corruption) means the probe failed, and must not be reported as
-    # "not populated" — that would drive next_recommended_step to re-run
-    # set_intents over data that may already have intents.
+    # Calibration runs on calibrators.ms; the target applycal writes CORRECTED
+    # to the MS this tool was given. Probing only the latter is why the G55 run
+    # reported corrected_populated=false for ten turns after applycal had in
+    # fact populated CORRECTED on the calibrators. Both are reported, never
+    # merged: they answer different questions.
+    calibrators_ms = wd / "calibrators.ms"
+    calibrators_ms_present = calibrators_ms.exists() and (calibrators_ms / "table.info").exists()
+
+    corrected_target: bool | None = False
+    corrected_target_error: str | None = None
+    if ms_valid:
+        corrected_target, corrected_target_error = _probe_corrected(ms_str)
+        casa_calls.append("tb.open(MAIN) for colnames — target MS")
+
+    corrected_calibrators: bool | None = False
+    corrected_calibrators_error: str | None = None
+    if calibrators_ms_present:
+        corrected_calibrators, corrected_calibrators_error = _probe_corrected(str(calibrators_ms))
+        casa_calls.append("tb.open(MAIN) for colnames — calibrators.ms")
+
+    # An absent STATE subtable legitimately means set_intents has not run. A
+    # STATE that exists but cannot be read means the PROBE failed, and must not
+    # be reported as "not populated" — that would drive the recommendation to
+    # re-run set_intents over data that may already have intents.
     intents_populated: bool | None = False
     intents_error: str | None = None
     if (p / "STATE").exists():
@@ -44,98 +130,83 @@ def run(ms_path: str, workdir: str) -> dict:
             intents_populated = None
             intents_error = f"{type(exc).__name__}: {exc}"
 
-    # 3. Online flags file present (heuristic: any .flagonline.txt near MS)
-    online_flag_candidates = list(p.parent.glob("*.flagonline.txt"))
-    online_flags_present = len(online_flag_candidates) > 0
-
-    # 4. calibrators.ms present
-    calibrators_ms = wd / "calibrators.ms"
-    calibrators_ms_present = calibrators_ms.exists() and (calibrators_ms / "table.info").exists()
-
-    # 5. priorcals present
-    priorcals_tables = ["gain_curves.gc", "opacities.opac"]  # required
-    priorcals_present = [t for t in priorcals_tables if (wd / t).exists()]
-
-    # 6. initial bandpass present
-    init_gain = wd / "init_gain.g"
-    bp0 = wd / "BP0.b"
-    initial_bandpass_present = init_gain.exists() and bp0.exists()
-
-    # 7. CORRECTED populated (check MS main table column)
+    # ------------------------------------------------------------- derivation
     #
-    # The MAIN table always exists when ms_valid, so there is no "has not
-    # happened yet" case here: any exception is a genuine read failure and
-    # is reported as such rather than as an absent column.
-    corrected_populated: bool | None = False
-    corrected_error: str | None = None
-    try:
-        with open_table(ms_str) as tb:
-            casa_calls.append("tb.open(MAIN) for colnames")
-            corrected_populated = "CORRECTED_DATA" in set(tb.colnames())
-    except Exception as exc:
-        corrected_populated = None
-        corrected_error = f"{type(exc).__name__}: {exc}"
+    # A failed probe stops the derivation there rather than falling through:
+    # below a failed probe every later answer would be inferred from an unknown.
+    final_solves_done = [s for s in _FINAL_SOLVES if s in done]
 
-    # 8. Final caltables present
-    final_tables = ["delay.K", "bandpass.B", "gain.G", "gain.fluxscaled"]
-    final_caltables_present = [t for t in final_tables if (wd / t).exists()]
-
-    # 9. First image present (heuristic)
-    first_image_present = (
-        len(list(wd.glob("*.image.pbcor"))) > 0 or len(list(wd.glob("*.image"))) > 0
-    )
-
-    # Derive next_recommended_step.
-    #
-    # A failed probe stops the derivation at that point rather than falling
-    # through to the next branch: below a failed probe every subsequent
-    # answer would be inferred from an unknown.
-    if not ms_valid:
-        next_step = "import_asdm"
+    if _IMPORT not in done and not ms_valid:
+        next_step = _IMPORT
     elif intents_populated is None:
         next_step = "probe_failed_intents"
-    elif not intents_populated:
-        next_step = "set_intents"
-    elif not calibrators_ms_present:
+    elif _INTENTS not in done and not intents_populated:
+        next_step = _INTENTS
+    elif _PREFLAG not in done:
         next_step = "apply_preflag"
-    elif len(priorcals_present) < 2:
+    elif _PRIORCALS not in done:
         next_step = "generate_priorcals"
-    elif not initial_bandpass_present:
-        next_step = "initial_bandpass"
-    elif corrected_populated is None:
-        next_step = "probe_failed_corrected"
-    elif not corrected_populated:
+    elif _INITIAL_BANDPASS not in done:
+        next_step = _INITIAL_BANDPASS
+    elif corrected_calibrators is None:
+        next_step = "probe_failed_corrected_calibrators"
+    elif _INITIAL_RFLAG not in done or not corrected_calibrators:
         next_step = "apply_initial_rflag_then_applycal"
-    elif len(final_caltables_present) < 3:
+    elif len(final_solves_done) < len(_FINAL_SOLVES):
         next_step = "delay_bandpass_gain"
-    elif not first_image_present:
+    elif corrected_target is None:
+        next_step = "probe_failed_corrected_target"
+    elif _APPLYCAL not in done or not corrected_target:
+        next_step = "applycal_target"
+    elif _TCLEAN not in done:
         next_step = "first_image"
     else:
         next_step = "selfcal_or_done"
 
     if intents_error is not None:
         warnings.append(f"STATE subtable exists but could not be read: {intents_error}")
-    if corrected_error is not None:
-        warnings.append(f"MAIN table could not be read for column names: {corrected_error}")
+    if corrected_target_error is not None:
+        warnings.append(f"Target MS MAIN table could not be read: {corrected_target_error}")
+    if corrected_calibrators_error is not None:
+        warnings.append(
+            f"calibrators.ms MAIN table could not be read: {corrected_calibrators_error}"
+        )
+
+    # The log is history and the MS is now. Where they disagree, say so rather
+    # than pick a winner: a stage recorded complete whose product no longer
+    # shows in the MS is a real event the next reader needs to see.
+    if _APPLYCAL in done and corrected_target is False:
+        warnings.append(
+            "applycal is recorded complete in the stage log, but CORRECTED_DATA is not"
+            f" present on {ms_str}. The log is history; the MS is current state."
+        )
 
     data = {
         "ms_valid": field(ms_valid),
+        "stage_log_present": field(bool(entries)),
+        "stages_completed": sorted(done),
+        "products_recorded": {stage: products_for(entries, stage) for stage in sorted(done)},
         "intents_populated": (
             field(None, "UNAVAILABLE", note=f"STATE read failed: {intents_error}")
             if intents_populated is None
             else field(intents_populated)
         ),
-        "online_flags_present": field(online_flags_present),
         "calibrators_ms_present": field(calibrators_ms_present),
-        "priorcals_present": priorcals_present,
-        "initial_bandpass_present": field(initial_bandpass_present),
-        "corrected_populated": (
-            field(None, "UNAVAILABLE", note=f"MAIN colnames read failed: {corrected_error}")
-            if corrected_populated is None
-            else field(corrected_populated)
+        "corrected_populated_target": (
+            field(None, "UNAVAILABLE", note=f"MAIN colnames read failed: {corrected_target_error}")
+            if corrected_target is None
+            else field(corrected_target)
         ),
-        "final_caltables_present": final_caltables_present,
-        "first_image_present": field(first_image_present),
+        "corrected_populated_calibrators": (
+            field(
+                None,
+                "UNAVAILABLE",
+                note=f"MAIN colnames read failed: {corrected_calibrators_error}",
+            )
+            if corrected_calibrators is None
+            else field(corrected_calibrators)
+        ),
+        "final_solves_completed": final_solves_done,
         "workdir": str(wd),
         "next_recommended_step": next_step,
     }
