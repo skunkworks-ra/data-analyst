@@ -21,14 +21,10 @@ from pathlib import Path
 from ms_inspect.util.casa_context import describe_numeric_fields, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, response_envelope
+from ms_inspect.util.stage_log import record_stage
 from ms_modify.exceptions import GaincalFailedError
 
 TOOL_NAME = "ms_gaincal"
-
-
-def _table_exists(path: str) -> bool:
-    p = Path(path)
-    return p.exists() and p.is_dir() and any(p.iterdir())
 
 
 def _script_path(workdir: Path, caltable: str) -> Path:
@@ -39,6 +35,7 @@ def _script_path(workdir: Path, caltable: str) -> Path:
 def _build_script(
     ms_str: str,
     caltable: str,
+    workdir: str,
     field: str,
     spw: str,
     gaintype: str,
@@ -55,6 +52,7 @@ def _build_script(
     smodel: list[float] | None = None,
     spwmap: list[list[int]] | None = None,
 ) -> str:
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
     from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
 
     smodel_line = f"    smodel={smodel!r},\n" if smodel is not None else ""
@@ -70,6 +68,7 @@ import shutil
 from casatasks import gaincal
 
 {safe_rm}
+{record}
 _safe_rm_table({caltable!r})
 gaincal(
     vis={ms_str!r},
@@ -88,6 +87,7 @@ gaincal(
     interp={interp!r},
 {spwmap_line}    parang={parang},
 )
+_record_stage({workdir!r}, "gaincal", {caltable!r})
 print("Done. Caltable written to: {caltable}")
 """
 
@@ -202,6 +202,7 @@ def run(
         _build_script(
             ms_str=ms_str,
             caltable=caltable,
+            workdir=str(workdir_path),
             field=field,
             spw=spw,
             gaintype=gaintype,
@@ -293,13 +294,18 @@ def run(
             ms_path=ms_path,
         ) from e
 
-    if not _table_exists(caltable):
+    # record_stage does the existence check and writes the stage-log line either
+    # way; the domain error is re-raised over it so the caller keeps the
+    # diagnostic message rather than a bare RuntimeError.
+    try:
+        record_stage(str(workdir_path), "gaincal", caltable)
+    except RuntimeError as exc:
         raise GaincalFailedError(
             f"gaincal did not produce caltable at {caltable!r}. "
             "Possible causes: too few unflagged baselines, wrong field/spw selection, "
             f"or refant {refant!r} not present in the MS.",
             ms_path=ms_path,
-        )
+        ) from exc
 
     return response_envelope(
         tool_name=TOOL_NAME,

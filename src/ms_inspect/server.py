@@ -1631,9 +1631,13 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
 @mcp.tool(
     name="ms_workflow_status",
     description=(
-        "State probe over MS + workdir. Returns ms_valid, intents_populated, "
-        "calibrators_ms_present, priorcals_present, initial_bandpass_present, "
-        "corrected_populated, final_caltables_present, first_image_present, and "
+        "State probe over MS + workdir. Stage completion comes from "
+        "workdir/stage_log.jsonl, which the generated scripts append to as they "
+        "finish; a workdir with no stage log reads as nothing done. Returns "
+        "ms_valid, stage_log_present, stages_completed, products_recorded, "
+        "intents_populated, calibrators_ms_present, final_solves_completed, "
+        "corrected_populated_target and corrected_populated_calibrators "
+        "(reported separately — calibration runs on calibrators.ms), and "
         "next_recommended_step (categorical label)."
     ),
     annotations={
